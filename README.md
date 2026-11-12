@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**V2-02 基础工程骨架已完成；V2-03 尚未验收通过。** Trae 报告本机全量测试为 238 passed / 0 failed / 0 skipped（前端 vue-tsc + vite 构建通过）。ChatGPT 第四轮静态复审发现的两处 Schema/Pydantic 镜像遗漏（`schema_version` 固定值、`verifier.type` 四类型白名单枚举）已由 Trae 补齐为 Literal 约束，并新增直接 `model_validate()` 双通道拒绝/接受测试；等待第五轮复审，通过前不得进入 V2-04。ChatGPT 未在独立 Windows 环境重新运行上述测试。业务功能（AI 指导、标注、沙箱执行）尚未实现。
+**V2-02 基础工程骨架、V2-03 实验定义与步骤数据模型已完成。** V2-03 第五轮源码复审通过；Trae 报告 Windows 本机全量测试为 238 passed / 0 failed / 0 skipped，前端 vue-tsc + vite 构建通过。ChatGPT 本轮完成 GitHub 源码静态审查，未在独立 Windows 环境重跑，当前修复提交未见 CI status checks。当前进入 V2-04A：先评审 Docker 隔离执行架构，架构通过前不实现容器执行。AI 指导、屏幕标注和真实沙箱执行等业务功能尚未实现。
 
 仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
 
