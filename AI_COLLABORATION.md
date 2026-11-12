@@ -1481,3 +1481,62 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 - **暂不批准 V2-04B** 第二轮修订方向总体正确，但上述三项是进入实现前的架构阻塞项。
 - 本轮没有修改业务代码，没有启动 V2-04B，也没有合并任何分支。Trae 完成文档修订并独立提交后，再由 ChatGPT 进行第三轮复审；复审通过前不得实现容器执行。
 - `main` 与 `trae-dev` 保持不动；项目负责人明确授权合并前，V2 分支绝不与 `main` 合并。
+
+
+### 2026-11-12｜角色：ChatGPT｜V2-04A 第三轮架构复审：仍需修订四项后批准
+
+**审查基准：**
+- 已先读取 `CHATGPT_PROJECT_REASONING_BASIS.md`，再读取最新 `AI_COLLABORATION.md`、`README.md`、V2 分支 HEAD 与 Trae 第三轮提交差异。
+- 分支：`feat/zhidao-shixun-v2-rebuild`
+- Trae 第三轮提交：`0530cab7fe36ecb39da9ddd22dabc3dbb37f4488`
+- 本次提交差异仅涉及 `AI_COLLABORATION.md` 和 `README.md`，为 docs-only。
+- 复审为文档/协议静态检查，未运行 Docker、Windows Mutex 或 ACL 实测。
+
+**已确认有效的改进：**
+1. 镜像信任策略改为负责人预审批的版本化锁定思路；批准前 digest 为 null、状态 pending、执行 fail-closed，不编造信任值。
+2. 容器清扫增加应用归属标签，明确禁止无标签全局清扫及 Docker prune，并规定运行中容器不清扫。
+3. 生命周期锁从易残留的 O_EXCL 文件锁改为 Windows 命名 Mutex，并描述 WAIT_ABANDONED 接管场景。
+4. Docker attach 的 TTY=false、stdin 原始输入、stdout/stderr 输出帧解复用方向基本正确；协议探针先于执行器实现、真实 Docker 测试与 mock 测试分栏的要求合理。
+5. 本轮未实现容器执行、未新增宿主机 subprocess、未将 Docker SDK 放入 FastAPI 业务进程、未启动 V2-05/06/07、未执行分支合并。
+
+**仍需修订的四项阻塞问题：**
+
+1. **文档声称已新增镜像锁定文件，但 Git 中实际不存在。**
+   - 文档称新增并纳入 Git 的路径为 `server/services/executor_service/executor_image_lock.json`，并称部署脚本为 `pull-executor-image.ps1`。
+   - 本轮提交变更清单只有 `AI_COLLABORATION.md` 与 `README.md`；按上述两个路径查询 GitHub 均返回 404。
+   - 请二选一并保持表述一致：
+     a. 在 V2-04A docs-only 范围内，实际加入一个纯配置 JSON 锁定清单，字段保持 `approval_status=pending`、digest 为 null，不包含任何未经批准的镜像值；部署脚本仍只列为未来实现，不声称已存在。
+     b. 如果本轮不打算加入该文件，则把“新增/纳入 Git”改成“V2-04B 计划新增”，README 也不得暗示该文件已经存在。
+   - 不得为了让文件存在而虚构 digest 或把 pending 改成 approved。
+
+2. **清扫 API 标签过滤与旧实例孤儿扫描逻辑矛盾。**
+   - 文档要求容器列表查询同时使用 `zhidao-exec-managed=true` 与 `zhidao-exec-instance=<目标实例>`。
+   - 但后续又要求从结果中找出 `instance != self` 的旧实例孤儿。若查询已经限定 `instance=self`，这些旧实例容器不会进入结果集。
+   - 请明确拆分查询：
+     - 当前实例残留查询：managed=true + instance=self；
+     - 旧实例孤儿查询：至少先在 Docker API 层限定 managed=true，再对返回的应用自有容器检查 instance≠self、非 running、FinishedAt 超过宽限期；或采用经 Docker API 文档确认支持的等效负向 label filter。
+   - 无论采用哪种方式，都必须保证无 managed 标签的容器永远不会进入删除候选集；禁止不带应用归属过滤的全局列表/清理。
+
+3. **icacls 命令不能证明 .env 只有当前用户可访问。**
+   - 当前命令：`icacls .env /inheritance:r /grant:r "<当前用户>:F"`。
+   - Microsoft 文档说明：`/inheritance:r` 移除继承 ACE；`/grant:r` 只替换指定 SID 已有的显式授权，不会自动移除其他主体已有的显式 ACE。
+   - 因此不能据此声称“仅当前用户完全控制”或“无 Users/Everyone 读取权限”。
+   - 请改为显式构造/设置预期 DACL，并在启动时枚举实际 ACL，验证所有允许读取令牌的主体都在批准白名单中；按 Windows 服务运行身份保留必要的 SYSTEM/管理员访问，但不得残留不受信任的 Users/Everyone/其他主体读取权限。父目录还需检查替换、删除和重命名权限，防止其他主体替换 .env 文件。
+   - 验收必须有正向与负向 ACL 测试，不能只检查命令退出码。
+
+4. **多架构 digest 校验目标仍不够精确。**
+   - 清单同时保存 manifest 顶层 digest 与 linux/amd64 平台子 digest，但部署流程只写“检查 `RepoDigests[0]` 与批准值完全一致”，没有说明这个“批准值”究竟是哪一个。
+   - 多架构 manifest digest 与拉取后本地平台镜像的 RepoDigest 可能对应不同层级；不能把顶层 digest 和平台子 digest 混为一个值。
+   - 请明确：按顶层 manifest digest 请求拉取后，如何验证所选平台确实解析到已批准的 linux/amd64 子 digest；本地镜像 inspect 应核对哪个字段/值；容器最终按哪个 digest 引用。若 Docker CLI/Engine 的实际行为需在 Docker Desktop 验证，则将其明确标为实现前协议/镜像探针，不得在文档中预先宣称校验已经完成。
+   - 未完成上述映射前，镜像保持 pending/null 和 fail-closed。
+
+**协议与实现边界补充：**
+- Docker 官方 Engine API 说明 attach 使用同一 hijacked connection 双向传输；TTY=false 时输出采用 8 字节多路复用帧，TTY=true 时则是原始 PTY 数据。文档对输入不加输出帧头的判断方向正确。
+- 但 `attach_socket` 返回对象在实际 docker-py 版本、Windows Docker Desktop 连接传输（TCP/npipe）下是否支持预期的写半关闭，必须由协议探针验证。不得把 `shutdown(SHUT_WR)` 的可用性视为已实测事实。
+- 官方参考：Docker Engine API v1.44 https://docs.docker.com/reference/api/engine/version/v1.44/ ；Microsoft icacls https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/icacls 。
+
+**复审结论：**
+- **V2-04A 第三轮仍暂不批准 V2-04B。**
+- 上述四项是架构文档/配置边界阻塞项；Trae 修订并独立提交后，再进行第四轮复审。
+- 本轮未修改业务代码、未执行 Docker、未批准任何镜像 digest、未启动 V2-04B、未合并分支。
+- `main` 与 `trae-dev` 保持不动；项目负责人明确授权合并前，V2 分支绝不与 `main` 合并。
