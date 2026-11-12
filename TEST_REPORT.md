@@ -13,7 +13,7 @@
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
 | 后端测试 | **113 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **147 项，全部通过**（`sandbox_manager/tests/`） |
+| 沙箱管理器测试 | **151 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -23,7 +23,7 @@
 ## 2. 结论摘要
 
 1. 后端 113 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
-2. 沙箱管理器 147 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+2. 沙箱管理器 151 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
    生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、
    结果字段校验、生命周期，以及验收工具 `verify_isolation.py` 的 PASS/FAIL/SKIP 判定可靠性
    （网络 errno 分类、stdout/stderr 分别与合计截断、`memory.swap.max`、本地临时 mTLS 握手、执行节点身份声明）。
@@ -49,7 +49,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（113 项 + 147 项）
+## 4. 后端自动化测试（113 项 + 151 项）
 
 ### 4.1 用例分布
 
@@ -68,11 +68,11 @@
 | `sandbox_manager/tests/test_container_spec.py` | 41 | 41 | 0 |
 | `sandbox_manager/tests/test_server.py` | 19 | 19 | 0 |
 | `sandbox_manager/tests/test_jobs.py` | 21 | 21 | 0 |
-| `sandbox_manager/tests/test_verify_isolation.py` | 35 | 35 | 0 |
+| `sandbox_manager/tests/test_verify_isolation.py` | 39 | 39 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_runner.py` | 17 | 17 | 0 |
-| **管理器合计** | **147** | **147** | **0** |
+| **管理器合计** | **151** | **151** | **0** |
 
 ### 4.2 实际执行结果
 
@@ -83,7 +83,7 @@ python -m pytest -q
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-147 passed, 1 warning in 2.67s
+151 passed, 1 warning in 2.72s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -374,6 +374,13 @@ python -m pytest -q sandbox_manager/tests
 | F-33 | 仅 `--on-execution-node` + 本机 `docker info` 就判定身份通过 | 新增 `--confirm-manager-docker-same-host` 人工确认；三者齐备才通过，否则 SKIP；检测 `DOCKER_HOST`/`DOCKER_CONTEXT` 并在输出记录；宿主机标记文件与容器残留检查绑定该确认，未确认时必检 SKIP；明确为人工核验非密码学证明 | 节点身份/残留/标记 6 项 |
 | F-34 | 不受信客户端证书测试实际用的是第二套 CA 证书而非叶子证书；令牌测试服务端无条件返回 401 | 第二套 CA 签发含 CLIENT_AUTH 的正常客户端叶子证书用于握手失败测试；令牌测试服务端真实解析 `X-Sandbox-Token`，正确令牌 200、错误令牌 401，用真实 `Manager` 经 TLS 请求 | 不受信客户端证书、错误令牌 401、正确令牌 200 |
 
+#### 第十轮验收判定严谨性收尾
+
+| 编号 | 问题 | 修复 | 回归测试 |
+|---|---|---|---|
+| F-35 | `judge_output`/`judge_total_output` 只判“非空+不超限”，5MB 任务返回 100 字节也可能 PASS | 新增 `MIN_OUTPUT_RATIO=0.9`：单流实际字节数须接近单流上限；合计须两通道都接近单流上限、且合计接近总上限；超上限+容差、通道缺失/明显不足、合计过低均 FAIL；UTF-8 字节计量 | `test_stdout_truncation`、`test_stderr_truncation_uses_same_rule`、`test_truncation_marker_bytes_do_not_misfire`、`test_total_output_limit`、`test_total_rejects_short_channel_even_if_nonempty`、`test_total_rejects_sum_far_below_expected`、`test_cross_task_sum_is_not_accepted` |
+| F-36 | `_handshake` 吞掉所有异常统一返回 False，无法区分证书拒绝与实现故障 | 返回 `(ok, client_error, server_error)`；无证书与不受信客户端证书须服务端 `SSLError` 且证书相关；不受信服务端证书须客户端 `SSLCertVerificationError`；服务端注入 `RuntimeError` 被保留而非当作拒绝；诊断信息不含密钥 | `test_mtls_valid_handshake_succeeds`、`test_mtls_without_client_certificate_fails`、`test_mtls_with_untrusted_client_certificate_fails`、`test_untrusted_server_certificate_fails`、`test_handshake_preserves_unexpected_server_error` |
+
 ## 8. 历史记录（仅追溯，不代表当前状态）
 
 ### 8.1 阶段 0：项目接入与现状盘点
@@ -522,6 +529,19 @@ python -m pytest -q sandbox_manager/tests
 - 管理器测试 141 → **147**（`test_verify_isolation.py` 29 → 35 项），后端仍为 113。
 - 仍为自动化/本地临时环境测试，**真实 Linux / Docker 实机验收未完成**；
   S-01 ~ S-15 仍全部未执行；人工节点确认不等于密码学证明。
+
+### 8.14 阶段 3-A 第十轮验收判定严谨性收尾
+
+- **输出截断**：`judge_output`/`judge_total_output` 增加 `MIN_OUTPUT_RATIO=0.9`，要求
+  实际 UTF-8 字节数接近单流上限；合计任务要求两通道都接近单流上限、合计接近总上限。
+  明显不足、为空、超上限+容差、合计过低均 FAIL，杜绝“5MB 任务只返回 100 字节也 PASS”。
+- **mTLS 异常区分**：`_handshake` 返回 `(ok, client_error, server_error)`；无证书/不受信
+  客户端证书要求服务端出现证书相关 `SSLError`；不受信服务端证书要求客户端
+  `SSLCertVerificationError`；注入的服务端 `RuntimeError` 被保留，不再把任意异常当作
+  “握手被正确拒绝”；诊断信息不含私钥。
+- 管理器测试 147 → **151**（`test_verify_isolation.py` 35 → 39 项），后端仍为 113。
+- 仍为自动化/本地临时环境测试，**真实 Linux / Docker 实机验收未完成**；
+  S-01 ~ S-15 仍全部未执行。
 
 ## 9. 本机环境限制（影响复现）
 

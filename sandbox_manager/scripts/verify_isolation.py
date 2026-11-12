@@ -58,6 +58,10 @@ TERMINAL = {"succeeded", "failed", "timeout", "resource_exceeded", "cancelled"}
 # 只用于容纳标记本身，不得据此放宽实际上限。
 TRUNCATION_TOLERANCE = 100
 
+# 实际返回字节数至少要达到预期上限的这一比例，否则视为“输出缺失/未真正写满”，
+# 防止 5MB 任务只返回 100 字节也被判 PASS。
+MIN_OUTPUT_RATIO = 0.9
+
 REQUIRED = True
 OPTIONAL = False
 
@@ -279,19 +283,36 @@ def judge_disk(status: str, stdout: str) -> tuple[bool, str]:
 
 
 def judge_output(status: str, stdout_size: int, limit: int) -> tuple[bool, str]:
+    """单个输出流截断判定：既要不超过上限，也要接近上限。
+
+    只检查“非空 + 不超限”会导致 5MB 任务只返回 100 字节也判 PASS；
+    这里要求实际字节数至少达到上限的 `MIN_OUTPUT_RATIO`。
+    """
     if status != "succeeded":
         return False, f"status={status}，不能判定为截断成功"
     if stdout_size <= 0:
         return False, "stdout 为空，缺少截断证据"
-    ok = stdout_size <= limit + TRUNCATION_TOLERANCE
-    return ok, f"stdout_bytes={stdout_size} 上限≈{limit}"
+    if stdout_size > limit + TRUNCATION_TOLERANCE:
+        return False, (
+            f"字节数={stdout_size} 超过上限 {limit}"
+            f"（容差 {TRUNCATION_TOLERANCE}）"
+        )
+    min_expected = int(limit * MIN_OUTPUT_RATIO)
+    if stdout_size < min_expected:
+        return False, (
+            f"字节数={stdout_size} 明显低于上限 {limit}"
+            f"（至少应接近 {min_expected}），疑似输出缺失或未真正写满"
+        )
+    return True, f"bytes={stdout_size} 上限≈{limit}"
 
 
 def judge_total_output(status: str, stdout_size: int, stderr_size: int,
+                       per_stream_limit: int,
                        total_limit: int) -> tuple[bool, str]:
     """同一个任务的 stdout + stderr 合计上限判定
 
-    要求任务成功且两个通道都实际产生非空输出；两个不同任务的结果不得相加。
+    要求任务成功、两通道都接近单流上限，且合计接近（但不超过）总上限。
+    两个不同任务的结果不得相加；任一通道明显不足都判 FAIL。
     """
     if status != "succeeded":
         return False, f"status={status}，不能判定总输出限制"
@@ -300,10 +321,33 @@ def judge_total_output(status: str, stdout_size: int, stderr_size: int,
             f"stdout/stderr 存在空通道（stdout={stdout_size} stderr={stderr_size}），"
             "缺少双通道证据"
         )
+    min_stream = int(per_stream_limit * MIN_OUTPUT_RATIO)
+    if stdout_size < min_stream:
+        return False, (
+            f"stdout_bytes={stdout_size} 明显低于单流上限 {per_stream_limit}"
+            f"（至少应接近 {min_stream}）"
+        )
+    if stderr_size < min_stream:
+        return False, (
+            f"stderr_bytes={stderr_size} 明显低于单流上限 {per_stream_limit}"
+            f"（至少应接近 {min_stream}）"
+        )
     total = stdout_size + stderr_size
-    return total <= total_limit + TRUNCATION_TOLERANCE, (
-        f"stdout_bytes={stdout_size} stderr_bytes={stderr_size} 合计={total} "
-        f"上限≈{total_limit}"
+    if total > total_limit + TRUNCATION_TOLERANCE:
+        return False, (
+            f"合计={total} 超过总上限 {total_limit}（容差 {TRUNCATION_TOLERANCE}）"
+        )
+    # 单流有上限，因此可达到的合计上限不会超过 2×单流上限
+    expected_total = min(total_limit, 2 * per_stream_limit)
+    min_total = int(expected_total * MIN_OUTPUT_RATIO)
+    if total < min_total:
+        return False, (
+            f"合计={total} 明显低于预期总上限 {expected_total}"
+            f"（至少应接近 {min_total}）"
+        )
+    return True, (
+        f"stdout_bytes={stdout_size} stderr_bytes={stderr_size} "
+        f"合计={total} 上限≈{total_limit}"
     )
 
 
@@ -724,7 +768,8 @@ def main() -> int:
         comb_stdout = len(r_comb.get("stdout", "").encode("utf-8"))
         comb_stderr = len(r_comb.get("stderr", "").encode("utf-8"))
         ok, detail = judge_total_output(
-            comb_status, comb_stdout, comb_stderr, args.output_total_limit)
+            comb_status, comb_stdout, comb_stderr,
+            args.output_limit, args.output_total_limit)
         add("stdout+stderr 合计输出限制（同一任务）", ok, detail)
     except Exception as exc:  # noqa: BLE001
         add("stdout+stderr 合计输出限制（同一任务）", False,

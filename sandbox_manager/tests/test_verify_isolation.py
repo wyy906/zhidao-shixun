@@ -132,36 +132,73 @@ def test_connected_or_missing_evidence_is_failure():
 # 输出、CPU、内存、交换、PID
 # ---------------------------------------------------------------------------
 def test_stdout_truncation():
+    # 恰好达到上限、或上限 + 截断标记容差内 → 通过
     assert vi.judge_output("succeeded", 32768, 32768)[0] is True
+    assert vi.judge_output("succeeded", 32768 + 37, 32768)[0] is True
+    assert vi.judge_output("succeeded", 30000, 32768)[0] is True  # 接近上限
+    # 明显不足 / 为空 / 超过上限+容差 / 异常终止 → 失败
+    assert vi.judge_output("succeeded", 100, 32768)[0] is False
     assert vi.judge_output("succeeded", 0, 32768)[0] is False
     assert vi.judge_output("failed", 100, 32768)[0] is False
     assert vi.judge_output("succeeded", 40000, 32768)[0] is False
 
 
 def test_stderr_truncation_uses_same_rule():
+    # stderr 复用同一判定：接近上限通过，明显不足或异常终止失败
     assert vi.judge_output("succeeded", 32768, 32768)[0] is True
+    assert vi.judge_output("succeeded", 2000, 32768)[0] is False
     assert vi.judge_output("failed", 32768, 32768)[0] is False
 
 
+def test_truncation_marker_bytes_do_not_misfire():
+    # 截断标记约 37 字节，处于容差内，不得被判为超限
+    assert vi.judge_output("succeeded", 32768 + 37, 32768)[0] is True
+    assert vi.judge_total_output("succeeded", 32768, 32768, 32768, 65536)[0] is True
+    # 超过容差（> 上限+100）才失败
+    assert vi.judge_output("succeeded", 32768 + 101, 32768)[0] is False
+
+
 def test_total_output_limit():
-    # 同一个任务的两个通道合计未超限 → 通过
-    assert vi.judge_total_output("succeeded", 32768, 32768, 65536)[0] is True
-    # 同一任务合计超限 → 失败
-    assert vi.judge_total_output("succeeded", 40000, 40000, 65536)[0] is False
+    # 同一任务两通道都接近单流上限、合计贴近总上限 → 通过
+    assert vi.judge_total_output("succeeded", 32768, 32768, 32768, 65536)[0] is True
+    # 合计超过总上限 + 容差 → 失败
+    assert vi.judge_total_output("succeeded", 40000, 40000, 32768, 65536)[0] is False
     # 任一通道为空 → 失败（不能把单通道结果当合计证据）
-    assert vi.judge_total_output("succeeded", 32768, 0, 65536)[0] is False
-    assert vi.judge_total_output("succeeded", 0, 32768, 65536)[0] is False
-    assert vi.judge_total_output("succeeded", 0, 0, 65536)[0] is False
+    assert vi.judge_total_output("succeeded", 32768, 0, 32768, 65536)[0] is False
+    assert vi.judge_total_output("succeeded", 0, 32768, 32768, 65536)[0] is False
+    assert vi.judge_total_output("succeeded", 0, 0, 32768, 65536)[0] is False
     # 任务异常终止 → 失败
-    assert vi.judge_total_output("failed", 32768, 32768, 65536)[0] is False
-    assert vi.judge_total_output("timeout", 32768, 32768, 65536)[0] is False
+    assert vi.judge_total_output("failed", 32768, 32768, 32768, 65536)[0] is False
+    assert vi.judge_total_output("timeout", 32768, 32768, 32768, 65536)[0] is False
+
+
+def test_total_rejects_short_channel_even_if_nonempty():
+    # 两通道都非空，但 stdout 明显不足 → 失败
+    ok, detail = vi.judge_total_output("succeeded", 2000, 32768, 32768, 65536)
+    assert ok is False
+    assert "stdout" in detail
+    # 两通道都非空，但 stderr 明显不足 → 失败
+    ok, detail = vi.judge_total_output("succeeded", 32768, 2000, 32768, 65536)
+    assert ok is False
+    assert "stderr" in detail
+
+
+def test_total_rejects_sum_far_below_expected():
+    # 两通道各自勉强达标，但合计明显低于预期总上限 → 失败
+    # 单流上限 32768，总上限 65536，两通道各 15000（均低于单流下限）会被单流拦截；
+    # 该用例确认整体判定失败且不会误判通过。
+    assert vi.judge_total_output("succeeded", 15000, 15000, 32768, 65536)[0] is False
+    # 只在合计层面偏低的场景：总上限低于 2×单流上限时，合计超总上限即失败
+    ok, detail = vi.judge_total_output("succeeded", 30000, 30000, 32768, 50000)
+    assert ok is False
+    assert "超过总上限" in detail
 
 
 def test_cross_task_sum_is_not_accepted():
     """两个不同任务分别产生 stdout / stderr，不能相加冒充同一任务合计"""
     # 任务 A 只有 stdout、任务 B 只有 stderr：单独判定都不是合法合计证据
-    assert vi.judge_total_output("succeeded", 32768, 0, 65536)[0] is False
-    assert vi.judge_total_output("succeeded", 0, 24000, 65536)[0] is False
+    assert vi.judge_total_output("succeeded", 32768, 0, 32768, 65536)[0] is False
+    assert vi.judge_total_output("succeeded", 0, 24000, 32768, 65536)[0] is False
 
 
 def test_cpu_quota_and_period_must_both_be_correct():
@@ -409,13 +446,24 @@ def _server_context(bundle: dict, require_client: bool) -> ssl.SSLContext:
     return ctx
 
 
-def _handshake(server_ctx: ssl.SSLContext, client_ctx: ssl.SSLContext) -> bool:
-    """本机完成一次 TLS 握手 + 一个字节往返，返回是否成功"""
+def _describe(exc: BaseException | None) -> str:
+    """不含密钥的异常诊断：仅类型名 + 文本"""
+    if exc is None:
+        return "None"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _handshake(server_ctx, client_ctx):
+    """本机完成一次 TLS 握手 + 一个字节往返。
+
+    返回 (ok, client_error, server_error)，保留两端异常，便于区分
+    “确属证书验证被拒绝”与“服务端线程异常 / TCP 失败 / 协议错误”等实现故障。
+    """
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
     port = listener.getsockname()[1]
-    errors: list[BaseException] = []
+    server_errors: list[BaseException] = []
 
     def serve():
         conn, _ = listener.accept()
@@ -424,8 +472,8 @@ def _handshake(server_ctx: ssl.SSLContext, client_ctx: ssl.SSLContext) -> bool:
             tls.settimeout(3)
             data = tls.recv(1)
             tls.sendall(b"k" if data else b"")
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
+        except BaseException as exc:  # noqa: BLE001 - 保留用于断言
+            server_errors.append(exc)
         finally:
             conn.close()
             listener.close()
@@ -433,17 +481,19 @@ def _handshake(server_ctx: ssl.SSLContext, client_ctx: ssl.SSLContext) -> bool:
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
     ok = False
+    client_error: BaseException | None = None
     raw = socket.create_connection(("127.0.0.1", port), timeout=3)
     try:
         tls = client_ctx.wrap_socket(raw, server_hostname="127.0.0.1")
         tls.sendall(b"x")
         ok = tls.recv(1) == b"k"
-    except BaseException:  # noqa: BLE001
-        ok = False
+    except BaseException as exc:  # noqa: BLE001 - 保留用于断言
+        client_error = exc
     finally:
         raw.close()
     thread.join(timeout=5)
-    return ok
+    server_error = server_errors[0] if server_errors else None
+    return ok, client_error, server_error
 
 
 def test_mtls_valid_handshake_succeeds(tmp_path):
@@ -451,7 +501,10 @@ def test_mtls_valid_handshake_succeeds(tmp_path):
     server = _server_context(bundle, require_client=True)
     client = vi.Manager.build_ssl_context(
         bundle["ca"], bundle["client_cert"], bundle["client_key"])
-    assert _handshake(server, client) is True
+    ok, client_error, server_error = _handshake(server, client)
+    assert ok is True, f"client={_describe(client_error)} server={_describe(server_error)}"
+    assert client_error is None
+    assert server_error is None
 
 
 def test_mtls_without_client_certificate_fails(tmp_path):
@@ -459,7 +512,17 @@ def test_mtls_without_client_certificate_fails(tmp_path):
     server = _server_context(bundle, require_client=True)
     client = vi.Manager.build_ssl_context(
         bundle["ca"], None, None)
-    assert _handshake(server, client) is False
+    ok, client_error, server_error = _handshake(server, client)
+    assert ok is False
+    # 服务端确实因缺少客户端证书而拒绝（SSLError，且原因与证书相关）
+    assert isinstance(server_error, ssl.SSLError), _describe(server_error)
+    reason = str(server_error).lower()
+    assert ("certificate" in reason or "peer did not return" in reason), _describe(server_error)
+    # 客户端应感知为 TLS/连接层失败；Windows 上可能表现为 ConnectionResetError。
+    # 但不能是程序实现错误（如 AttributeError/RuntimeError）。
+    assert client_error is None or isinstance(client_error, (ssl.SSLError, OSError)), (
+        _describe(client_error)
+    )
 
 
 def test_mtls_with_untrusted_client_certificate_fails(tmp_path):
@@ -467,14 +530,40 @@ def test_mtls_with_untrusted_client_certificate_fails(tmp_path):
     server = _server_context(bundle, require_client=True)
     client = vi.Manager.build_ssl_context(
         bundle["ca"], bundle["other_cert"], bundle["other_key"])
-    assert _handshake(server, client) is False
+    ok, client_error, server_error = _handshake(server, client)
+    assert ok is False
+    # 服务端因客户端证书链不受信而拒绝（证书相关 SSLError）
+    assert isinstance(server_error, ssl.SSLError), _describe(server_error)
+    reason = str(server_error).lower()
+    assert (
+        "certificate" in reason or "unknown ca" in reason or "verify" in reason
+    ), _describe(server_error)
 
 
 def test_untrusted_server_certificate_fails(tmp_path):
     bundle = _write_cert_bundle(tmp_path)
     server = _server_context(bundle, require_client=False)
     client = ssl.create_default_context()   # 不信任私有 CA
-    assert _handshake(server, client) is False
+    ok, client_error, server_error = _handshake(server, client)
+    assert ok is False
+    # 客户端必须出现“证书验证失败”，而不是其他异常
+    assert isinstance(client_error, ssl.SSLCertVerificationError), _describe(client_error)
+
+
+def test_handshake_preserves_unexpected_server_error(tmp_path):
+    """服务端实现故障（非 TLS 拒绝）必须被保留，不能被当成“握手被正确拒绝”"""
+    bundle = _write_cert_bundle(tmp_path)
+
+    class _BoomCtx:
+        def wrap_socket(self, conn, server_side=False):  # noqa: ARG002
+            raise RuntimeError("injected server failure")
+
+    client = vi.Manager.build_ssl_context(
+        bundle["ca"], bundle["client_cert"], bundle["client_key"])
+    ok, client_error, server_error = _handshake(_BoomCtx(), client)
+    assert ok is False
+    assert isinstance(server_error, RuntimeError), _describe(server_error)
+    assert not isinstance(server_error, ssl.SSLError)
 
 
 def _token_server(server_ctx: ssl.SSLContext, expected_token: str):

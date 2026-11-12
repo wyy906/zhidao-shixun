@@ -475,9 +475,11 @@ TOKEN='<与 manager.env 中 ZD_SANDBOX_TOKEN 一致>'
   PID 数；文件不可读时该项 SKIP，不得当作通过
 - 无限循环超时、内存超限、fork 受限、磁盘受限
 - 输出截断：分别提交大量 stdout、大量 stderr 两个独立任务，校验各自字节数、任务终态、
-  非空输出；**另提交第三个独立任务在同一 Python 进程内同时产生 5MB stdout 与 5MB
-  stderr**，用该单任务的 `stdout_bytes + stderr_bytes` 校验 `--output-total-limit`
-  （不得把两个不同任务的输出相加冒充合计；任一通道为空、任务异常终止均不算通过）
+  非空输出，且实际字节数须**接近单流上限**（≥ 上限的 90%，防止“只返回少量字节”假通过）；
+  **另提交第三个独立任务在同一 Python 进程内同时产生 5MB stdout 与 5MB stderr**，
+  用该单任务的 `stdout_bytes + stderr_bytes` 校验 `--output-total-limit`，要求两通道都接近
+  单流上限、合计接近且不超过总上限+截断标记容差（不得把两个不同任务的输出相加冒充合计；
+  任一通道为空/明显不足、任务异常终止、合计过低均不算通过）
 - 任务结束后无残留容器（需 `--docker-check local` 且已人工确认节点身份）
 
 > ⚠️ 该脚本包含破坏性测试，只能在**专用、可销毁的测试节点**运行。
@@ -625,7 +627,7 @@ echo "job=$JOB container=$CID"
 | S-09 | PID 数量限制 32 | `docker inspect $CID --format '{{.HostConfig.PidsLimit}}'`；`verify_isolation.py` | `32`；`PIDS_MAX: 32`；fork 测试 PASS | 未执行 | `S-09.txt` | 未执行 |
 | S-10 | 临时磁盘限制（tmpfs 合计 24MB，业务 16MB） | `docker inspect $CID --format '{{json .HostConfig.Tmpfs}}'`；`verify_isolation.py` | 含 `/workspace`、`/tmp`、`/dev/shm` 与容量/`noexec,nosuid,nodev`；磁盘测试 PASS | 未执行 | `S-10.txt` | 未执行 |
 | S-11 | 执行超时与进程终止 | `verify_isolation.py`（无限循环用例） | `无限循环被超时终止` 为 PASS | 未执行 | `S-11.txt` | 未执行 |
-| S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 32768 --output-total-limit 65536` | `stdout 输出被截断` 与 `stderr 输出被截断` 均为 PASS，各自 `bytes ≤ 32868`；`stdout+stderr 合计输出限制（同一任务）` 为 PASS（同一任务两通道合计 `≤ 65636`） | 未执行 | `S-12.txt` | 未执行 |
+| S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 32768 --output-total-limit 65536` | `stdout 输出被截断` 与 `stderr 输出被截断` 均为 PASS，各自实际字节数须 **接近且不超过** 32868；`stdout+stderr 合计输出限制（同一任务）` 为 PASS（两通道都接近单流上限、合计接近且 ≤ 65636） | 未执行 | `S-12.txt` | 未执行 |
 | S-13 | 任务完成后容器清理 | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --confirm-manager-docker-same-host --docker-check local`；`docker ps -aq --filter label=zd.sandbox=1` | 输出为空；`任务结束后无残留容器` 为 PASS；未人工确认节点身份或 Docker CLI 不属于执行节点时为 SKIP（结论 INCOMPLETE） | 未执行 | `S-13.txt` | 未执行 |
 | S-14 | 并发与队列限制（2 并发 / 8 排队） | 并行提交 16 个 `time.sleep(5)` 任务：`seq 16 \| xargs -P16 -I{} curl ... /v1/jobs`；随后 `docker ps` | 至少 1 个 HTTP 429 `queue_full`；接受数 ≤ 10；无残留容器 | 未执行 | `S-14.txt` | 未执行 |
 | S-15 | HTTPS / mTLS 身份认证与证书错误处理 | 见 §5.1；或 `verify_isolation.py ... --client-cert ... --client-key ... --expect-mtls --invalid-client-cert ... --invalid-client-key ...` | 合法证书 200；无客户端证书 / 错误证书 / 不受信服务端证书均被拒绝；错误令牌 401；整体退出码 0 或 2（含 SKIP 时不得视为通过）。本地临时 TLS 单元测试（含“证书与私钥不匹配初始化失败”）仅证明客户端逻辑，**不能替代本节实机结论** | 未执行 | `S-15.txt` | 未执行 |
