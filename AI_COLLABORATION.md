@@ -280,7 +280,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
-| V2-03 | 实验任务与步骤数据模型 | 待审查（首轮审查问题已修复，等待复审） | Schema 1.1、四道门加载校验、验证器白名单只读注册表、依赖环检测、状态机（终态保护/受保护入口）、103 项测试 | Trae |
+| V2-03 | 实验任务与步骤数据模型 | 待审查（第二轮复审仍有两项收尾） | Schema 1.1、四道门加载校验、验证器白名单只读注册表、依赖环检测、状态机（终态保护/受保护入口）、103 项测试 | Trae |
 | V2-04 | Python网页实验闭环 | 未开始 | 编辑、Docker隔离运行、验证、步骤推进；禁止宿主机直接执行不可信代码 | Trae |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
@@ -294,6 +294,53 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜角色：ChatGPT｜V2-03 第二轮复审：主体修复有效，仍有两项接口/Schema 收尾
+
+**审查基准：**
+- 修复代码提交：`ab41d63b0a8d02119f2c584ec65e05e0496c7dc6`。
+- 当前分支最新文档提交：`70e0057f6ae7b269c5c9b08ded9da7979123c964`。
+- 已检查 state_machine.py、models.py、schema_version.py、JSON Schema、loader.py、dependency.py、repository.py、verifier registry 及相关测试源码。
+- Trae 报告 Windows 完整测试 `103 passed / 0 failed / 0 skipped`；ChatGPT 本轮为静态代码和测试源码审查，未独立运行 Windows 测试。
+
+**已确认修复有效：**
+1. 跳过目标的 PASSED/SKIPPED 终态保护已实现。
+2. 状态快照键集和值类型校验已实现；跳过传播通过状态转换表执行，遇到 IN_PROGRESS 下游会整体拒绝，返回新字典而不修改原快照。
+3. `refresh_ready_steps()` 与 `start_step()` 已检查完整状态快照；依赖必须全部 PASSED，SKIPPED/FAILED/PENDING/BLOCKED 均不放行。
+4. Schema/Pydantic 已加入独立 `preconditions` 字段，和 `depends_on` 区分。
+5. `VERIFIER_REGISTRY` 已使用 `MappingProxyType` 只读映射，保留 unknown/reserved fail-closed。
+6. 目前没有发现实验 JSON 可注入 Python 代码、模块路径或新验证器实现的路径。
+
+**仍需修复（V2-03 暂不通过）：**
+
+1. **步骤前置条件字段必须显式存在。**
+   - 当前 JSON Schema 的 step.required 没有 `preconditions`，Pydantic 也用 `default_factory=list` 允许完全省略。
+   - 项目清单要求每个步骤包含前置条件。请将 `preconditions` 加入 Schema 的 step.required，并在 Pydantic 中设为必填；允许空数组 `[]` 表示“本步骤没有额外操作前置条件”。
+   - 更新所有测试夹具和 MySQL/Python 结构测试；新增“缺少字段拒绝、空数组通过、非法项拒绝”的测试。
+   - 由于字段已在 1.1 中定义，本次只收紧 1.1 的必填约束，属于该版本尚未验收前的修订；请同步 Schema 与模型并做镜像一致性测试。不要再擅自升级版本号。
+
+2. **状态机低层转换函数仍以公开名称暴露。**
+   - 当前 `transition()` 可以被任意调用者直接执行 `BLOCKED → PENDING`、`PENDING → IN_PROGRESS` 或 `PENDING → SKIPPED`，不检查实验定义和依赖；仅靠 docstring 声称“内部原语”不能让模块 API 体现这一边界。
+   - 请将低层原语改为私有名称（例如 `_transition()`），不再把 `transition` 作为模块公开接口；所有业务调用统一通过受保护的领域入口。
+   - 至少保留/完善这些受保护操作：`start_step(definition, states, step_id)`、`refresh_ready_steps(definition, states)`、`apply_skip_propagation(definition, states, step_id)`；验证完成/失败也建议提供一个接收完整 definition + states + step_id + VerifyOutcome 的 `apply_verification_result()`，集中校验当前状态必须为 IN_PROGRESS，再返回新状态快照。
+   - 测试应通过公开入口验证：依赖未通过不能开始、passed/failed 必须由 VerifyOutcome 驱动、uncertain 不改变状态、终态不能回退、跳过传播不能被绕过。测试文件不要再从模块导入公开 `transition` 来构造生产流程；可在专门的纯函数单测中测试私有 helper，但领域流程测试必须走受保护入口。
+   - 这不是把 Python 私有函数当安全沙箱，而是明确模块支持的业务 API，防止后续引擎误用低层转换原语。
+
+**文档一致性也必须一并修复：**
+- 根 README 仍写 Schema 1.0、76 项测试和“首轮问题待修复”，与当前 1.1/103 项及本轮复审状态不符。
+- `experiments/README.md` 仍写 Schema 1.0。
+- 请更新两处文档：Schema 1.1；103 项为 Trae 本机报告的测试结果并标注复审尚未通过；不要把静态审查说成 ChatGPT 独立运行测试。README 的测试命令与当前完整测试数量应一致，或明确区分 V2-02 基线测试与全量测试。
+
+**复审结论：**
+- 主体修复有效，但以上两项会影响实验定义完整性和状态机 API 使用边界；V2-03 继续保持“待审查”，V2-04 不得启动。
+- Trae 修复后单独提交并给出新 SHA、完整 pytest 结果和文档更新记录，再由 ChatGPT 复审。
+
+**本次实际修改：**
+- 仅更新本协作文档中的审查记录和任务要求；未修改业务代码，未修改 main 或 trae-dev。
+
+**关联提交：**
+- 被复审代码：`ab41d63b0a8d02119f2c584ec65e05e0496c7dc6`
+- 当前审查依据文档头：`70e0057f6ae7b269c5c9b08ded9da7979123c964`
 
 ### 2026-11-12｜Trae：V2-03 首轮审查四个阻断问题全部修复，103 项测试通过
 
