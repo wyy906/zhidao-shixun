@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第五轮架构复审仍有两项阻塞：Query B 必须限定 exited/dead 状态、删除前重验 FinishedAt 并非强制删除；.env DACL 必须固定最终权限掩码并处理 owner 隐式 WRITE_DAC、父目录 owner/有效权限；第六轮修订通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第六轮架构修订已提交：Query B 状态白名单 exited/dead+四项删除前核验+force=false 不扩大范围；固定 ACE 模板 4 条含 OWNER RIGHTS 限制 owner 隐式 WRITE_DAC；父目录 Authz 有效权限+路径链+稳定目录句柄；待 ChatGPT 第六轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1203,7 +1203,8 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | R-4B-1：容器逃逸残余风险依赖 Docker Desktop/WSL2 VM 边界 | 极端内核漏洞场景下隔离失效 | cap_drop ALL、no-new-privileges、非 root、无 socket/privileged 缩小攻击面；VM 边界残余风险接受并记录；镜像内无任何密钥 | 已记录（接受） |
 | R-4B-2：attach 双向流协议已明确（stdin 原始/输出帧解复用），但 docker-py 实际行为需实测确认 | SDK 抽象与协议预期不符会导致实现偏差 | V2-04B 首项任务为协议探针测试（stdout/stderr 分流+EOF 验证），探针通过后才实现执行器；不符则验证低层协议再选实现，绝不静默退回宿主机执行 | 待 V2-04B 实测 |
 | R-4B-4：镜像锁定清单 executor_image_lock.json 已真实提交（V2-04A 第四轮），当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest，两者都填）并更新清单；批准后重跑安全测试；部署脚本属 V2-04B 计划实现 | 待负责人审批 |
-| R-4B-5：.env 精确 DACL 模板（从零构造完整 DACL + owner 核验 + 模板精确匹配 + 未知 ACE fail-closed）与父目录四权限（FILE_ADD_FILE/FILE_DELETE_CHILD/WRITE_DAC/WRITE_OWNER）枚举、重解析点拒绝尚未在 Windows 实机验证 | 若实际 ACL 行为与设计不符，令牌保护弱于预期 | V2-04B 按 SetNamedSecurityInfo 全量构造 + 启动重新读取安全描述符逐项比对模板实现，附 N-A1~N-A15 共 15 项正负向测试；校验失败拒绝启动；实测通过前不声称已验证 | 待 V2-04B 实测 |
+| R-4B-5：.env 固定 ACE 模板（4 ACE：OWNER RIGHTS 0x20000 / owner 0x13019F / SYSTEM 0x1F01FF / Administrators 0x1F01FF，逐项审计）+ OWNER RIGHTS 方案 + 父目录 owner 核验与 Authz 有效权限（泛型映射）+ 路径链检查与稳定目录句柄，尚未 Windows 实机验证 | ACL 实际行为与设计不符时令牌保护弱于预期 | V2-04B 按模板全量构造 + 启动逐项比对 + Authz 有效权限计算实现，附 N-A1~N-A21 共 21 项正负向测试；任一不符拒绝启动；Administrators FILE_ALL_ACCESS 为明确接受的本机管理员信任边界 | 待 V2-04B 实测 |
+| R-4B-6：清扫状态白名单（仅 exited/dead）与 force=false 非强制删除尚未 Docker 实测 | 误删 paused/created 等运行语义容器，或删除冲突处理不当 | 七项校验+四项删除前核验+force=false+失败不扩大范围；N-S1~N-S23 负向测试设计覆盖全部状态与竞态场景 | 待 V2-04B 实测 |
 | R-4B-3：Trae 本机未安装 Docker（已实测确认） | N13–N18/T5–T12 真实容器行为无法在本机验证 | mock/协议层测试本机可跑（N1–N12/T1–T4）；真实容器测试需负责人 Docker Desktop 环境，交付时如实标注运行环境 | 依赖负责人环境 |
 | 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
 
@@ -1720,6 +1721,65 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 - 本轮未修改业务代码、未运行 Docker/ACL/attach 实测、未批准任何镜像 digest、未启动容器执行、未合并分支。
 - 项目负责人明确授权合并前，V2 分支绝不与 `main` 合并；`main` 与 `trae-dev` 保持不动。
 
+
+### 2026-11-12｜Trae：V2-04A 架构第六轮修订（清扫状态白名单 / 固定 ACE 模板与 OWNER RIGHTS / 父目录有效权限与路径链，docs-only）
+
+**问题一修复：Query B 状态白名单精确化 + 非强制删除（响应第五轮阻塞项 1）**
+
+- **状态读取**：必须明确读取 `State.Status` 字段；读取失败、字段缺失或值未知 → 跳过 + 审计。
+- **状态白名单（Query B 仅允许两种状态进入删除候选）**：
+  - `exited`、`dead`（Docker 官方状态枚举，参考 docs.docker.com/container ls）；
+  - `created`、`paused`、`restarting`、`removing`、`running`、未知值、缺失值、读取异常 → **一律跳过 + 审计**（paused 仍是运行中语义，绝不因"非 running"推断可删）。
+- **其余校验保留不变**：instance UUID 存在/非空/格式/≠self、managed 标签、FinishedAt 带时区解析、5 分钟宽限期。
+- **删除前二次核验升级为四项**（重新读取容器后逐一确认）：①managed 标签仍为 true；②instance 标签仍与候选记录一致；③`State.Status` 仍**精确属于** {exited, dead}；④FinishedAt 仍可解析且仍超过 5 分钟宽限期。任一不满足 → 跳过 + 审计。
+- **删除方式**：显式 `force=false`（非强制）；删除时遇到运行中冲突、状态变化或 Docker API 异常 → **只记录审计并跳过该容器**，绝不 force retry；**不因删除失败扩大清扫范围**（本次清扫到此为止，失败容器由下一次启动/清扫周期按相同规则重新评估）。
+- **补充负向测试（V2-04B 实现，mock 可验证；延续 N-S 编号）**：
+
+| # | 负向用例 | 预期 |
+|---|---|---|
+| N-S16 | 候选容器状态 paused | 跳过 + 审计，不删除 |
+| N-S17 | 候选容器状态 restarting | 跳过 + 审计 |
+| N-S18 | 候选容器状态 removing | 跳过 + 审计 |
+| N-S19 | 候选容器状态 created | 不进入旧实例清扫候选 |
+| N-S20 | State.Status 为未知值/缺失/读取异常 | 跳过 + 审计 |
+| N-S21 | 删除前二次核验发现 FinishedAt 发生变化 | 跳过 + 审计 |
+| N-S22 | 删除前 FinishedAt 缺失或不再超过宽限期 | 跳过 + 审计 |
+| N-S23 | 非强制删除返回运行中冲突 | 记审计跳过；断言从未发起 force 重试；清扫范围未扩大 |
+
+**问题二修复：固定 ACE 模板（唯一批准模板，可直接实施与逐项审计）+ OWNER RIGHTS 方案 + 父目录有效权限与路径链（响应第五轮阻塞项 2）**
+
+- **方案选择：采用方案 A（OWNER RIGHTS SID）限制 owner 隐式权限**。理由：Windows 对象 owner 默认隐式持有 READ_CONTROL 与 WRITE_DAC，若不限制，同一运行用户身份下的其他进程（含被攻破进程）可自行修改 DACL 授予自己访问权，绕过整个白名单体系；`OWNER RIGHTS`（S-1-3-4）ACE 将 owner 的隐式 READ_CONTROL/WRITE_DAC 重定向为该 ACE 指定的掩码，模板中该掩码不含 WRITE_DAC/WRITE_OWNER，使 owner（及其同用户进程）无法修改 DACL。 Administrators=FILE_ALL_ACCESS 属于**明确接受的本机管理员信任边界**：本机管理员可读取与修改令牌文件，不得宣传为管理员也无法访问。
+- **固定 ACE 模板（唯一批准模板；以下掩码为最终值，不在 V2-04B 编码时临时决定）**：
+
+| 序 | 主体 SID | 类型 | Access Mask（hex） | 符号分解 | Flags |
+|---|---|---|---|---|---|
+| 1 | S-1-3-4（OWNER RIGHTS） | ACCESS_ALLOWED (0x0) | `0x00020000` | READ_CONTROL | 0x0 |
+| 2 | `<执行服务运行用户 SID>`（= 文件 owner，启动时核验实际 owner 与运行身份一致） | ACCESS_ALLOWED (0x0) | `0x0013019F` | DELETE(0x00010000) + READ_CONTROL(0x00020000) + SYNCHRONIZE(0x00100000) + FILE_READ_DATA(0x1) + FILE_WRITE_DATA(0x2) + FILE_APPEND_DATA(0x4) + FILE_READ_EA(0x8) + FILE_WRITE_EA(0x10) + FILE_READ_ATTRIBUTES(0x80) + FILE_WRITE_ATTRIBUTES(0x100) | 0x0 |
+| 3 | S-1-5-18（SYSTEM） | ACCESS_ALLOWED (0x0) | `0x001F01FF` | FILE_ALL_ACCESS（STANDARD_RIGHTS_REQUIRED(0x000F0000)=DELETE+READ_CONTROL+WRITE_DAC+WRITE_OWNER，+SYNCHRONIZE(0x00100000)，+文件位 0x1FF） | 0x0 |
+| 4 | S-1-5-32-544（Administrators） | ACCESS_ALLOWED (0x0) | `0x001F01FF` | 同 SYSTEM（FILE_ALL_ACCESS） | 0x0 |
+
+  - **允许的 ACE 总数：4**；顺序固定如上（序 1 在前，保证 OWNER RIGHTS 语义明确）；无 deny ACE；无继承 ACE（SE_DACL_PROTECTED 下全部为显式、flags=0x0、无 OBJECT/callback 标志）；owner 最终有效权限不含 WRITE_DAC/WRITE_OWNER/FILE_DELETE_CHILD。
+  - 实施与校验：`SetNamedSecurityInfo` 一次性全量写入该模板（关闭继承）→ 重新枚举 DACL → **ACE 数量、顺序、类型、SID、掩码、flags 与模板逐项一致**才通过；实际 owner SID ≠ 运行用户 SID → 拒绝启动；任何额外/未知/deny/继承/对象/回调 ACE → 拒绝启动；**OWNER RIGHTS ACE 缺失或掩码不符 → 拒绝启动**。
+
+- **父目录与路径安全升级**：
+  1. **父目录 owner 必须核验**：实际 owner ∈ 白名单（运行用户/SYSTEM/Administrators）；非白名单 owner 拒绝启动（其隐式 WRITE_DAC 可改目录 DACL）；
+  2. **泛型权限映射**：评估一律使用 Windows 授权 API（AuthzComputeEffectiveRightsFromAcl / AccessCheck）对**实际运行身份**计算有效访问权限，GENERIC_ALL(0x10000000)/GENERIC_WRITE(0x40000000)/GENERIC_READ/GENERIC_EXECUTE 必须经系统按文件对象类型映射后评估，**不得直接与字面常量比对**；显式 ACE 与继承 ACE 都纳入有效权限计算；无法可靠计算有效权限 → 拒绝启动；
+  3. **父目录不安全权限判据（有效权限口径）**：非白名单主体的有效访问含 DELETE、WRITE_DAC、WRITE_OWNER、FILE_ADD_FILE、FILE_DELETE_CHILD 任一 → 不安全 → 拒绝启动；
+  4. **路径链检查**：从受信任根目录（项目根）到 `.env` 所在目录的**每一级组件**都执行 owner 核验 + 有效权限检查；同时采用**稳定目录句柄方案**防上级替换：执行服务启动时以 `FILE_FLAG_BACKUP_SEMANTICS` 打开 `.env` 父目录并持有句柄，后续对 `.env` 的打开/读取均从该已持有句柄相对定位（避免 TOCTOU 经路径重解析），周期性重验路径链；祖先目录可被非白名单主体替换/重命名 → 拒绝启动；无法证明路径安全 → 拒绝启动。
+- **补充负向测试（V2-04B 实现，需 Windows 实机；延续 N-A 编号）**：
+
+| # | 负向用例 | 预期 |
+|---|---|---|
+| N-A16 | 父目录 owner 为非白名单主体 | 拒绝启动 |
+| N-A17 | OWNER RIGHTS ACE 缺失或掩码不符模板 | 拒绝启动 |
+| N-A18 | 非白名单主体经 GENERIC_ALL 间接获得危险权限 | 拒绝启动 |
+| N-A19 | 非白名单主体经 GENERIC_WRITE 间接获得危险权限 | 拒绝启动 |
+| N-A20 | 祖先目录可被非白名单主体替换/重命名 | 拒绝启动 |
+| N-A21 | 有效访问权限无法可靠计算（Authz 失败/不确定） | 拒绝启动 |
+
+- 声明：以上模板与父目录/路径链行为**尚未在 Windows 实机验证**（含泛型映射的实际掩码展开），V2-04B 实测通过前不声称已验证。
+
+**范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；`executor_image_lock.json` 保持原样（pending、digest 全 null、审批状态未动）；未实现容器执行、未新增 subprocess 路径、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未执行任何合并。验证 = 文档设计审查 + 既有基线回归（238 passed / 0 failed / 0 skipped）；新增设计未运行实现，mock 测试（N-S 系列）与 Windows/Docker 实机测试（N-A 系列）区分标注，实测均归 V2-04B。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-04A 第五轮架构复审：仍有两项安全边界待明确
 
