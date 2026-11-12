@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第四轮复审仍有两项阻塞：旧实例清扫须拒绝缺失/无效 instance 标签或 FinishedAt；.env 须精确构造并核验 DACL、所有者及父目录权限/重解析点；第五轮复审通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第五轮架构修订已提交：Query B 七项严格校验 fail-closed + 精确 DACL 模板与父目录四权限枚举；待 ChatGPT 第五轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1203,7 +1203,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | R-4B-1：容器逃逸残余风险依赖 Docker Desktop/WSL2 VM 边界 | 极端内核漏洞场景下隔离失效 | cap_drop ALL、no-new-privileges、非 root、无 socket/privileged 缩小攻击面；VM 边界残余风险接受并记录；镜像内无任何密钥 | 已记录（接受） |
 | R-4B-2：attach 双向流协议已明确（stdin 原始/输出帧解复用），但 docker-py 实际行为需实测确认 | SDK 抽象与协议预期不符会导致实现偏差 | V2-04B 首项任务为协议探针测试（stdout/stderr 分流+EOF 验证），探针通过后才实现执行器；不符则验证低层协议再选实现，绝不静默退回宿主机执行 | 待 V2-04B 实测 |
 | R-4B-4：镜像锁定清单 executor_image_lock.json 已真实提交（V2-04A 第四轮），当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest，两者都填）并更新清单；批准后重跑安全测试；部署脚本属 V2-04B 计划实现 | 待负责人审批 |
-| R-4B-5：.env DACL 显式构造与启动枚举校验、父目录替换权限检查尚未在 Windows 实机验证 | ACL 行为（/grant:r 不清除其他主体 ACE 等）若与设计不符，令牌保护可能弱于预期 | V2-04B 按显式构造+枚举校验+白名单核对实现，附 5 项正负向 ACL 测试（N-A1~N-A5），实测通过前不声称已验证；校验失败执行服务拒绝启动 | 待 V2-04B 实测 |
+| R-4B-5：.env 精确 DACL 模板（从零构造完整 DACL + owner 核验 + 模板精确匹配 + 未知 ACE fail-closed）与父目录四权限（FILE_ADD_FILE/FILE_DELETE_CHILD/WRITE_DAC/WRITE_OWNER）枚举、重解析点拒绝尚未在 Windows 实机验证 | 若实际 ACL 行为与设计不符，令牌保护弱于预期 | V2-04B 按 SetNamedSecurityInfo 全量构造 + 启动重新读取安全描述符逐项比对模板实现，附 N-A1~N-A15 共 15 项正负向测试；校验失败拒绝启动；实测通过前不声称已验证 | 待 V2-04B 实测 |
 | R-4B-3：Trae 本机未安装 Docker（已实测确认） | N13–N18/T5–T12 真实容器行为无法在本机验证 | mock/协议层测试本机可跑（N1–N12/T1–T4）；真实容器测试需负责人 Docker Desktop 环境，交付时如实标注运行环境 | 依赖负责人环境 |
 | 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
 
@@ -1613,6 +1613,75 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 - 本轮未修改业务代码、未执行 Docker、未批准任何镜像 digest、未启动 V2-04B、未合并分支。
 - `main` 与 `trae-dev` 保持不动；项目负责人明确授权合并前，V2 分支绝不与 `main` 合并。
 
+
+### 2026-11-12｜Trae：V2-04A 架构第五轮修订（Query B 严格校验 fail-closed / 精确 DACL 模板与父目录权限枚举，docs-only）
+
+**问题一修复：旧实例孤儿清扫（Query B）严格校验，任何缺失/无效/不确定均 fail-closed（响应第四轮阻塞项 1）**
+
+Query B 判定从"三条件"细化为**七项全通过才可进入删除候选集**，顺序如下：
+
+1. **instance 标签必须存在**：容器 Labels 中缺少 `zhidao-exec-instance` 键 → 跳过 + 审计（null/缺失绝不隐式解释为旧实例）；
+2. **instance 值必须非空且格式有效**：空字符串、非法格式（非 `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}` UUID 规范，执行服务 instance_id 即 UUID）→ 跳过 + 审计；
+3. **instance 值必须明确 ≠ 当前实例 ID**（字符串严格比较）；
+4. **容器状态必须明确确认非 running**：读取状态失败、状态值非预期枚举（unknown/removing 等不确定态）→ 跳过 + 审计；
+5. **FinishedAt 必须成功解析为带时区的时间**：缺失、空、格式错误、naive（无时区）时间 → 跳过 + 审计（不带时区的时间一律拒绝，绝不猜测时区）；
+6. **宽限期判定**：解析后的 FinishedAt（UTC 化）与当前时间（UTC）比较，距现在 > 5 分钟才通过；无法判定 → 跳过 + 审计；
+7. **删除前二次核验**：重新读取该容器，确认 managed 标签仍为 true、instance 标签仍等于候选集判定值、状态仍非 running；任一发生变化 → 跳过 + 审计（防列表与删除之间的竞态）。
+
+**总规则**：以上任意一步的字段缺失、为空、格式错误、读取异常或状态不确定 → **跳过该容器 + 记录审计，绝不进入删除候选集**。
+
+**保留不变量**：查询 B 的 Docker API 层过滤仍先限定 `zhidao-exec-managed=true`；查询 A 仍用 managed+instance 双过滤；无 managed 标签的容器永远不进删除候选集；禁止全局清扫 / `docker system prune` / `docker container prune`；running 容器绝不删除。
+
+**补充负向测试（V2-04B 实现，mock 可验证；延续 N-S 编号）**：
+
+| # | 负向用例 | 预期 |
+|---|---|---|
+| N-S8 | 容器缺失 instance 标签 | 跳过 + 审计，不进候选集 |
+| N-S9 | instance 为空字符串 | 跳过 + 审计 |
+| N-S10 | instance 格式非法（非 UUID） | 跳过 + 审计 |
+| N-S11 | FinishedAt 缺失或空 | 跳过 + 审计 |
+| N-S12 | FinishedAt 格式错误或不带时区（naive） | 跳过 + 审计 |
+| N-S13 | Docker API 读取标签或状态抛异常 | 跳过 + 审计，清扫流程继续处理其余容器 |
+| N-S14 | 删除前二次核验发现 instance 标签变化 | 跳过 + 审计 |
+| N-S15 | 删除前二次核验发现容器变为 running | 跳过 + 审计 |
+
+**问题二修复：.env 精确 DACL 模板 + 父目录权限具体枚举 + 路径对象校验（响应第四轮阻塞项 2）**
+
+- **批准主体 SID 明确化**（按实际运行身份最终确定，V2-04B 实测时在配置中固化）：
+  - 文件所有者 = 执行服务运行用户（**owner 必须显式设置并核验实际 owner 与预期运行身份一致**，不一致拒绝启动）；
+  - `SYSTEM`（S-1-5-18）；
+  - `Administrators`（S-1-5-32-544）。
+- **精确 DACL 模板构造**（废弃"清除白名单外 ACE 再授予"的增量式描述，改为**从零构造完整 DACL**）：
+  1. 每个白名单主体的**允许权限逐项固定**（模板明确：如 owner=FILE_GENERIC_READ|FILE_GENERIC_WRITE|DELETE，SYSTEM=FILE_ALL_ACCESS，Administrators=FILE_ALL_ACCESS——具体位掩码在配置中定义），**不保留白名单主体原有的过宽权限**；
+  2. `SetNamedSecurityInfo` 一次性写入完整 DACL（替代在现有 DACL 上追加），继承显式关闭（SE_DACL_PROTECTED）；
+  3. **设置后重新读取安全描述符**，逐项核对：实际 owner == 预期运行身份、DACL == 批准模板（ACE 数量、每条 ACE 的主体 SID/类型/权限掩码/标志全部一致）、继承标志正确；
+  4. **fail-closed 清单**：最终 DACL 与模板不完全一致、存在任何额外或无法安全解释的 ACE（未知 deny ACE、继承 ACE（继承已关闭却仍出现）、对象 ACE、回调 ACE 等）、ACL 设置失败、读取失败、无法识别主体（SID 解析失败）→ **拒绝执行服务启动**。
+- **父目录权限检查具体化**（不再是笼统"修改/删除/重命名"）：枚举父目录 DACL，非白名单主体（含继承与显式 ACE）若拥有以下任一权限 → 判定不安全 → 拒绝启动：
+  - `FILE_ADD_FILE`（可创建替换文件）
+  - `FILE_DELETE_CHILD`（可删除 .env）
+  - `WRITE_DAC`（可改 .env 或目录的 DACL）
+  - `WRITE_OWNER`（可更改所有者绕过检查）
+- **路径对象校验**：拒绝 `.env` 为符号链接或任何重解析点（Reparse Point：symlink/junction/mount point）；解析实际路径（GetFinalPathNameByHandle 等）确认与预期一致，防路径绕过；无法解析、无法检查或结果不确定 → 拒绝启动。
+- **补充负向测试（V2-04B 实现，需 Windows 实机；延续 N-A 编号）**：
+
+| # | 负向用例 | 预期 |
+|---|---|---|
+| N-A6 | 白名单主体存在超出批准权限范围的 ACE | 检测失败，拒绝启动 |
+| N-A7 | DACL 中存在额外未知主体 ACE | 拒绝启动 |
+| N-A8 | DACL 中存在未知 deny ACE | 拒绝启动 |
+| N-A9 | 父目录存在非白名单主体的 WRITE_DAC | 拒绝启动 |
+| N-A10 | 父目录存在非白名单主体的 WRITE_OWNER | 拒绝启动 |
+| N-A11 | 父目录存在非白名单主体的 FILE_DELETE_CHILD | 拒绝启动 |
+| N-A12 | 父目录存在非白名单主体的 FILE_ADD_FILE | 拒绝启动 |
+| N-A13 | .env 为符号链接或重解析点 | 拒绝启动 |
+| N-A14 | 实际 owner 与预期运行身份不符 | 拒绝启动 |
+| N-A15 | ACL 枚举或设置过程异常/失败 | 拒绝启动（fail-closed） |
+
+- 声明：以上 DACL/父目录/重解析点行为**尚未在 Windows 实机验证**，V2-04B 实测通过前不声称已验证（延续第四轮声明）。
+
+**范围确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；`executor_image_lock.json` 保持原样（pending、digest 全 null、未改审批状态）；未实现容器执行、未新增 subprocess 路径、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未执行任何合并。
+
+**本轮验证情况**：仅文档审查与既有基线回归（`.venv\Scripts\python.exe -m pytest -q` → 238 passed / 0 failed / 0 skipped）；新增的两项安全设计（Query B 校验、精确 DACL）为文档设计，**未运行实现**，其实测归 V2-04B。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-04A 第四轮架构复审：仍需修订两项安全边界
 
