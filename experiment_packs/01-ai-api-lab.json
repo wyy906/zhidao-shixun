@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "overwrite": true,
+  "experiment": {
+    "title": "实验一：Python 真实接入大模型 API",
+    "type": "python",
+    "software": "Windows Terminal + 记事本 + Microsoft Edge + Python 3",
+    "description": "不使用任何模拟数据：用 Python 标准库向一个公开的大模型接口发起真实 HTTP 请求，亲眼看到 AI 返回的文本，并理解「构造请求 → 发送 → 读取响应 → 展示结果」的完整链路。全程只依赖 Python 自带模块，无需安装第三方库，也无需 API Key。",
+    "prerequisites": [
+      "Python 基础语法（import、print、字符串）",
+      "知道命令行/终端是什么"
+    ],
+    "criteria": [
+      "能在终端确认 Python 可用",
+      "能新建并保存 ai_client.py",
+      "脚本运行后打印出真实的 AI 回复",
+      "能说清楚请求地址、请求头与响应内容的关系"
+    ],
+    "status": "published"
+  },
+  "steps": [
+    {
+      "title": "打开终端并确认 Python 环境",
+      "instruction": "在任务栏搜索「命令提示符」或「Windows Terminal」并打开。在终端里输入 python --version 后回车，确认本机已安装 Python 3。",
+      "expected_result": "终端输出 Python 3.x.x 版本号",
+      "common_errors": [
+        "提示“python 不是内部或外部命令” → Python 未安装或未加入 PATH",
+        "打开了应用商店 → 到 设置-应用-高级应用设置-应用执行别名 里关闭 python 的别名"
+      ],
+      "adapter": {
+        "target_app": ["WindowsTerminal.exe", "cmd.exe", "conhost.exe"],
+        "window_title": ["命令提示符", "cmd.exe"],
+        "keywords": []
+      }
+    },
+    {
+      "title": "用记事本新建脚本文件",
+      "instruction": "打开记事本，点击顶部的「添加新标签页」按钮新建一个空白页。接下来所有代码都写在这里。",
+      "expected_result": "记事本中出现一个空白的编辑页面",
+      "common_errors": [
+        "记事本里还是旧文件 → 点右上角标签栏的 + 号新建，不要直接改旧文件"
+      ],
+      "adapter": {
+        "target_app": ["notepad.exe"],
+        "window_title": ["记事本", "Notepad"],
+        "keywords": ["添加新标签页"],
+        "type_hint": "Button"
+      }
+    },
+    {
+      "title": "编写 AI 调用脚本",
+      "instruction": "把下面的代码原样输入记事本（注意缩进）：\n\nimport urllib.parse, urllib.request\n\nprompt = \"用一句话介绍你自己\"\nurl = \"https://text.pollinations.ai/\" + urllib.parse.quote(prompt)\n\nreq = urllib.request.Request(url, headers={\"User-Agent\": \"Mozilla/5.0\"})\nwith urllib.request.urlopen(req, timeout=30) as resp:\n    print(\"AI 回复：\", resp.read().decode(\"utf-8\").strip())\n\n说明：urllib 是 Python 自带模块；url 就是真正的大模型接口地址；headers 让服务端把请求识别为普通浏览器。",
+      "expected_result": "记事本编辑区中代码完整、缩进正确（with 下面的 print 要缩进 4 个空格）",
+      "common_errors": [
+        "缩进错乱 → Python 对缩进敏感，print 必须在 with 下一行并缩进",
+        "中文引号 → 代码里的引号必须用英文半角引号"
+      ],
+      "adapter": {
+        "target_app": ["notepad.exe"],
+        "window_title": ["记事本", "Notepad"],
+        "keywords": ["文本编辑器"],
+        "type_hint": "Document"
+      }
+    },
+    {
+      "title": "保存为 ai_client.py",
+      "instruction": "在记事本按 Ctrl+S，选择保存到「桌面」，文件名填 ai_client.py，保存类型选择「所有文件」，点击保存。注意不要保存成 ai_client.py.txt。",
+      "expected_result": "桌面出现 ai_client.py，记事本标题栏显示 ai_client.py",
+      "common_errors": [
+        "保存成了 ai_client.py.txt → 保存类型选“所有文件”",
+        "保存到其他目录 → 后面运行脚本时路径要对得上"
+      ],
+      "adapter": {
+        "target_app": ["notepad.exe"],
+        "window_title": ["记事本", "Notepad"],
+        "keywords": ["文件"],
+        "type_hint": "MenuItem"
+      }
+    },
+    {
+      "title": "在终端运行脚本",
+      "instruction": "回到终端，依次执行：\n\ncd %USERPROFILE%\\Desktop\npython ai_client.py\n\n第一条命令切换到桌面目录，第二条命令运行脚本。",
+      "expected_result": "终端开始执行脚本，等待网络请求返回（一般几秒内）",
+      "common_errors": [
+        "提示“系统找不到指定的路径” → 文件没有保存到桌面，回到上一步检查",
+        "提示“python: can't open file” → 当前目录不对，确认已执行 cd 命令",
+        "等很久没有输出 → 网络受限，可用浏览器访问 https://text.pollinations.ai/hello 测试连通性"
+      ],
+      "adapter": {
+        "target_app": ["WindowsTerminal.exe", "cmd.exe", "conhost.exe"],
+        "window_title": ["命令提示符", "cmd.exe"],
+        "keywords": []
+      }
+    },
+    {
+      "title": "查看真实 AI 回复",
+      "instruction": "观察终端输出：应该出现一行以「AI 回复：」开头的中文内容，这就是大模型实时生成的文本，每次运行结果可能不同。若出现报错，把报错原文读一遍，对照常见错误排查。",
+      "expected_result": "终端打印出「AI 回复：……」的真实模型输出",
+      "common_errors": [
+        "URLError / timeout → 网络或接口暂时不可用，重试或更换网络",
+        "UnicodeDecodeError → decode 时确认使用 utf-8"
+      ],
+      "adapter": {
+        "target_app": ["WindowsTerminal.exe", "cmd.exe", "conhost.exe"],
+        "window_title": ["命令提示符", "cmd.exe"],
+        "keywords": []
+      }
+    },
+    {
+      "title": "在浏览器中验证同一个 AI 接口",
+      "instruction": "打开 Microsoft Edge，在地址栏输入 https://text.pollinations.ai/你好 后回车，页面会直接显示模型返回的文本。对比它和脚本输出的格式差异：浏览器直接展示纯文本，而脚本是把响应读进变量后再打印。",
+      "expected_result": "浏览器页面显示一段 AI 生成的中文回答",
+      "common_errors": [
+        "页面空白 → 刷新一次；仍不行则说明网络无法访问该接口",
+        "提示 429 → 请求过于频繁，稍等后再试"
+      ],
+      "adapter": {
+        "target_app": ["msedge.exe", "chrome.exe"],
+        "window_title": ["Microsoft Edge", "Google Chrome"],
+        "keywords": ["地址和搜索栏", "地址栏"],
+        "type_hint": "Edit"
+      }
+    }
+  ]
+}

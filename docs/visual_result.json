@@ -1,0 +1,80 @@
+{
+  "software": "MySQL Workbench",
+  "window_title": "MySQL Workbench - student_db",
+  "elements": [
+    {
+      "name": "Schemas",
+      "control_type": "Text",
+      "x": 20,
+      "y": 135,
+      "width": 50,
+      "height": 20,
+      "confidence": 0.9
+    },
+    {
+      "name": "student_db",
+      "control_type": "TreeItem",
+      "x": 20,
+      "y": 165,
+      "width": 60,
+      "height": 20,
+      "confidence": 0.9
+    },
+    {
+      "name": "Tables",
+      "control_type": "TreeItem",
+      "x": 30,
+      "y": 195,
+      "width": 50,
+      "height": 20,
+      "confidence": 0.9
+    },
+    {
+      "name": "student",
+      "control_type": "TreeItem",
+      "x": 30,
+      "y": 225,
+      "width": 50,
+      "height": 20,
+      "confidence": 0.9
+    },
+    {
+      "name": "course",
+      "control_type": "TreeItem",
+      "x": 30,
+      "y": 255,
+      "width": 50,
+      "height": 20,
+      "confidence": 0.9
+    },
+    {
+      "name": "Create Schema",
+      "control_type": "Button",
+      "x": 100,
+      "y": 140,
+      "width": 80,
+      "height": 30,
+      "confidence": 0.95
+    },
+    {
+      "name": "SQL Editor",
+      "control_type": "Tab",
+      "x": 220,
+      "y": 220,
+      "width": 80,
+      "height": 20,
+      "confidence": 0.9
+    },
+    {
+      "name": "Apply",
+      "control_type": "Button",
+      "x": 685,
+      "y": 810,
+      "width": 60,
+      "height": 30,
+      "confidence": 0.95
+    }
+  ],
+  "current_state": "The UI displays the MySQL Workbench interface connected to the 'student_db' schema. The left navigator shows the schema structure with tables 'student' and 'course'. The main area is an empty SQL Editor pane, and an 'Apply' button is visible at the bottom right.",
+  "confidence": 0.95
+}

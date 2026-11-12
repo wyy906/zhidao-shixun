@@ -1,0 +1,40 @@
+/* 全局样式 */
+:root {
+  --zd-primary: #4f6ef7;
+  --zd-primary-light: #7b93fa;
+  --zd-bg: #f5f7fb;
+  --zd-sidebar: #1f2937;
+  --zd-success: #22c55e;
+  --zd-warning: #f59e0b;
+  --zd-danger: #ef4444;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background-color: var(--zd-bg);
+  color: #1f2937;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.page-container {
+  padding: 24px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: #111827;
+}

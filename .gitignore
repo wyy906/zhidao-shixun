@@ -1,3 +1,8 @@
+# ===========================================
+# 智导实训 · Git 忽略规则
+# 原则：密钥、真实数据、依赖、构建产物、大体积素材一律不入库
+# ===========================================
+
 # Secrets and local environment
 .env
 .env.*
@@ -30,6 +35,10 @@ build/
 .output/
 coverage/
 .vite/
+*.tsbuildinfo
+# vite.config.ts 的编译产物（由 tsc -b 生成，不应入库）
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # Local databases and user data
 *.sqlite
@@ -44,6 +53,15 @@ user_uploads/
 logs/
 *.pid
 *.seed
+
+# Local review snapshot (含 .env 副本与真实数据库，仅保留在本地)
+ai_review/
+
+# 桌面端运行期截图/调试图
+.screenshots/
+
+# 调试用截图（docs 下仅保留文字说明，图片含个人桌面内容）
+docs/*.png
 
 # Editors and OS
 .vscode/
