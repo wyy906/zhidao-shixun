@@ -1,4 +1,10 @@
-"""步骤状态转换规则测试：转换表、验证结果驱动、终态保护、受保护入口、快照校验、跳过传播。"""
+"""步骤状态转换规则测试。
+
+组织方式（对应第二轮复审要求）：
+- TRANSITIONS 表与低层原语行为：在纯函数单测中直接测试私有 _transition（不构造业务流程）；
+- 领域流程：全部通过公开受保护入口 start_step / refresh_ready_steps /
+  apply_skip_propagation / apply_verification_result 验证，不直接调用底层转换函数模拟生产业务。
+"""
 
 import sys
 from pathlib import Path
@@ -12,13 +18,14 @@ from app.experiments.state_machine import (
     DependencyNotSatisfied,
     IllegalTransition,
     InvalidStateSnapshot,
+    _transition,
     apply_skip_propagation,
+    apply_verification_result,
     can_start,
     can_transition,
     compute_initial_states,
     refresh_ready_steps,
     start_step,
-    transition,
 )
 
 import sys as _sys
@@ -39,10 +46,11 @@ def test_transition_table_is_total_and_terminal() -> None:
 
 
 def test_all_legal_transitions_succeed() -> None:
+    """纯函数单测：TRANSITIONS 表行为（私有原语，非业务流程）。"""
     legal = [
         (StepStatus.PENDING, StepStatus.IN_PROGRESS, None),
         (StepStatus.PENDING, StepStatus.SKIPPED, None),
-        (StepStatus.PENDING, StepStatus.BLOCKED, None),  # 依赖失效传播（V2-03 审查修复新增）
+        (StepStatus.PENDING, StepStatus.BLOCKED, None),  # 依赖失效传播
         (StepStatus.BLOCKED, StepStatus.PENDING, None),
         (StepStatus.BLOCKED, StepStatus.SKIPPED, None),
         (StepStatus.IN_PROGRESS, StepStatus.PASSED, VerifyOutcome.PASSED),
@@ -50,13 +58,14 @@ def test_all_legal_transitions_succeed() -> None:
         (StepStatus.IN_PROGRESS, StepStatus.SKIPPED, None),
         (StepStatus.FAILED, StepStatus.IN_PROGRESS, None),
         (StepStatus.FAILED, StepStatus.SKIPPED, None),
-        (StepStatus.FAILED, StepStatus.BLOCKED, None),  # 依赖失效传播（V2-03 审查修复新增）
+        (StepStatus.FAILED, StepStatus.BLOCKED, None),  # 依赖失效传播
     ]
     for current, target, outcome in legal:
-        assert transition(current, target, verify_outcome=outcome) is target
+        assert _transition(current, target, verify_outcome=outcome) is target
 
 
 def test_all_illegal_transitions_rejected() -> None:
+    """纯函数单测：非法组合在表层面被拒绝。"""
     illegal = [
         (StepStatus.PASSED, StepStatus.IN_PROGRESS, None),
         (StepStatus.PASSED, StepStatus.FAILED, VerifyOutcome.FAILED),
@@ -64,36 +73,47 @@ def test_all_illegal_transitions_rejected() -> None:
         (StepStatus.SKIPPED, StepStatus.PENDING, None),
         (StepStatus.PENDING, StepStatus.PASSED, VerifyOutcome.PASSED),  # 跳过 in_progress 直接通过
         (StepStatus.BLOCKED, StepStatus.IN_PROGRESS, None),
-        (StepStatus.IN_PROGRESS, StepStatus.BLOCKED, None),  # 执行中不能被外部拉回（审查修复）
+        (StepStatus.IN_PROGRESS, StepStatus.BLOCKED, None),  # 执行中不能被外部拉回
         (StepStatus.FAILED, StepStatus.PASSED, VerifyOutcome.PASSED),
     ]
     for current, target, outcome in illegal:
         with pytest.raises(IllegalTransition):
-            transition(current, target, verify_outcome=outcome)
+            _transition(current, target, verify_outcome=outcome)
 
 
 def test_passed_requires_passed_outcome() -> None:
     for outcome in (None, VerifyOutcome.FAILED, VerifyOutcome.UNCERTAIN):
         with pytest.raises(IllegalTransition):
-            transition(StepStatus.IN_PROGRESS, StepStatus.PASSED, verify_outcome=outcome)
+            _transition(StepStatus.IN_PROGRESS, StepStatus.PASSED, verify_outcome=outcome)
 
 
 def test_failed_requires_failed_outcome() -> None:
     for outcome in (None, VerifyOutcome.PASSED):
         with pytest.raises(IllegalTransition):
-            transition(StepStatus.IN_PROGRESS, StepStatus.FAILED, verify_outcome=outcome)
+            _transition(StepStatus.IN_PROGRESS, StepStatus.FAILED, verify_outcome=outcome)
 
 
 def test_uncertain_never_advances() -> None:
     for target in (StepStatus.PASSED, StepStatus.FAILED, StepStatus.IN_PROGRESS, StepStatus.SKIPPED):
         with pytest.raises(IllegalTransition):
-            transition(StepStatus.IN_PROGRESS, target, verify_outcome=VerifyOutcome.UNCERTAIN)
+            _transition(StepStatus.IN_PROGRESS, target, verify_outcome=VerifyOutcome.UNCERTAIN)
 
 
 def test_can_transition_pure_table() -> None:
     assert can_transition(StepStatus.PENDING, StepStatus.IN_PROGRESS)
     assert not can_transition(StepStatus.PENDING, StepStatus.PASSED)
     assert not can_transition(StepStatus.PASSED, StepStatus.PASSED)
+
+
+def test_module_has_no_public_transition_api() -> None:
+    """低层原语已私有化：业务代码不能从模块导入公开 transition()。"""
+    import app.experiments.state_machine as sm
+
+    assert not hasattr(sm, "transition")
+    assert hasattr(sm, "_transition")
+    # 公开受保护入口齐全
+    for name in ("start_step", "refresh_ready_steps", "apply_skip_propagation", "apply_verification_result"):
+        assert hasattr(sm, name)
 
 
 def test_initial_states_and_can_start() -> None:
@@ -315,21 +335,75 @@ def test_start_step_rejects_unknown_step_and_bad_snapshot() -> None:
 
 
 def test_full_flow_refresh_then_start_then_pass_unlocks_downstream() -> None:
-    """组合流：blocked → refresh → start → verify passed → refresh 解除下游。"""
+    """完整业务流（全部走公开受保护入口）：blocked → refresh → start → 验证通过 → refresh 解除下游 → 失败阻塞。"""
     definition = _three_step_definition()
     states = compute_initial_states(definition)
     assert states == {"root": StepStatus.PENDING, "mid": StepStatus.BLOCKED, "leaf": StepStatus.BLOCKED}
 
     states = start_step(definition, states, "root")
-    # 验证结果驱动 root → passed（经状态机校验后写入快照）
-    transition(states["root"], StepStatus.PASSED, verify_outcome=VerifyOutcome.PASSED)
-    states = states | {"root": StepStatus.PASSED}
+    # 验证结果驱动 root → passed（公开入口）
+    states = apply_verification_result(definition, states, "root", VerifyOutcome.PASSED)
+    assert states["root"] is StepStatus.PASSED
     states = refresh_ready_steps(definition, states)
     assert states["mid"] is StepStatus.PENDING
 
     states = start_step(definition, states, "mid")
     assert states["mid"] is StepStatus.IN_PROGRESS
     # mid 失败 → leaf 无法开始
-    states = states | {"mid": transition(states["mid"], StepStatus.FAILED, verify_outcome=VerifyOutcome.FAILED)}
+    states = apply_verification_result(definition, states, "mid", VerifyOutcome.FAILED)
+    assert states["mid"] is StepStatus.FAILED
     with pytest.raises(DependencyNotSatisfied):
         start_step(definition, states, "leaf")
+
+
+# ---------- 第二轮复审：apply_verification_result 公开入口 ----------
+
+
+def _in_progress_definition():
+    definition = _three_step_definition()
+    states = {"root": StepStatus.IN_PROGRESS, "mid": StepStatus.BLOCKED, "leaf": StepStatus.BLOCKED}
+    return definition, states
+
+
+def test_apply_verification_result_passes_in_progress_step() -> None:
+    definition, states = _in_progress_definition()
+    new_states = apply_verification_result(definition, states, "root", VerifyOutcome.PASSED)
+    assert new_states["root"] is StepStatus.PASSED
+    assert states["root"] is StepStatus.IN_PROGRESS  # 原快照不可变
+
+
+def test_apply_verification_result_fails_in_progress_step() -> None:
+    definition, states = _in_progress_definition()
+    new_states = apply_verification_result(definition, states, "root", VerifyOutcome.FAILED)
+    assert new_states["root"] is StepStatus.FAILED
+
+
+def test_apply_verification_result_uncertain_keeps_state() -> None:
+    definition, states = _in_progress_definition()
+    new_states = apply_verification_result(definition, states, "root", VerifyOutcome.UNCERTAIN)
+    assert new_states == states  # 不推进
+    assert new_states is not states  # 但返回独立副本
+    assert new_states["root"] is StepStatus.IN_PROGRESS
+
+
+def test_apply_verification_result_requires_in_progress() -> None:
+    definition = _three_step_definition()
+    bad_currents = [
+        {"root": StepStatus.PENDING, "mid": StepStatus.BLOCKED, "leaf": StepStatus.BLOCKED},
+        {"root": StepStatus.PASSED, "mid": StepStatus.BLOCKED, "leaf": StepStatus.BLOCKED},
+        {"root": StepStatus.FAILED, "mid": StepStatus.BLOCKED, "leaf": StepStatus.BLOCKED},
+        {"root": StepStatus.BLOCKED, "mid": StepStatus.BLOCKED, "leaf": StepStatus.BLOCKED},
+        {"root": StepStatus.SKIPPED, "mid": StepStatus.BLOCKED, "leaf": StepStatus.BLOCKED},
+    ]
+    for states in bad_currents:
+        with pytest.raises(IllegalTransition, match="IN_PROGRESS"):
+            apply_verification_result(definition, states, "root", VerifyOutcome.PASSED)
+
+
+def test_apply_verification_result_rejects_bad_snapshot_and_unknown_step() -> None:
+    definition = _three_step_definition()
+    with pytest.raises(InvalidStateSnapshot):
+        apply_verification_result(definition, {"root": StepStatus.IN_PROGRESS}, "root", VerifyOutcome.PASSED)
+    full = {"root": StepStatus.IN_PROGRESS, "mid": StepStatus.BLOCKED, "leaf": StepStatus.BLOCKED}
+    with pytest.raises(InvalidStateSnapshot, match="不在实验"):
+        apply_verification_result(definition, full, "nope", VerifyOutcome.PASSED)

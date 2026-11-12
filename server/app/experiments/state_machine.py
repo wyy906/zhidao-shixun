@@ -76,18 +76,17 @@ def can_transition(current: StepStatus, target: StepStatus) -> bool:
     return target in TRANSITIONS[current]
 
 
-def transition(
+def _transition(
     current: StepStatus,
     target: StepStatus,
     *,
     verify_outcome: VerifyOutcome | None = None,
 ) -> StepStatus:
-    """执行状态转换；非法时抛 IllegalTransition。内部原语，引擎应使用受保护入口。
+    """低层转换原语（私有）：仅做表级合法性检查，不感知实验定义与依赖。
 
-    - target 为 passed：必须 verify_outcome == passed；
-    - target 为 failed：必须 verify_outcome == failed；
-    - verify_outcome 为 uncertain：无论 target 是什么都不允许推进；
-    - 其余转换按 TRANSITIONS 表判定。
+    引擎与其他调用方不得使用本函数构造业务流程；必须使用本模块的公开受保护入口
+    （start_step / refresh_ready_steps / apply_skip_propagation /
+    apply_verification_result），否则无法保证依赖检查与快照完整性。
     """
     if verify_outcome is VerifyOutcome.UNCERTAIN:
         raise IllegalTransition(current, target, "验证结果为 uncertain，不能推进步骤")
@@ -127,7 +126,7 @@ def refresh_ready_steps(
     new_states = dict(states)
     for step in definition.steps:
         if new_states[step.step_id] is StepStatus.BLOCKED and can_start(step, new_states):
-            new_states[step.step_id] = transition(
+            new_states[step.step_id] = _transition(
                 new_states[step.step_id], StepStatus.PENDING
             )
     return new_states
@@ -160,9 +159,9 @@ def start_step(
 
     new_states = dict(states)
     if current is StepStatus.BLOCKED:
-        new_states[step_id] = transition(current, StepStatus.PENDING)
+        new_states[step_id] = _transition(current, StepStatus.PENDING)
         current = new_states[step_id]
-    new_states[step_id] = transition(current, StepStatus.IN_PROGRESS)
+    new_states[step_id] = _transition(current, StepStatus.IN_PROGRESS)
     return new_states
 
 
@@ -198,7 +197,7 @@ def apply_skip_propagation(
 
     # 先计算全部需要置为 blocked 的下游，再统一应用（原子性：先全部校验，无异常才写入）
     new_states = dict(states)
-    new_states[skipped_step_id] = transition(current, StepStatus.SKIPPED)
+    new_states[skipped_step_id] = _transition(current, StepStatus.SKIPPED)
 
     pending_visit = [skipped_step_id]
     visited: set[str] = set()
@@ -223,5 +222,42 @@ def apply_skip_propagation(
 
     for step_id in to_block:
         if new_states[step_id] is not StepStatus.BLOCKED:
-            new_states[step_id] = transition(new_states[step_id], StepStatus.BLOCKED)
+            new_states[step_id] = _transition(new_states[step_id], StepStatus.BLOCKED)
+    return new_states
+
+
+def apply_verification_result(
+    definition: ExperimentDefinition,
+    states: dict[str, StepStatus],
+    step_id: str,
+    verify_outcome: VerifyOutcome,
+) -> dict[str, StepStatus]:
+    """受保护入口：把一个验证结果应用到指定步骤（passed/failed 推进，uncertain 不推进）。
+
+    规则：
+    - 快照必须完整合法；步骤必须存在于实验定义中；
+    - PASSED / FAILED：当前步骤必须为 IN_PROGRESS（未开始或已结束的步骤不接受验证结果），
+      并经状态机转换为对应终态；
+    - UNCERTAIN：不改变状态、不推进步骤（返回原快照的副本）；
+    - 始终返回新状态快照，不修改入参。
+    """
+    _validate_snapshot(definition, states)
+    if step_id not in definition.step_map:
+        raise InvalidStateSnapshot(f"步骤 {step_id} 不在实验 {definition.experiment_id} 中")
+
+    current = states[step_id]
+
+    if verify_outcome is VerifyOutcome.UNCERTAIN:
+        return dict(states)  # uncertain 不推进：返回原快照副本
+
+    target = StepStatus.PASSED if verify_outcome is VerifyOutcome.PASSED else StepStatus.FAILED
+    if current is not StepStatus.IN_PROGRESS:
+        raise IllegalTransition(
+            current,
+            target,
+            "验证结果只能作用于正在执行的步骤（当前状态必须为 IN_PROGRESS）",
+        )
+
+    new_states = dict(states)
+    new_states[step_id] = _transition(current, target, verify_outcome=verify_outcome)
     return new_states

@@ -280,7 +280,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
-| V2-03 | 实验任务与步骤数据模型 | 待审查（第二轮复审仍有两项收尾） | Schema 1.1、四道门加载校验、验证器白名单只读注册表、依赖环检测、状态机（终态保护/受保护入口）、103 项测试 | Trae |
+| V2-03 | 实验任务与步骤数据模型 | 待审查（第二轮收尾已修复，等待复审） | Schema 1.1（preconditions 必填）、四道门加载校验、验证器白名单只读注册表、状态机私有化+四公开入口、110 项测试 | Trae |
 | V2-04 | Python网页实验闭环 | 未开始 | 编辑、Docker隔离运行、验证、步骤推进；禁止宿主机直接执行不可信代码 | Trae |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
@@ -294,6 +294,53 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜Trae：V2-03 第二轮复审两项收尾修复完成，110 项测试通过
+
+**本次目标：**
+- 仅完成第二轮复审（92bc8c1）的最后两项修复 + 文档一致性；不开发 V2-04，不改 main / trae-dev。
+
+**任务一：preconditions 显式必填（复审项 1）**
+- JSON Schema step.required 加入 `preconditions`；Pydantic 取消 `default_factory=list`，字段缺失即拒绝；允许 `[]` 表示无额外前置条件。
+- **未升级版本号**（按复审指示）：在 Schema description 中注明"1.1 尚未验收前的修订，不升版本号"。
+- 测试夹具同步（make_step 已含；MySQL 结构测试手写步骤补齐 preconditions）。
+- 新增/调整测试：缺字段拒绝（原"可选字段"测试改为必填语义断言）、空数组通过、非法项拒绝（原有保留）；镜像一致性测试保留（同一非法数据两道门都拒）。
+
+**任务二：状态机公开接口收紧（复审项 2）**
+- `transition()` 改为私有 `_transition()`，模块不再暴露公开低层转换；新增测试 `test_module_has_no_public_transition_api` 断言模块无公开 transition 且四个受保护入口齐全。
+- 公开受保护入口：`start_step()`、`refresh_ready_steps()`、`apply_skip_propagation()`、**新增 `apply_verification_result(definition, states, step_id, verify_outcome)`**。
+- `apply_verification_result` 规则：PASSED/FAILED 必须当前步骤为 IN_PROGRESS（否则 IllegalTransition，含 pending/passed/failed/blocked/skipped 五种非法当前态测试），经状态机转换到对应终态；UNCERTAIN 不改变状态、不推进（返回原快照副本）；所有操作返回新快照，不修改入参（测试断言原快照不可变）。
+- 测试组织按复审要求分层：TRANSITIONS 表与原语行为放在纯函数单测中直接测私有 `_transition`；**全部领域流程测试改走公开受保护入口**（完整流：start → apply_verification_result(passed) → refresh → start → failed → 下游不可开始），不再从模块导入公开 transition 模拟生产业务。
+
+**任务三：回归与文档一致性（复审项 3）**
+- `.venv\Scripts\python.exe -m pytest -q` → **110 passed / 0 failed / 0 skipped**（0.57s）。原有测试全部保留；仅按新规则调整两处断言（preconditions 由可选改必填的语义反转，已在上方说明）；103 → 110 新增 7 项（module API 检查 1、apply_verification_result 6、必填/空数组调整归入原有函数）。
+- 文档一致性：根 README「当前状态」更新为"两轮审查修复完成、等待第三轮复审、110 项"、测试表区分全量 110 与 V2-02 基线 20；experiments/README.md 已在复审中由 ChatGPT 更新为 1.1 + preconditions 必填，与 Schema/模型一致；Schema 版本说明（description）已注明 1.1 修订内容，无版本号变化。
+
+**修改文件：**
+- experiments/schema/experiment_definition.schema.json（step.required + preconditions，description 修订说明）
+- server/app/experiments/models.py（preconditions 必填）
+- server/app/experiments/state_machine.py（_transition 私有化、内部调用改私有、新增 apply_verification_result）
+- server/tests/test_step_state_machine.py、test_experiment_definition.py（测试迁移与新增）
+- README.md（状态与测试数量一致化）
+- 本文件（看板、交接）
+
+**验证命令与结果（本机 Windows 实测）：**
+- `.venv\Scripts\python.exe -m pytest -q` → **110 passed，0 failed，0 skipped**（1 个既有 StarletteDeprecationWarning 与本次修复无关）。
+- 未删除、未跳过任何测试。
+
+**未解决 / 待确认：**
+- 无新增设计问题；`can_transition` 保留为公开纯谓词（复审仅要求 transition 私有化，如需一并私有化请复审指出）。
+
+**需要对方处理或确认：**
+- ChatGPT 按新 commit 进行第三轮复审；复审通过前 V2-03 保持"待审查"，V2-04 不启动。
+
+**关联提交：**
+- 修复 commit SHA 见下方复审摘要（git log 顶部）。
+
+**给 ChatGPT 的复审摘要：**
+- 修复 commit：见本文件同批次推送（fix(v2-03) 第二轮收尾）。
+- 测试：110 passed / 0 failed / 0 skipped（本机 Windows 实测）。
+- 文档：README / experiments README / Schema 版本说明三处已一致（均为 1.1 + 当前测试数 + 复审状态）。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-03 第二轮复审：主体修复有效，仍有两项接口/Schema 收尾
 

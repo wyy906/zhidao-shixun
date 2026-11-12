@@ -44,6 +44,7 @@ def test_mysql_workbench_experiment_is_expressible() -> None:
             "expected_state": {"description": "出现空白查询编辑窗口"},
             "verifier": {"type": "mysql_query_result", "params": {"query_description": "确认连接成功", "expect": "返回 1 行"}},
             "depends_on": [],
+            "preconditions": ["MySQL 服务已启动"],
             "common_errors": ["服务未启动"],
             "recovery_hints": ["启动 MySQL 服务"],
             "guide_hint": 2,
@@ -107,11 +108,23 @@ def test_preconditions_roundtrip() -> None:
     assert definition.steps[0].depends_on == []
 
 
-def test_preconditions_optional_by_default() -> None:
+def test_preconditions_required_missing_field_rejected() -> None:
+    """第二轮复审修订：preconditions 显式必填（允许空数组，不允许省略）。"""
     data = deep_copy(make_valid_experiment())
-    del data["steps"][0]["preconditions"]  # 1.1 中为可选字段
+    del data["steps"][0]["preconditions"]
+    with pytest.raises(ExperimentValidationError) as excinfo:
+        load_experiment_dict(data)
+    joined = "\n".join(str(i) for i in excinfo.value.issues)
+    assert "preconditions" in joined
+
+
+def test_preconditions_empty_list_allowed() -> None:
+    """空数组合法：表示本步骤没有额外操作前置条件。"""
+    data = deep_copy(make_valid_experiment())
+    data["steps"][0]["preconditions"] = []
     definition = load_experiment_dict(data)
     assert definition.steps[0].preconditions == []
+    assert definition.steps[0].depends_on == []  # 二者语义独立
 
 
 @pytest.mark.parametrize(

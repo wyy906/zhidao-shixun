@@ -61,9 +61,8 @@ class StepDefinition(BaseModel):
     verifier: VerifierDef
     depends_on: list[str] = Field(default_factory=list, max_length=10)
     preconditions: list[str] = Field(
-        default_factory=list,
         max_length=10,
-        description="操作前置条件（本步骤自身的条件），与 depends_on（步骤间依赖）相互独立",
+        description="操作前置条件（本步骤自身的条件，显式必填；空数组表示无额外前置条件），与 depends_on（步骤间依赖）相互独立",
     )
     common_errors: list[str] = Field(default_factory=list, max_length=10)
     recovery_hints: list[str] = Field(default_factory=list, max_length=10)

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zhidao-shixun.example/schemas/experiment-definition-1.1.json",
   "title": "智导实训实验定义",
-  "description": "实验定义规范 schema_version=1.1。版本策略：破坏性变更（删字段/改类型/收紧约束）升主版本（1.x→2.0）；新增可选字段升次版本（1.0→1.1）。1.0→1.1（2026-11-12）：新增步骤级可选字段 preconditions（操作前置条件），与 depends_on（步骤间依赖）相互独立。加载器只接受其支持的版本；Python 端常量与校验见 server/app/experiments。",
+  "description": "实验定义规范 schema_version=1.1。版本策略：破坏性变更（删字段/改类型/收紧约束）升主版本（1.x→2.0）；新增可选字段升次版本（1.0→1.1）。1.0→1.1（2026-11-12）：新增步骤级字段 preconditions（操作前置条件），与 depends_on（步骤间依赖）相互独立；同日第二轮复审修订：preconditions 收紧为必填（允许空数组表示无额外前置条件）——该版本尚未验收，属于 1.1 发布前修订，不升版本号。加载器只接受其支持的版本；Python 端常量与校验见 server/app/experiments。",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -94,6 +94,7 @@
         "expected_state",
         "verifier",
         "depends_on",
+        "preconditions",
         "common_errors",
         "recovery_hints",
         "guide_hint"
