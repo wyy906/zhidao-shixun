@@ -41,29 +41,39 @@ class QueueFullError(RuntimeError):
 
 
 def _validate_result(result: Any) -> dict:
-    """校验执行器返回的任务结果，拒绝畸形结构"""
+    """校验执行器返回的任务结果，拒绝畸形结构
+
+    严格类型判断（bool 是 int 子类，因此必须用 `type(...) is int`）：
+      - status 必须是终态字符串；
+      - stdout / stderr 必须是字符串；
+      - exit_code / duration_ms 必须是严格 int（duration 非负）或 None；
+      - error_code / error_message 必须是字符串或 None。
+    """
     if not isinstance(result, dict):
         raise ValueError("job result must be an object")
     status = result.get("status")
-    if status not in TERMINAL_STATUSES:
+    if not isinstance(status, str) or status not in TERMINAL_STATUSES:
         raise ValueError(f"unexpected job status: {status!r}")
 
     normalized = dict(result)
     for field in ("stdout", "stderr"):
         value = normalized.get(field, "")
-        if value is None:
-            value = ""
-        if not isinstance(value, str):
+        if type(value) is not str:
             raise ValueError(f"{field} must be a string")
         normalized[field] = value
 
     exit_code = normalized.get("exit_code")
-    if exit_code is not None and not isinstance(exit_code, int):
+    if exit_code is not None and type(exit_code) is not int:
         raise ValueError("exit_code must be an integer or null")
 
     duration = normalized.get("duration_ms")
-    if duration is not None and (not isinstance(duration, int) or duration < 0):
+    if duration is not None and (type(duration) is not int or duration < 0):
         raise ValueError("duration_ms must be a non-negative integer or null")
+
+    for field in ("error_code", "error_message"):
+        value = normalized.get(field)
+        if value is not None and type(value) is not str:
+            raise ValueError(f"{field} must be a string or null")
 
     if status != "succeeded" and not normalized.get("stderr"):
         normalized["stderr"] = SAFE_JOB_FAILED_MESSAGE

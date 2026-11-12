@@ -40,6 +40,10 @@ class SandboxBadResponse(SandboxUnavailable):
     """管理器返回了无法解析 / 不符合约定的数据"""
 
 
+class SandboxInvalidResult(SandboxBadResponse):
+    """管理器返回的任务结果字段不合法（类型 / 取值范围 / 未知状态）"""
+
+
 class SandboxBusy(SandboxUnavailable):
     """管理器队列已满（HTTP 429）；业务后端应映射为 429 而不是 503"""
 

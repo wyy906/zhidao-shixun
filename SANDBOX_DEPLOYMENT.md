@@ -263,7 +263,7 @@ curl -s -H "X-Sandbox-Token: $ZD_SANDBOX_TOKEN" https://127.0.0.1:8443/health | 
 | 生命周期 | 任务结束（成功/超时/取消/异常）一律 `remove(force=True)`，含全部子进程 |
 | 启动自检 | 创建后回查 `Config` / `HostConfig`：运行用户、tmpfs 容量与 `noexec/nosuid/nodev`、`ShmSize`、日志驱动与轮转上限、端口映射、设备与挂载、CPU/内存/进程数、`CapAdd` 为空、`Init=true`、`SecurityOpt` 必须精确包含 `no-new-privileges:true`（及可选 seccomp、AppArmor）、运行时、镜像；任一不符立即删除容器并拒绝执行 |
 | 队列 | 固定 `max_concurrent` 个 daemon 工作线程；内部 deque 长度不超过 `max_pending`；取消排队任务会立即从队列移除 |
-| 结果校验 | 执行器返回的状态、stdout/stderr 类型、退出码、耗时均校验；畸形结果统一 `failed/internal_error` |
+| 结果校验 | 执行器返回的状态、stdout/stderr 类型、退出码、耗时、error_code、error_message 均严格校验（拒绝 bool 冒充整数）；畸形结果统一 `failed/internal_error`；业务后端在保存前再次完整校验，校验失败不会写成 succeeded |
 | 残留清理 | 管理器启动时只删除带 `zd.sandbox=1` **且** `zd.sandbox.instance=<本实例>` 标签的容器（上次异常退出遗留）；清理失败则拒绝启动 |
 
 超时 / 取消通过 `container.kill()` 终止整个容器，而不是只杀最外层 Python 进程。

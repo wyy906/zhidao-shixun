@@ -38,6 +38,7 @@ from app.services.sandbox_client import (
     SandboxBadResponse,
     SandboxBusy,
     SandboxClient,
+    SandboxInvalidResult,
     SandboxUnavailable,
     get_sandbox_client,
 )
@@ -214,14 +215,54 @@ def _raise_unavailable() -> None:
 
 
 def _validate_job_result(result: dict) -> dict:
-    """校验管理器返回的任务结构；畸形数据按“不可用”安全失败"""
+    """校验管理器返回的任务结构（轮询阶段）
+
+    严格类型判断：
+      - status 必须是已知状态字符串（queued/running/终态）；
+      - stdout / stderr 必须是字符串；
+      - exit_code 必须是 int 或 None，**不能是 bool**；
+      - duration_ms 必须是非负 int 或 None，**不能是 bool / 浮点 / 字符串**；
+      - error_code / error_message 必须是字符串或 None；
+      - 未知字段一律忽略，绝不参与本地配置或安全判断。
+
+    校验在任何数据库写入之前完成，畸形数据不会被保存为成功任务。
+    """
+    if not isinstance(result, dict):
+        raise SandboxInvalidResult("job result must be an object")
+
     status = result.get("status")
-    if status not in TERMINAL_STATUSES and status not in PENDING_STATUSES:
-        raise SandboxBadResponse(f"unexpected job status: {status!r}")
+    allowed = TERMINAL_STATUSES | PENDING_STATUSES
+    if not isinstance(status, str) or status not in allowed:
+        raise SandboxInvalidResult(f"unexpected job status: {status!r}")
+
     for field in ("stdout", "stderr"):
-        value = result.get(field)
-        if value is not None and not isinstance(value, str):
-            raise SandboxBadResponse(f"unexpected {field} type")
+        if type(result.get(field)) is not str:
+            raise SandboxInvalidResult(f"{field} must be a string")
+
+    exit_code = result.get("exit_code")
+    if exit_code is not None and type(exit_code) is not int:
+        raise SandboxInvalidResult("exit_code must be an integer or null")
+
+    duration = result.get("duration_ms")
+    if duration is not None and (type(duration) is not int or duration < 0):
+        raise SandboxInvalidResult("duration_ms must be a non-negative integer or null")
+
+    error_code = result.get("error_code")
+    if error_code is not None and type(error_code) is not str:
+        raise SandboxInvalidResult("error_code must be a string or null")
+
+    error_message = result.get("error_message")
+    if error_message is not None and type(error_message) is not str:
+        raise SandboxInvalidResult("error_message must be a string or null")
+
+    return result
+
+
+def _validate_terminal_result(result: dict) -> dict:
+    """保存前校验：返回结果必须是终态，且字段合法"""
+    _validate_job_result(result)
+    if result.get("status") not in TERMINAL_STATUSES:
+        raise SandboxInvalidResult("job result is not terminal")
     return result
 
 
@@ -350,6 +391,8 @@ async def run_code(
         db.commit()
 
         result = await _poll_job(sandbox, job_id)
+        # 完整校验发生在数据库保存之前：畸形结果绝不会落成 succeeded
+        _validate_terminal_result(result)
         _save_result(db, task, result)
     except SandboxBusy:
         # 管理器排队已满：映射为 429，而不是“环境不可用”的 503
@@ -359,10 +402,12 @@ async def run_code(
     except HTTPException:
         raise
     except SandboxUnavailable as exc:
-        error_code = (
-            "sandbox_bad_response" if isinstance(exc, SandboxBadResponse)
-            else "sandbox_unavailable"
-        )
+        if isinstance(exc, SandboxInvalidResult):
+            error_code = "internal_error"
+        elif isinstance(exc, SandboxBadResponse):
+            error_code = "sandbox_bad_response"
+        else:
+            error_code = "sandbox_unavailable"
         logger.warning("沙箱任务异常收口（%s）: %s", error_code, job_id or "-")
         await _safe_fail(db, task, sandbox, job_id, error_code)
         _raise_unavailable()

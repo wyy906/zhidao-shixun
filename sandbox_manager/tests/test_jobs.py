@@ -133,7 +133,12 @@ class _BadResultRunner:
     {"status": "definitely-not-a-status", "stdout": "", "stderr": ""},
     {"status": "succeeded", "stdout": 123, "stderr": ""},
     {"status": "succeeded", "stdout": "", "stderr": "", "exit_code": "0"},
+    {"status": "succeeded", "stdout": "", "stderr": "", "exit_code": True},
     {"status": "succeeded", "stdout": "", "stderr": "", "duration_ms": -5},
+    {"status": "succeeded", "stdout": "", "stderr": "", "duration_ms": True},
+    {"status": "succeeded", "stdout": "", "stderr": "", "duration_ms": 1.5},
+    {"status": "succeeded", "stdout": "", "stderr": "", "error_code": 123},
+    {"status": "succeeded", "stdout": "", "stderr": "", "error_message": {}},
     ["not", "an", "object"],
 ])
 def test_malformed_runner_result_is_rejected(result):

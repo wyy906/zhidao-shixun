@@ -1,5 +1,27 @@
 # 更新记录
 
+## 2026-11-12 — 阶段 3-A 第五轮：结果字段完整校验
+
+### 修复
+
+- **后端结果校验**：`_validate_job_result` 校验 `status`、`stdout`、`stderr`、`exit_code`、
+  `duration_ms`、`error_code`、`error_message`；使用 `type(x) is int` 拒绝 `True/False`
+  冒充整数；`duration_ms` 拒绝负数、浮点与字符串。
+- **保存前校验**：新增 `_validate_terminal_result`，在 `_save_result()` 之前强制终态与字段校验，
+  避免数据库已写入 succeeded 后响应阶段才失败。
+- **管理器结果校验**：`_validate_result` 补齐 `error_code` / `error_message` 类型校验，
+  `exit_code` / `duration_ms` 改为严格整数判断；畸形结果统一 `failed/internal_error`。
+- **错误语义**：结果字段非法映射为 `internal_error`；缺失 `job_id` 等提交响应问题仍为
+  `sandbox_bad_response`；学生端只看到固定安全文案。
+- 未知字段一律忽略，不参与本地安全配置判断；正常 API 响应结构未改变。
+
+### 测试
+
+- 后端 pytest：104 → **113 项**（新增 bool / 字符串 / 负数 / 浮点 / 非法 error_* / 非对象 / 终态兼容）。
+- 沙箱管理器：102 → **107 项**。
+- 前端 `npm test`：通过。
+- 真实 Linux / Docker 实机验证仍未完成，本轮不代表安全验收通过。
+
 ## 2026-11-12 — 阶段 3-A 第四轮 F-20 ~ F-24 修复
 
 ### 修复

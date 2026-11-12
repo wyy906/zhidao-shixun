@@ -7,6 +7,8 @@
 """
 import uuid
 
+import pytest
+
 from app.api.v1.routers import code as code_router
 from app.core.config import settings
 from app.core.security import hash_password
@@ -34,7 +36,7 @@ class FakeSandbox:
     def __init__(self, result=None, submit_error=False, poll_error=False,
                  poll_exception=None, cancel_error=False, missing_job_id=False,
                  submit_busy=False):
-        self.result = dict(result or SUCCESS_RESULT)
+        self.result = result if result is not None else dict(SUCCESS_RESULT)
         self.submit_error = submit_error
         self.poll_error = poll_error
         self.poll_exception = poll_exception
@@ -58,7 +60,7 @@ class FakeSandbox:
             raise SandboxUnavailable("manager down")
         if self.poll_exception:
             raise self.poll_exception
-        return dict(self.result)
+        return dict(self.result) if isinstance(self.result, dict) else self.result
 
     def cancel(self, job_id):
         self.cancelled.append(job_id)
@@ -342,7 +344,58 @@ def test_malformed_job_status_fails_task(client, student_headers, db_session):
 
     task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
     assert task.status == "failed"
-    assert task.error_code == "sandbox_bad_response"
+    assert task.error_code == "internal_error"
+
+
+@pytest.mark.parametrize("overrides", [
+    {"exit_code": True},
+    {"exit_code": "0"},
+    {"duration_ms": True},
+    {"duration_ms": -1},
+    {"duration_ms": 1.5},
+    {"error_code": 123},
+    {"error_message": {}},
+])
+def test_invalid_result_fields_are_rejected_before_save(
+    client, student_headers, db_session, overrides
+):
+    fake = FakeSandbox({**SUCCESS_RESULT, **overrides})
+    _use_sandbox(fake)
+    resp = _run(client, student_headers)
+    assert resp.status_code == 503
+
+    task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
+    assert task.status != "succeeded"
+    assert task.status == "failed"
+    assert task.error_code == "internal_error"
+    # 已提交成功后才失败的请求不得把任务写成 succeeded
+    assert task.finished_at is not None
+
+
+def test_non_object_result_is_rejected_before_save(client, student_headers, db_session):
+    _use_sandbox(FakeSandbox(["not", "an", "object"]))
+    resp = _run(client, student_headers)
+    assert resp.status_code == 503
+    task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
+    assert task.status == "failed"
+    assert task.error_code == "internal_error"
+
+
+def test_timeout_terminal_result_still_supported(client, student_headers, db_session):
+    _use_sandbox(FakeSandbox({
+        "status": "timeout",
+        "stdout": "",
+        "stderr": "运行超时，任务已被终止。",
+        "exit_code": -1,
+        "duration_ms": 5000,
+        "error_code": "sync_wait_timeout",
+        "error_message": None,
+    }))
+    resp = _run(client, student_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "timeout"
+    task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
+    assert task.status == "timeout"
 
 
 def test_poll_unexpected_exception_fails_task(client, student_headers, db_session):
