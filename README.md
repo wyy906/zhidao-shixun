@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**V2-02 基础工程骨架已完成，并已在本机（Windows）实际验证**：后端健康检查、前端构建与启动、桌面助手启动、契约与后端测试全部通过（证据见 AI_COLLABORATION.md 交接记录）。业务功能（实验、AI 指导、标注）尚未实现，从 V2-03 开始逐步开发。
+**V2-02 基础工程骨架与 V2-03 实验定义体系已完成，并已在本机（Windows）实际验证**：后端健康检查、实验定义 Schema 与加载校验、验证器白名单、步骤依赖与状态机、前端构建与启动、桌面助手启动、76 个自动化测试全部通过（证据见 AI_COLLABORATION.md 交接记录）。业务功能（AI 指导、标注、沙箱执行）尚未实现，从 V2-04 开始逐步开发。
 
 仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
 
@@ -25,10 +25,10 @@
 
 ```
 contracts/   跨端统一数据契约（独立 Python 包 + JSON Schema 基线，web/desktop 不依赖 server 内部模块）
-server/      后端 FastAPI（健康检查、配置、统一错误响应、执行器接口占位）
+server/      后端 FastAPI（健康检查、实验定义加载校验、验证器白名单、状态机、执行器接口占位）
 web/         前端 Vue 3 + Vite + TypeScript（最小页面，显示后端连接状态）
 desktop/     Windows 助手 PySide6（最小窗口：连接状态 / 暂停 / 停止）
-experiments/ 实验定义 JSON（V2-03 提供规范；当前为空，内容由用户导入）
+experiments/ 实验定义 JSON（规范化 Schema 1.0 见 experiments/schema/；内容由用户导入）
 scripts/     安装与启动脚本（Windows PowerShell）
 docs/        设计文档与决策记录
 tests/       根级测试（契约模型校验、Schema 漂移检测）

@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zhidao-shixun.example/schemas/experiment-definition-1.0.json",
+  "title": "智导实训实验定义",
+  "description": "实验定义规范 schema_version=1.0。版本策略：破坏性变更（删字段/改类型/收紧约束）升主版本（1.x→2.0）；新增可选字段升次版本（1.0→1.1）。加载器只接受其支持的版本；Python 端常量与校验见 server/app/experiments。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "title",
+    "description",
+    "category",
+    "version",
+    "environment",
+    "adapter",
+    "prerequisites",
+    "steps",
+    "meta"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "experiment_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{2,63}$",
+      "description": "实验唯一 ID，小写字母/数字/下划线/连字符"
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "description": "学科/分类，如：计算机基础、数据库"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "实验内容自身版本，如 1.0"
+    },
+    "environment": {
+      "enum": ["python_web", "mysql_workbench"],
+      "description": "目标运行环境"
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter_id", "capabilities"],
+      "properties": {
+        "adapter_id": {
+          "enum": ["python_web", "mysql_workbench"],
+          "description": "适配器标识（白名单；须与 environment 一致，由加载器语义校验）"
+        },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "description": "对适配器能力的声明，适配器实现侧负责核对"
+        }
+      }
+    },
+    "prerequisites": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+      "description": "学生应具备的前置知识/条件"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["estimated_minutes", "difficulty"],
+      "properties": {
+        "estimated_minutes": { "type": "integer", "minimum": 1, "maximum": 600 },
+        "difficulty": { "enum": ["beginner", "intermediate", "advanced"] }
+      }
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_id",
+        "title",
+        "learning_goal",
+        "student_action",
+        "expected_state",
+        "verifier",
+        "depends_on",
+        "common_errors",
+        "recovery_hints",
+        "guide_hint"
+      ],
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "learning_goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "AI 可参考的教学解释：本步骤的训练目标"
+        },
+        "student_action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "给学生看的操作说明：具体做什么、在哪里做"
+        },
+        "expected_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["description"],
+          "properties": {
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "description": "预期状态的人读描述；机器可验证条件由 verifier 定义"
+            },
+            "artifacts": {
+              "type": "array",
+              "maxItems": 10,
+              "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "description": "可复核产物说明：如文件、输出、查询结果"
+            }
+          }
+        },
+        "verifier": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "params"],
+          "properties": {
+            "type": {
+              "enum": [
+                "python_exit_code_zero",
+                "python_stdout_contains",
+                "mysql_query_result",
+                "mysql_table_state"
+              ],
+              "description": "验证器类型白名单；实验 JSON 不得指定白名单之外的类型，也不得携带代码/模块/函数路径"
+            },
+            "params": {
+              "type": "object",
+              "maxProperties": 16,
+              "description": "验证器参数，结构和取值范围由 registry 按类型在加载时校验；禁止代码文本以外的执行语义"
+            }
+          }
+        },
+        "depends_on": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+          "description": "前置步骤 ID 列表；必须存在且不得成环（加载器语义校验）"
+        },
+        "common_errors": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+        },
+        "recovery_hints": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+        },
+        "guide_hint": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "建议初始指导等级（四级颗粒度）；实际等级由引擎按状态动态调整"
+        }
+      }
+    }
+  }
+}

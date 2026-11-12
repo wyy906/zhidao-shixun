@@ -280,7 +280,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
-| V2-03 | 实验任务与步骤数据模型 | 未开始（指令已下达） | 规范化 JSON Schema、Python/MySQL任务可结构化表达、验证器白名单 | Trae |
+| V2-03 | 实验任务与步骤数据模型 | 待审查 | Schema 1.0、四道门加载校验、验证器白名单注册表、依赖环检测、状态机规则、56 个新测试 | Trae |
 | V2-04 | Python网页实验闭环 | 未开始 | 编辑、Docker隔离运行、验证、步骤推进；禁止宿主机直接执行不可信代码 | Trae |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
@@ -295,6 +295,45 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
 
+
+### 2026-11-12｜Trae：V2-03 实验定义 Schema 与加载校验完成，76 测试全通过
+
+**本次目标：**
+- 按 §7 V2-03 清单实现：实验定义 JSON Schema、加载与严格校验、验证器白名单、依赖环检测、状态机规则、完整自动化测试（真实可运行代码，非空接口）。
+
+**实际完成（8 项验收逐条对照）：**
+1. **Schema 文件**：experiments/schema/experiment_definition.schema.json（Draft 2020-12，$id 带 1.0 版本，$comment 写明版本策略：破坏性升主版本、新增可选字段升次版本）；结构与 server Pydantic 模型镜像；字段级联校验（模式/枚举/长度/条数上限）。
+2. **加载与严格校验**：server/app/experiments/loader.py 四道门——版本门（不支持版本明确报错，不尝试解析）→ Schema 门（jsonschema 独立校验）→ 模型门（Pydantic extra=forbid 镜像）→ 语义门（environment 与 adapter_id 一致、依赖合法、验证器白名单 + 参数校验 + 环境匹配）；所有失败以 ExperimentIssue（category file/schema/semantic + 可定位路径）列表返回，fail-closed，绝不返回不完整实验。
+3. **验证器白名单**：verifiers/registry.py——4 个类型（python_exit_code_zero、python_stdout_contains 已实现为受控纯函数求值；mysql_query_result、mysql_table_state 预留）；实验 JSON 无法注入新类型/代码/模块路径；求值三态（passed/failed/uncertain），未知类型 / reserved / 求值异常一律 fail-closed 返回 uncertain，绝不伪装通过。
+4. **依赖与环检测**：dependency.py——步骤 ID 重复 / 依赖存在性 / 自依赖与多节点环（错误输出环路径 a→b→a）/ Kahn 拓扑排序。
+5. **状态机**：state_machine.py——TRANSITIONS 转换表（passed/skipped 终态）；passed/failed 必须由对应验证结果驱动，uncertain 永不推进；有依赖步骤初始 blocked；can_start 要求全部依赖 passed（skipped 依赖不视为通过）；apply_skip_propagation 跳过时直接/间接下游置 blocked 且不自动通过、终态不受影响、纯函数不修改入参。
+6. **完成度**：真实实现无 TODO/NotImplemented——已实现的验证器是纯函数求值（不执行外部代码）；mysql_* 为预留且执行显式拒绝（符合清单第 2 条要求）。
+7. **不改变项目定位**：未引入新技术栈；未实现非必需 API 端点（域模块先行，API 在 V2-04+ 按需暴露）；contracts/ 无变化。
+8. **未引入密钥/外部服务**：加载校验纯本地；jsonschema 新依赖已加入 server/requirements.txt。
+
+**决策评估（清单第 5 条）：contracts/ 是否需要新增模型 → 结论：本期不需要。**
+- 理由：实验定义是 server 域内数据（加载/校验在服务端），尚未跨端传输；当 V2-04+ 通过 API 向 web/desktop 暴露实验/步骤状态时，再以契约模型形式加入 contracts/ 并升版本。本期 contracts 保持 0.1.0，无兼容性变化，Schema 基线无需更新。已通过根级契约漂移测试确认无意外变化。
+
+**修改文件：**
+- 新增 experiments/schema/experiment_definition.schema.json；server/app/experiments/（__init__、schema_version、models、errors、loader、repository、dependency、state_machine、verifiers/registry）；server/tests/ 6 个新测试文件 + helpers_experiment.py；experiments/README.md 更新；server/requirements.txt +jsonschema；本文件与 README.md 更新。
+
+**验证命令与结果（本机实测）：**
+- `.venv\Scripts\python.exe -m pytest -q` → **76 passed**（V2-02 存量 20 + V2-03 新增 56：模型与 Schema 结构、加载语义、白名单、依赖图、状态机、仓库扫描 + 全部回归）。
+- 测试覆盖要点：未知字段/类型/超长/缺字段拒绝；schema_version 9.9 明确报错；adapter 与环境不一致拒绝；重复步骤 ID / 未知依赖 / 自依赖 / 三节点环（含路径）拒绝；未知验证器类型（Schema 枚举 + registry 双层拦截）；参数非法拒绝；reserved 类型可表达但 supported=False 且求值 uncertain；unknown/reserved/求值异常 fail-closed 三态；跳过传播阻塞下游且不自动通过；仓库目录扫描/重复 ID/坏文件报告/load_or_raise 整体失败。
+
+**未完成 / 已知问题：**
+- mysql_* 验证器为预留（V2-06 与适配器一起实现）；实验 API 端点、数据库持久化、引擎编排属 V2-04+ 范围。
+- experiments/schema/ 的 Schema 与 Pydantic 模型为人工镜像，由"同一份数据必须同时过两道门"的测试约束；后续若需要完全单一来源，可评估从 pydantic 导出 Schema（成本：失去人工可读性控制，暂不做）。
+
+**需要对方处理或确认：**
+- ChatGPT 审查 V2-03（看板已标"待审查"）：重点请审查 registry 的 fail-closed 边界（reserved 可加载但拒绝执行）是否符合"不能伪装成已验证"的意图，以及 contracts 不新增模型的评估结论。
+- 负责人：8000 端口遗留进程是否清理（V2-02 遗留事项，仍未处理）。
+
+**下一步建议：**
+- V2-04：Docker 执行器实现 + /api/v1/experiments 只读端点（列表/详情，直接复用本模块）；D-1 安全基线已在 V2-02 落地（DockerSandboxConfig），可直接实现。
+
+**关联提交：**
+- 本文件同批次提交 SHA 见 git log（V2-03 功能 + 文档）。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-02 审查通过并下达 V2-03
 
@@ -493,6 +532,8 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | 2026-11-12 | 跨端契约以独立包 contracts/（zhidao-contracts）承载 | 满足审查要求：版本化、desktop 不依赖 server 内部模块；JSON Schema 基线 + 漂移检测测试 |
 | 2026-11-12 | web 构建使用 rollup→@rollup/wasm-node 依赖别名 | 本机 Windows Smart App Control 拦截未签名原生 .node；WASM 回退保证构建可复现（与旧 R-02 同因） |
 | 2026-11-12 | .ps1 脚本一律 ASCII 英文注释 | PowerShell 5.1 在 GBK 代码页读 UTF-8 无 BOM 脚本时中文注释破坏解析（已实测复现） |
+| 2026-11-12 | V2-03 不向 contracts/ 新增实验模型 | 实验定义是 server 域内数据，未跨端传输；API 暴露时再入契约并升版本；contracts 保持 0.1.0 无兼容性变化 |
+| 2026-11-12 | 验证器 reserved 类型"可加载、拒执行" | mysql_* 结构可表达（满足双环境表达要求），求值一律 fail-closed 返回 uncertain，不伪装通过 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -512,7 +553,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | Windows schannel 证书吊销检查失败（CRYPT_E_REVOCATION_OFFLINE） | git/curl 经代理访问 GitHub 报 TLS 错误 | git 切 openssl 后端（命令级 -c） | 已验证可用 |
 | Windows Smart App Control 拦截未签名原生模块 | rollup 原生 .node 加载失败 | web 构建改用 @rollup/wasm-node（V2-02 已解决并记录）；后续引入 C 扩展类依赖时需复检 | 已解决（持续注意） |
 | Docker 沙箱尚未实现 | 不可信代码执行可能影响宿主机 | V2-02 已定义执行器接口与安全基线（含测试），V2-04 实现容器隔离；Docker 不可用时拒绝执行 | 接口已定义 |
-| 规范化实验 JSON Schema 尚未实现 | 实验步骤与验证器可能不一致 | V2-03 定义 schema_version、字段约束和验证器白名单 | 待实现 |
+| 实验定义 Schema 与 Pydantic 模型人工镜像可能漂移 | 两套约束不一致 | 同一数据必须同时过两道门的测试约束（76 测试含镜像校验） | V2-03 已建立约束 |
 | 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
 
 ---
