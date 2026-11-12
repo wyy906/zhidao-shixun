@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第三轮架构修订已提交，待 ChatGPT 第三轮架构复审；复审通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第四轮架构修订已提交，待 ChatGPT 第四轮架构复审；复审通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1202,7 +1202,8 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 实验定义 Schema 与 Pydantic 模型人工镜像可能漂移 | 两套约束不一致 | 同一数据必须同时过两道门的测试约束（76 测试含镜像校验） | V2-03 已建立约束 |
 | R-4B-1：容器逃逸残余风险依赖 Docker Desktop/WSL2 VM 边界 | 极端内核漏洞场景下隔离失效 | cap_drop ALL、no-new-privileges、非 root、无 socket/privileged 缩小攻击面；VM 边界残余风险接受并记录；镜像内无任何密钥 | 已记录（接受） |
 | R-4B-2：attach 双向流协议已明确（stdin 原始/输出帧解复用），但 docker-py 实际行为需实测确认 | SDK 抽象与协议预期不符会导致实现偏差 | V2-04B 首项任务为协议探针测试（stdout/stderr 分流+EOF 验证），探针通过后才实现执行器；不符则验证低层协议再选实现，绝不静默退回宿主机执行 | 待 V2-04B 实测 |
-| R-4B-4：镜像锁定清单当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest）并填入 executor_image_lock.json；批准后重跑安全测试 | 待负责人审批 |
+| R-4B-4：镜像锁定清单 executor_image_lock.json 已真实提交（V2-04A 第四轮），当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest，两者都填）并更新清单；批准后重跑安全测试；部署脚本属 V2-04B 计划实现 | 待负责人审批 |
+| R-4B-5：.env DACL 显式构造与启动枚举校验、父目录替换权限检查尚未在 Windows 实机验证 | ACL 行为（/grant:r 不清除其他主体 ACE 等）若与设计不符，令牌保护可能弱于预期 | V2-04B 按显式构造+枚举校验+白名单核对实现，附 5 项正负向 ACL 测试（N-A1~N-A5），实测通过前不声称已验证；校验失败执行服务拒绝启动 | 待 V2-04B 实测 |
 | R-4B-3：Trae 本机未安装 Docker（已实测确认） | N13–N18/T5–T12 真实容器行为无法在本机验证 | mock/协议层测试本机可跑（N1–N12/T1–T4）；真实容器测试需负责人 Docker Desktop 环境，交付时如实标注运行环境 | 依赖负责人环境 |
 | 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
 
@@ -1482,6 +1483,77 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 - 本轮没有修改业务代码，没有启动 V2-04B，也没有合并任何分支。Trae 完成文档修订并独立提交后，再由 ChatGPT 进行第三轮复审；复审通过前不得实现容器执行。
 - `main` 与 `trae-dev` 保持不动；项目负责人明确授权合并前，V2 分支绝不与 `main` 合并。
 
+
+### 2026-11-12｜Trae：V2-04A 架构第四轮修订（锁定文件落地 / 清扫双查询 / DACL 显式构造 / digest 校验目标明确化，docs+1 配置文件）
+
+**问题 1 修复：镜像锁定文件真实落地，脚本改口为计划项（响应第三轮阻塞项 1）**
+
+- **本轮实际新增** `server/services/executor_service/executor_image_lock.json`（纯配置清单，纳入 Git）：内容为 `approval_status: "pending"`、`approved_by/approved_at/manifest_digest/platform_manifest_digest` 均为 `null`、`tag_for_reference_only: "3.12-slim"`、`platform: "linux/amd64"`、`lock_version: 1`；文件内注释明确：此文件只是受信任配置清单，**不代表 Docker 执行器已实现**（执行器属 V2-04B）；禁止自动将 pending 改为 approved、禁止编造 digest。
+- **表述纠正**：`pull-executor-image.ps1` 改述为 **V2-04B 计划实现的部署脚本**（本轮不存在）；第三轮文档中"新增并纳入 Git"仅对 JSON 清单成立，本轮已与实际文件状态对齐。
+- 负责人审批前：清单保持 pending/null；执行服务 fail-closed；不执行任何真实镜像锁定。
+
+**问题 2 修复：清扫拆分为两个查询，消除过滤矛盾（响应第三轮阻塞项 2）**
+
+- **查询 A（当前实例残留）**：Docker API `containers.list(filters={"label": ["zhidao-exec-managed=true", "zhidao-exec-instance=<self>"]})` → 只清理当前实例创建、已停止（非 running）的容器。
+- **查询 B（旧实例孤儿）**：Docker API 仅按 `filters={"label": ["zhidao-exec-managed=true"]}` 限定应用自有容器 → 在返回结果中逐个检查：`instance ≠ self` **且** 非 running **且** FinishedAt 距今 > 宽限期（5 分钟）→ 三条件全部满足才可清理。
+- 不变量（两查询共用）：
+  1. 无 `zhidao-exec-managed=true` 标签的容器永远不进入删除候选集（查询 A/B 的 API 过滤都包含该标签）；
+  2. 禁止不带应用归属过滤的全局列表/清理；禁止 `docker system prune`、`docker container prune`；
+  3. **running 容器绝不能清理**（删除前再次读取容器状态与标签二次确认，防列表与删除之间的竞态；二次确认失败则跳过该容器并记审计）。
+- **双查询负向测试设计**（V2-04B 实现，mock 可验证）：
+  - N-S1 查询 A 未带 managed 过滤 → 实现必须拒绝/断言失败；
+  - N-S2 查询 A 结果混入他人容器（无标签）→ 不得进入候选集；
+  - N-S3 查询 B 未带 managed 过滤 → 拒绝/断言失败；
+  - N-S4 查询 B 中 managed=true 但 running 的旧实例容器 → 不得清理；
+  - N-S5 查询 B 中 instance≠self 但 FinishedAt < 宽限期 → 不得清理；
+  - N-S6 删除前二次确认发现状态变为 running → 跳过并记审计；
+  - N-S7 调用任何 prune 类 API → 断言从未发生。
+
+**问题 3 修复：.env DACL 显式构造 + 启动枚举校验（响应第三轮阻塞项 3；废弃"仅 icacls 命令"表述）**
+
+- 承认原 `icacls .env /inheritance:r /grant:r "<用户>:F"` 不足：`/grant:r` 只替换指定 SID 的显式授权，**不会清除其他主体的既有显式 ACE**，故不能证明"仅当前用户可读"。
+- 修订为**显式构造预期 DACL + 启动枚举校验**（V2-04B 实现）：
+  1. 读取白名单（按实际运行身份确定，均为明确主体）：文件所有者（当前用户）、`SYSTEM`、`Administrators`；白名单之外任何主体不得有读权限；
+  2. 设置流程：先 `icacls .env /inheritance:r` 移除继承 → **枚举现有显式 ACE** → 逐一移除白名单之外主体的全部 ACE（含读/写/执行）→ 仅授予白名单主体的必要权限；
+  3. **父目录检查**：`.env` 所在目录若允许白名单之外主体具有修改/删除/重命名/创建文件权限（可替换 .env）→ 判定不安全；
+  4. **启动校验不依赖命令退出码**：用 Windows Security API（如 Python `win32security.GetNamedSecurityInfo` 或 PowerShell `Get-Acl`）**枚举实际 DACL**，逐条核对：允许读取令牌的每个主体 ∈ 白名单；无 Everyone/Users 等不受信任主体的任何 ACE；父目录无不安全替换权限；
+  5. 任一检查失败或枚举异常 → **执行服务拒绝启动**（fail-closed）。
+- **ACL 测试设计**（V2-04B 实现，需 Windows 实机，未实测前不声称已验证）：
+  - N-A1 白名单用户（所有者）可读 → 通过；
+  - N-A2 Users/Everyone 主体读取 → 访问拒绝；
+  - N-A3 人为添加额外显式 ACE（如授予 Guest 读）→ 启动检测失败、拒绝启动；
+  - N-A4 父目录允许其他主体修改/替换 .env → 检测失败；
+  - N-A5 ACL 枚举本身异常（权限不足/API 失败）→ fail-closed 拒绝启动。
+- 明确声明：以上 ACL 行为**尚未在 Windows 实机验证**，V2-04B 在负责人环境实测后才能标记已验证。
+
+**问题 4 修复：多架构 digest 校验目标明确化（响应第三轮阻塞项 4；待实测项列为镜像协议探针）**
+
+- **语义明确**：
+  - `manifest_digest` = 多架构 manifest **list 顶层** digest（`sha256:...`，RepoDigests 常见形态）；
+  - `platform_manifest_digest` = 该 list 中 **linux/amd64 平台子 manifest** 的 digest；
+  - **两值不可混用**，校验对象按下表区分。
+- **校验方案（按顶层 digest 拉取场景）**：
+  1. 部署脚本按 `docker pull --platform linux/amd64 python@sha256:<manifest_digest>` 拉取；
+  2. `docker image inspect --format {{index .RepoDigests 0}}` 返回的 digest 与**哪一个批准值**比对——顶层还是平台子 digest，取决于 Docker Engine 解析与存储行为（manifest list 引用时 RepoDigests 可能记录顶层 digest，也可能因平台解析记录子 digest）——**该行为未实测，不预先宣称**；
+  3. 平台确认：inspect `Architecture=amd64`、`Os=linux` 必须与 `platform: linux/amd64` 一致；`platform_manifest_digest` 的进一步核对（如 `docker buildx imagetools inspect` 或 Engine API distribution 端点）列为探针确认项；
+  4. **容器创建最终引用**：默认 `manifest_digest`（顶层，Docker 自动解析平台）；是否改为直接引用 `platform_manifest_digest`（平台子 digest）由探针实测后写入锁定清单 notes 决定；两个 digest 不允许混用为一个值。
+- **镜像协议探针（V2-04B 首批任务，与 attach 协议探针并列）**：
+  - M-P1：按顶层 digest pull 后 RepoDigests 记录的是顶层还是平台子 digest；
+  - M-P2：`imagetools inspect` / Engine distribution API 能否核对平台子 digest；
+  - M-P3：容器引用平台子 digest 是否可创建运行；
+  - 探针结果写入锁定清单 notes 与测试报告；**映射关系确认前，清单保持 pending/null、执行 fail-closed**；镜像未审批时绝不执行真实实验代码。
+
+**attach 协议补充（响应第三轮协议边界要求）**
+
+- 明确声明以下各项**均为未验证设计假设**，不得描述为已实测事实：
+  - docker-py **具体版本**：V2-04B 集成测试报告必须记录实际安装版本与 Engine API 协商版本（`docker.version` / Engine v1.44 参考文档）；
+  - `attach_socket` 返回对象的**真实类型与接口**（docker-py 不同版本的 socket 包装类与 read/write 语义可能不同，探针先确认）；
+  - Windows Docker Desktop 下经 **npipe / TCP** 两种传输连接时 attach 行为差异；
+  - **写半关闭是否被支持**（`shutdown(SHUT_WR)` 或等价 API）：未实测前不假设可用；
+  - **EOF 是否能可靠传递给容器内 Python 进程**（`python -I -` 读到 EOF 开始执行）：探针用 `print("stdin-eof-reached")` 类最小程序实测确认。
+- 探针顺序：M 系列镜像探针 + S 系列流协议探针 → 通过后才实现执行器；**若 SDK 不支持预期行为，先重新设计传输方式并提交复审，不得回退宿主机执行**。
+
+**禁止事项确认**：本轮仅新增 1 个纯配置 JSON（executor_image_lock.json，pending/null）+ 文档修订；未实现容器执行；未新增 subprocess 路径；未把 Docker SDK 放入业务进程；未新增前端运行按钮；未启动 V2-05/06/07；未擅自审批或填写镜像 digest；未修改 main / trae-dev；未执行任何合并。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-04A 第三轮架构复审：仍需修订四项后批准
 

@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**V2-02 基础工程骨架、V2-03 实验定义与步骤数据模型已完成。** V2-03 第五轮源码复审通过；Trae 报告 Windows 本机全量测试为 238 passed / 0 failed / 0 skipped，前端 vue-tsc + vite 构建通过。V2-04A：Trae 已完成第三轮架构文档修订；ChatGPT 第三轮静态复审确认镜像预审批、应用标签清扫、命名 Mutex 和 attach 协议方向有效，但发现四项仍需修订：文档声称新增的 executor_image_lock.json 与拉取脚本在 Git 中不存在；旧实例孤儿扫描与双标签精确过滤逻辑矛盾；icacls /inheritance:r /grant:r 不能清除其他主体的显式 ACE，无法证明令牌仅当前用户可读；多架构 manifest digest 与平台子 digest 的校验目标未定义清楚。**第三轮复审暂不批准 V2-04B；修订通过前不实现容器执行。** Docker attach 写半关闭仍须在指定 docker-py + Windows Docker Desktop 环境用协议探针验证。本机未安装 Docker，真实容器测试依赖具备 Docker Desktop 的环境。AI 指导、屏幕标注等业务功能尚未实现。
+**V2-02 基础工程骨架、V2-03 实验定义与步骤数据模型已完成。** V2-03 第五轮源码复审通过；Trae 报告 Windows 本机全量测试为 238 passed / 0 failed / 0 skipped，前端 vue-tsc + vite 构建通过。V2-04A：Trae 已完成第四轮架构修订，逐项修复第三轮复审四项问题——①`executor_image_lock.json` 已真实创建并提交（pending/null，不编造 digest，不代表执行器已实现；拉取脚本改为 V2-04B 计划项）；②清扫拆分为查询 A（本实例残留：managed+instance 双过滤）与查询 B（旧实例孤儿：managed 过滤后逐个核验 instance≠self、非 running、超宽限期），running 容器绝不清扫、删除前二次确认防竞态，附 7 项负向测试设计；③.env 令牌改为显式构造 DACL（白名单=所有者+SYSTEM+Administrators）+ 启动枚举实际 ACL 校验 + 父目录替换权限检查，不符则拒绝启动，附 5 项 ACL 测试设计（未实测前不声称已验证）；④多架构 digest 语义明确化（顶层/平台子 digest 不可混用），校验映射行为列为 V2-04B 镜像协议探针（M-P1~M-P3），确认前保持 pending/null fail-closed；attach 写半关闭等行为明确列为未验证假设，由流协议探针实测。**第三轮复审暂不批准 V2-04B；第四轮修订待 ChatGPT 复审，通过前不实现容器执行。** 本机未安装 Docker，真实容器测试依赖具备 Docker Desktop 的环境。AI 指导、屏幕标注等业务功能尚未实现。
 
 仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
 
