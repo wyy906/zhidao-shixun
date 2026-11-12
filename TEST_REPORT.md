@@ -13,7 +13,7 @@
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
 | 后端测试 | **113 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **112 项，全部通过**（`sandbox_manager/tests/`） |
+| 沙箱管理器测试 | **129 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -23,8 +23,9 @@
 ## 2. 结论摘要
 
 1. 后端 113 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
-2. 沙箱管理器 112 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
-   生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、结果字段校验与生命周期。
+2. 沙箱管理器 129 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+   生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、
+   结果字段校验、生命周期，以及验收工具 `verify_isolation.py` 的 PASS/FAIL/SKIP 判定可靠性。
 3. 学生代码**已不在业务后端进程内执行**，也不再作为本机 subprocess 运行；沙箱不可用时一律 503，不存在降级路径。
 4. 测试在**无网络、无真实 AI Key、无真实数据库、无真实 `.env`、无 Docker** 的条件下可重复运行。
 5. 测试过程中发现 8 个问题：**2 个已修复**，**6 个待负责人决策**；1 项（桌面端 GUI）**尚未验证**。
@@ -47,7 +48,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（113 项 + 112 项）
+## 4. 后端自动化测试（113 项 + 129 项）
 
 ### 4.1 用例分布
 
@@ -66,21 +67,22 @@
 | `sandbox_manager/tests/test_container_spec.py` | 41 | 41 | 0 |
 | `sandbox_manager/tests/test_server.py` | 19 | 19 | 0 |
 | `sandbox_manager/tests/test_jobs.py` | 21 | 21 | 0 |
+| `sandbox_manager/tests/test_verify_isolation.py` | 17 | 17 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_runner.py` | 17 | 17 | 0 |
-| **管理器合计** | **112** | **112** | **0** |
+| **管理器合计** | **129** | **129** | **0** |
 
 ### 4.2 实际执行结果
 
 ```
 # backend
 python -m pytest -q
-113 passed, 400 warnings in 62.74s
+113 passed, 400 warnings in 61.10s
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-112 passed, 1 warning in 1.54s
+129 passed, 1 warning in 1.65s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -347,6 +349,12 @@ python -m pytest -q sandbox_manager/tests
 |---|---|---|---|
 | F-25 | 结果字段校验不完整（bool 可冒充 int、error_* 未校验） | 后端与管理器均使用 `type(x) is int` 严格判断；补齐 `error_code` / `error_message`；后端在 `_save_result` 之前调用 `_validate_terminal_result` | `test_code_sandbox.py` 9 项、`test_jobs.py` 5 项 |
 
+#### 第七轮验收工具可靠性
+
+| 编号 | 问题 | 修复 | 回归测试 |
+|---|---|---|---|
+| F-26 | SKIP 也可能退出码 0、错误令牌任意异常算 PASS、标记文件可能不在 Docker 宿主机、Docker 残留可能查错机器、CPU 只做字符串匹配 | 新增 PASS/FAIL/INCOMPLETE 三态与退出码 0/1/2；错误令牌仅 401 通过；标记文件与宿主检查要求 `--on-execution-node`；Docker 残留要求 `--docker-check local`；CPU 解析 quota/period；网络与资源测试要求明确证据 | `test_verify_isolation.py` 17 项 |
+
 ## 8. 历史记录（仅追溯，不代表当前状态）
 
 ### 8.1 阶段 0：项目接入与现状盘点
@@ -446,6 +454,21 @@ python -m pytest -q sandbox_manager/tests
 - 畸形结果统一落 `failed/internal_error`，不保存 succeeded，不泄露原始内容。
 - 后端测试 104 → **113**，管理器测试 102 → **107**。
 - 真实 Linux / Docker 实机验证仍未完成，本轮不代表阶段 3-A 安全验收通过。
+
+### 8.11 阶段 3-A 第七轮验收工具可靠性
+
+- `verify_isolation.py` 改为三态判定：PASS 退出 0、FAIL 退出 1、INCOMPLETE 退出 2；
+  必检项 SKIP 不再可能得到 0。
+- 错误令牌仅在 HTTP 401 时通过；连接拒绝、TLS、DNS 异常均记 FAIL。
+- 宿主机标记文件只在 `--on-execution-node` 时创建/测试，否则 SKIP；
+  容器残留只在 `--docker-check local` 时检查，否则 SKIP 并给出节点侧命令。
+- 新增 `--client-cert` / `--client-key` / `--expect-mtls`，验证无证书、错误证书、
+  合法证书、不受信服务端证书四种情况；私钥不输出。
+- CPU 解析 `quota/period` 比例，内存与 PID 精确比较；网络/超时/内存/fork/磁盘/输出
+  均要求任务终态与明确标记，不再把任意失败当作限制生效。
+- 管理器测试 112 → **129**（新增 `test_verify_isolation.py` 17 项），后端仍为 113。
+- 自动化测试通过，但**验收工具本身未在真实 Linux / Docker 节点运行**，
+  S-01 ~ S-15 仍全部未执行。
 
 ## 9. 本机环境限制（影响复现）
 
