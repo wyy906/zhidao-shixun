@@ -57,7 +57,10 @@ def _validate_result(result: Any) -> dict:
 
     normalized = dict(result)
     for field in ("stdout", "stderr"):
-        value = normalized.get(field, "")
+        # 字段必须存在且为字符串；不得用默认空串掩盖缺失或 None
+        if field not in normalized:
+            raise ValueError(f"{field} is required")
+        value = normalized[field]
         if type(value) is not str:
             raise ValueError(f"{field} must be a string")
         normalized[field] = value

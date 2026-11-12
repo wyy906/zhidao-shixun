@@ -13,7 +13,7 @@
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
 | 后端测试 | **113 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **107 项，全部通过**（`sandbox_manager/tests/`） |
+| 沙箱管理器测试 | **112 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -23,7 +23,7 @@
 ## 2. 结论摘要
 
 1. 后端 113 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
-2. 沙箱管理器 107 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+2. 沙箱管理器 112 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
    生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、结果字段校验与生命周期。
 3. 学生代码**已不在业务后端进程内执行**，也不再作为本机 subprocess 运行；沙箱不可用时一律 503，不存在降级路径。
 4. 测试在**无网络、无真实 AI Key、无真实数据库、无真实 `.env`、无 Docker** 的条件下可重复运行。
@@ -47,7 +47,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（113 项 + 107 项）
+## 4. 后端自动化测试（113 项 + 112 项）
 
 ### 4.1 用例分布
 
@@ -65,11 +65,11 @@
 | **backend 合计** | **113** | **113** | **0** |
 | `sandbox_manager/tests/test_container_spec.py` | 41 | 41 | 0 |
 | `sandbox_manager/tests/test_server.py` | 19 | 19 | 0 |
-| `sandbox_manager/tests/test_jobs.py` | 16 | 16 | 0 |
+| `sandbox_manager/tests/test_jobs.py` | 21 | 21 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_runner.py` | 17 | 17 | 0 |
-| **管理器合计** | **107** | **107** | **0** |
+| **管理器合计** | **112** | **112** | **0** |
 
 ### 4.2 实际执行结果
 
@@ -80,7 +80,7 @@ python -m pytest -q
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-107 passed, 1 warning in 1.41s
+112 passed, 1 warning in 1.54s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，

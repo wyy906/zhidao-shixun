@@ -162,6 +162,40 @@ def test_malformed_runner_result_does_not_leak_content():
     assert secret not in str(finished)
 
 
+@pytest.mark.parametrize("result", [
+    {"status": "succeeded", "stderr": ""},                    # 缺少 stdout
+    {"status": "succeeded", "stdout": ""},                    # 缺少 stderr
+    {"status": "succeeded", "stdout": None, "stderr": ""},    # stdout=None
+    {"status": "succeeded", "stdout": "", "stderr": None},    # stderr=None
+])
+def test_missing_or_null_stream_fields_are_rejected(result):
+    store = JobStore(_BadResultRunner(result), SandboxLimits(max_concurrent=1, max_pending=2))
+    job = store.submit("print(1)", 1)
+    finished = _wait_status(store, job["job_id"])
+    assert finished["status"] == "failed"
+    assert finished["error_code"] == "internal_error"
+    # 不得把原始结果内容返回给调用方
+    assert "None" not in finished["stderr"]
+
+
+def test_empty_stream_fields_are_allowed():
+    store = JobStore(
+        _BadResultRunner({
+            "status": "succeeded",
+            "stdout": "",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 1,
+        }),
+        SandboxLimits(max_concurrent=1, max_pending=2),
+    )
+    job = store.submit("print(1)", 1)
+    finished = _wait_status(store, job["job_id"])
+    assert finished["status"] == "succeeded"
+    assert finished["stdout"] == ""
+    assert finished["stderr"] == ""
+
+
 def test_concurrent_submissions_do_not_exceed_limit():
     runner = BlockingRunner()
     store = _store(runner, max_pending=2)
