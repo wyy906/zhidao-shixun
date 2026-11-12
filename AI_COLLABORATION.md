@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第六轮架构修订已提交：Query B 状态白名单 exited/dead+四项删除前核验+force=false 不扩大范围；固定 ACE 模板 4 条含 OWNER RIGHTS 限制 owner 隐式 WRITE_DAC；父目录 Authz 有效权限+路径链+稳定目录句柄；待 ChatGPT 第六轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第七轮架构修订已提交：确认同用户删除/替换绕过路径并修订为最小只读模板——文件 0x120089 无 DELETE 无写、目录 0x100020 仅遍历、双 OWNER RIGHTS、运行期持有句柄闭环 TOCTOU、四类威胁模型表、N-A22~N-A32；待 ChatGPT 第七轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1203,7 +1203,8 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | R-4B-1：容器逃逸残余风险依赖 Docker Desktop/WSL2 VM 边界 | 极端内核漏洞场景下隔离失效 | cap_drop ALL、no-new-privileges、非 root、无 socket/privileged 缩小攻击面；VM 边界残余风险接受并记录；镜像内无任何密钥 | 已记录（接受） |
 | R-4B-2：attach 双向流协议已明确（stdin 原始/输出帧解复用），但 docker-py 实际行为需实测确认 | SDK 抽象与协议预期不符会导致实现偏差 | V2-04B 首项任务为协议探针测试（stdout/stderr 分流+EOF 验证），探针通过后才实现执行器；不符则验证低层协议再选实现，绝不静默退回宿主机执行 | 待 V2-04B 实测 |
 | R-4B-4：镜像锁定清单 executor_image_lock.json 已真实提交（V2-04A 第四轮），当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest，两者都填）并更新清单；批准后重跑安全测试；部署脚本属 V2-04B 计划实现 | 待负责人审批 |
-| R-4B-5：.env 固定 ACE 模板（4 ACE：OWNER RIGHTS 0x20000 / owner 0x13019F / SYSTEM 0x1F01FF / Administrators 0x1F01FF，逐项审计）+ OWNER RIGHTS 方案 + 父目录 owner 核验与 Authz 有效权限（泛型映射）+ 路径链检查与稳定目录句柄，尚未 Windows 实机验证 | ACL 实际行为与设计不符时令牌保护弱于预期 | V2-04B 按模板全量构造 + 启动逐项比对 + Authz 有效权限计算实现，附 N-A1~N-A21 共 21 项正负向测试；任一不符拒绝启动；Administrators FILE_ALL_ACCESS 为明确接受的本机管理员信任边界 | 待 V2-04B 实测 |
+| R-4B-5：.env 第七轮最小只读模板（文件 0x00120089 仅读/目录 0x00100020 仅遍历，双 OWNER RIGHTS 0x00020000，SYSTEM/Administrators 0x001F01FF）+ 父目录 Authz 有效权限（泛型映射）+ 路径链检查 + 运行期持有句柄闭环 TOCTOU，尚未 Windows 实机验证 | ACL 实际行为与设计不符时令牌保护弱于预期 | V2-04B 按模板全量构造 + 句柄上逐项校验 + 周期重验实现，附 N-A1~N-A32 共 32 项正负向测试；任一不符拒绝启动；Administrators/SYSTEM 的 FILE_ALL_ACCESS 为明确接受的本机管理员/SYSTEM 信任边界 | 待 V2-04B 实测 |
+| R-4B-7：同用户进程（B）可读取 .env 密钥（同用户信任边界，Windows ACL 机制原理上无法阻止同 token 读取/进程注入/内存读取） | 同用户恶意进程可窃取 AI 密钥 | 本设计明确不宣称阻止同用户读取，仅保证其无法篡改/删除/替换 .env 或其 DACL；残余风险如实记录；完整隔离依赖后续独立服务账户/隔离部署（学校服务器部署前置条件，第二轮阻塞检查单） | 接受并记录；V2-07 前置条件 |
 | R-4B-6：清扫状态白名单（仅 exited/dead）与 force=false 非强制删除尚未 Docker 实测 | 误删 paused/created 等运行语义容器，或删除冲突处理不当 | 七项校验+四项删除前核验+force=false+失败不扩大范围；N-S1~N-S23 负向测试设计覆盖全部状态与竞态场景 | 待 V2-04B 实测 |
 | R-4B-3：Trae 本机未安装 Docker（已实测确认） | N13–N18/T5–T12 真实容器行为无法在本机验证 | mock/协议层测试本机可跑（N1–N12/T1–T4）；真实容器测试需负责人 Docker Desktop 环境，交付时如实标注运行环境 | 依赖负责人环境 |
 | 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
@@ -1780,6 +1781,83 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 - 声明：以上模板与父目录/路径链行为**尚未在 Windows 实机验证**（含泛型映射的实际掩码展开），V2-04B 实测通过前不声称已验证。
 
 **范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；`executor_image_lock.json` 保持原样（pending、digest 全 null、审批状态未动）；未实现容器执行、未新增 subprocess 路径、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未执行任何合并。验证 = 文档设计审查 + 既有基线回归（238 passed / 0 failed / 0 skipped）；新增设计未运行实现，mock 测试（N-S 系列）与 Windows/Docker 实机测试（N-A 系列）区分标注，实测均归 V2-04B。
+
+### 2026-11-12｜Trae：V2-04A 架构第七轮修订（同用户删除/替换 .env 攻击路径分析与最小只读模板，docs-only）
+
+**核心问题确认：第六轮模板存在真实的同用户替换绕过路径（本轮承认并修订）**
+
+攻击路径（第六轮模板下成立）：与执行服务同 Windows 用户的其他进程 B，利用文件 owner ACE 中的 `DELETE (0x00010000)` 删除 `.env` → 利用父目录残留的创建权限（第六轮父目录检查只针对"非白名单主体"，未限制运行用户自身的 FILE_ADD_FILE）→ 以 B 为 owner 创建同名新文件（新文件 DACL 由 B 随意设置）→ 执行服务下次读取/启动读到攻击者文件。**OWNER RIGHTS 仅中和隐式 WRITE_DAC，不阻止删除+重创建的替换路径。**第六轮模板必须修订，本轮替换之。
+
+**修订 1：权限最小化分析（逐项回答复审提问）**
+
+| 运行用户权限 | 运行期是否需要 | 结论 |
+|---|---|---|
+| DELETE（文件） | 否——执行服务运行期绝不删除/重命名 .env | **移除** |
+| FILE_WRITE_DATA / FILE_APPEND_DATA | 否——运行期只读密钥 | **移除** |
+| FILE_WRITE_EA / FILE_WRITE_ATTRIBUTES | 否 | **移除** |
+| FILE_READ_DATA / FILE_READ_EA / FILE_READ_ATTRIBUTES / READ_CONTROL / SYNCHRONIZE | 是——读取密钥 | 保留（= FILE_GENERIC_READ 0x00120089） |
+| 父目录 FILE_ADD_FILE / FILE_DELETE_CHILD / DELETE / WRITE_DAC / WRITE_OWNER | 否——运行期不在目录内创建/删除任何文件 | **全部移除**（对运行用户自身同样生效） |
+| 父目录 FILE_EXECUTE（FILE_TRAVERSE）+ SYNCHRONIZE | 是——经目录遍历打开 .env | 保留 |
+
+**写入分离原则**：`.env` 的创建与更新只发生在**配置阶段**——由负责人运行独立配置脚本（以本机管理员/交互用户身份执行，落入 Administrators ACE 授权范围）；配置完成后立即应用 DACL 模板；执行服务**运行期对 .env 只读、对目录不可写**。运行用户不需要任何写/删权限，因此不保留任何多余权限。
+
+**修订 2：新的唯一批准 DACL 模板（第七轮模板，替代第六轮模板）**
+
+**文件 `.env`**（owner = 执行服务运行用户，启动时核验实际 owner 与运行身份一致）：
+
+| 序 | 主体 SID | 类型 | Access Mask（hex） | 符号分解 | Flags |
+|---|---|---|---|---|---|
+| 1 | S-1-3-4（OWNER RIGHTS） | ALLOW (0x0) | `0x00020000` | READ_CONTROL | 0x0 |
+| 2 | `<运行用户 SID>`（= owner） | ALLOW (0x0) | `0x00120089` | SYNCHRONIZE(0x00100000) + READ_CONTROL(0x00020000) + FILE_READ_ATTRIBUTES(0x80) + FILE_READ_EA(0x8) + FILE_READ_DATA(0x1)——即 FILE_GENERIC_READ，**无 DELETE、无任何写权限** | 0x0 |
+| 3 | S-1-5-18（SYSTEM） | ALLOW (0x0) | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+| 4 | S-1-5-32-544（Administrators） | ALLOW (0x0) | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+
+**父目录（`.env` 所在目录）**——OWNER RIGHTS **同样应用于目录**（目录 owner 也是运行用户，隐式 WRITE_DAC 需同样中和）：
+
+| 序 | 主体 SID | 类型 | Access Mask（hex） | 符号分解 | Flags |
+|---|---|---|---|---|---|
+| 1 | S-1-3-4（OWNER RIGHTS） | ALLOW (0x0) | `0x00020000` | READ_CONTROL | 0x0 |
+| 2 | `<运行用户 SID>`（= owner） | ALLOW (0x0) | `0x00100020` | SYNCHRONIZE(0x00100000) + FILE_EXECUTE(0x20)（FILE_TRAVERSE，仅供路径遍历）——**无 FILE_ADD_FILE、无 FILE_DELETE_CHILD、无 DELETE、无任何写** | 0x0 |
+| 3 | S-1-5-18（SYSTEM） | ALLOW (0x0) | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+| 4 | S-1-5-32-544（Administrators） | ALLOW (0x0) | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+
+- 共同规则：ACE 总数 **4**；顺序固定如上；类型全部 ALLOW (0x0)；flags 全 0x0（SE_DACL_PROTECTED 关继承，无继承/对象/回调标志）；无 deny ACE；继承**关闭**（文件与目录均明确关闭，不依赖继承传播）；文件与目录**两个模板都必须明确应用并逐项校验**。SYSTEM/Administrators 的 FILE_ALL_ACCESS 为**明确接受的本机管理员信任边界**（本机管理员可读/改/删令牌文件——如实声明，不宣传为管理员也无法访问）。
+- 效果：同用户进程 B（= owner 身份）对 .env 仅可读（不可写/删/换名/改 DACL）；对父目录仅可遍历（不可创建/删除/替换任何条目）。**删除+重创建绕过路径被关闭**：B 无文件 DELETE、无目录 FILE_ADD_FILE、隐式 WRITE_DAC 被 OWNER RIGHTS 掐断。
+
+**修订 3：四类威胁模型（A/B/C/D 逐项，如实声明边界与残余风险）**
+
+| 攻击者 | 读 .env | 改 .env | 删除/替换 .env | 改 .env DACL | 替换父/祖先目录 | 当前设计能否阻止 |
+|---|---|---|---|---|---|---|
+| A. 普通 Windows 其他用户 | 否（文件无 ACE；目录遍历白名单未含） | 否 | 否 | 否 | 否 | **能**（ACL 白名单 + 目录收紧 + 路径链检查） |
+| B. 同登录用户的其他进程 | **能（同用户信任边界既有事实——B 与服务同 token，读取属 Windows 同用户天然能力，本设计不宣称阻止读取）** | 否（文件无写 ACE） | 否（无 DELETE；目录无 FILE_ADD_FILE/DELETE_CHILD/DELETE） | 否（OWNER RIGHTS 中和隐式 WRITE_DAC；DACL 无授予） | 否（子树内目录对 B 仅 TRAVERSE；项目内路径链逐级收紧） | **篡改/替换：能阻止**；**读取：不能阻止且明确不宣称阻止**——属同用户信任边界残余风险 R-4B-7 |
+| C. 本机 Administrators | 能 | 能 | 能 | 能 | 能 | **不能——明确接受的本机管理员信任边界**（FILE_ALL_ACCESS 是批准的设计选择，负责人即管理员） |
+| D. SYSTEM | 能 | 能 | 能 | 能 | 能 | **不能——SYSTEM 等同内核级信任，属 Windows 机制上限，明确接受** |
+
+- 明确声明（响应复审"不得模糊措辞"）：OWNER RIGHTS 方案**只防"改 DACL 提权"与"经 ACL 的写/删/替换"，不防同用户读取**。若攻击者 B 已与执行服务同用户运行，B 可用任何同用户进程能力攻击服务本身（进程注入/键盘记录/内存读取），ACL 机制原理上无法隔离；该层级防护依赖后续独立服务账户/隔离部署（学校服务器部署前置条件，第二轮已列阻塞检查单）。
+
+**修订 4：TOCTOU 与启动后替换的闭环**
+
+- 启动时序（fail-closed）：①不追随重解析点打开 .env（FILE_OPEN_REPARSE_POINT 语义）→ ②**在句柄上**（GetSecurityInfo by handle，非按路径）读取 owner 与 DACL → ③与模板逐项比对 + 父目录/路径链检查 → ④全部通过后**运行期保持句柄打开不关闭**（未以 FILE_SHARE_DELETE 打开的句柄阻止删除）→ ⑤定期重验（句柄安全描述符 + 路径链 + 祖先未变化）。
+- 即使路径在检查后被替换，服务持有的仍是校验通过时打开的句柄；下次启动对新文件重新校验——攻击者重建文件即使 DACL 与模板完全一致（同用户可构造），**模板下 B 无写权限，无法注入恶意密钥内容**；B 唯一可行的是"用读到的原内容重建"——无增益（B 本来就能读）。篡改路径闭环成立。
+- **祖先目录替换**：项目根及以上层级属 Windows 用户 profile 默认权限（B=同用户拥有完全控制），为同用户信任边界既有事实；本设计保护范围 = 配置完成后的 `.env` 子树（文件+父目录+项目内路径链各组件按模板收紧）；启动校验含"祖先目录未被重命名/替换/重解析点变化"（N-A30）。
+
+**修订 5：负向测试设计 N-A22~N-A32（全部为设计，未运行）**
+
+| # | 测试前提 | 攻击/异常操作 | 预期行为 | 拒绝启动 | 安全审计 | 验证方式 |
+|---|---|---|---|---|---|---|
+| N-A22 | 残留旧模板（含 DELETE/写权限） | 检测运行用户对 .env 有效权限 | 含 DELETE 或任何写权限 → 启动检查拒绝 | 是 | 是 | mock+实机 |
+| N-A23 | 运行用户对父目录有效权限含 FILE_ADD_FILE | 同用户进程尝试在目录创建文件 | 拒绝启动；OS 层创建被拒 | 是 | 是 | mock+实机 |
+| N-A24 | 运行用户对父目录有效权限含 FILE_DELETE_CHILD | 同用户进程尝试删除 .env | 拒绝启动；OS 层删除被拒 | 是 | 是 | mock+实机 |
+| N-A25 | 第七轮模板已正确应用 | 同用户进程 DeleteFile(.env) 并重建同名文件 | 删除被 OS 拒绝（无 DELETE）；重建被 OS 拒绝（无 FILE_ADD_FILE）；服务正常启动且读到原文件 | 否（正常运行） | 记录攻击尝试 | **需 Windows 实机**（mock 仅验证判定逻辑） |
+| N-A26 | 同上 | 同用户进程 rename/move 替换 .env | 重命名被 OS 拒绝（文件无 DELETE+目录无删除权） | 否 | 是 | 需实机 |
+| N-A27 | 父目录 owner 为运行用户但有效权限不符目录模板（如残留 FILE_ADD_FILE） | 启动校验 | 拒绝启动 | 是 | 是 | mock+实机 |
+| N-A28 | 父目录缺 OWNER RIGHTS ACE 或掩码不符 0x00020000 | 启动校验 | 拒绝启动 | 是 | 是 | mock+实机 |
+| N-A29 | 检查通过后、读取前文件被替换（竞争模拟） | 打开时在句柄上校验 owner/DACL 与检查时不一致 | 句柄校验失败 → 拒绝启动/拒绝读取（不用未校验内容） | 是 | 是 | mock（句柄校验逻辑）+实机 |
+| N-A30 | 运行中祖先目录被重命名/替换或重解析点变化 | 周期性重验路径链 | 检测到变化 → 停止使用该配置（健康端点反映），密钥不再读取；重启时拒绝启动 | 是（重启时） | 是 | mock+实机 |
+| N-A31 | 运行中 .env 安全描述符被修改 | 周期性在句柄上重读安全描述符 | 与模板不符 → 停止使用并审计；后续启动拒绝 | 是（重启时） | 是 | mock+实机 |
+| N-A32 | 权限计算（Authz/有效权限）失败或不确定 | 启动校验 | fail-closed 拒绝启动 | 是 | 是 | mock+实机 |
+
+**范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；`executor_image_lock.json` 保持原样（pending、digest 全 null、审批状态未动）；未实现容器执行、未新增 subprocess 路径、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未创建/执行任何 PR 或合并。验证 = 文档设计审查 + 既有基线回归（238 passed）；N-A22~N-A32 与此前所有 ACL/Docker 设计**均未实机运行**——mock 可验证（判定逻辑）与 Windows 实机必须（OS 权限行为）已逐项标注，全部实测归 V2-04B。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-04A 第五轮架构复审：仍有两项安全边界待明确
 
