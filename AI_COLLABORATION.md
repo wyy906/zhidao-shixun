@@ -1351,3 +1351,45 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 **复审结论：**
 - 第三轮修复主体有效，但字段级镜像检查仍有遗漏。V2-03 保持“待审查”，V2-04 不得启动。
 - 本轮未修改业务代码；Trae 修复后独立提交新 commit，提供 SHA、完整 pytest 结果和镜像测试覆盖清单，再由 ChatGPT 复审。
+
+
+### 2026-11-12｜角色：ChatGPT｜V2-04A 第二轮架构复审：需补充三项后再批准
+
+**审查基准：**
+- 已先读取 `CHATGPT_PROJECT_REASONING_BASIS.md`，再读取当前 V2 分支最新 `AI_COLLABORATION.md`、`README.md` 和 Trae 的 `db991ca` 提交差异。
+- 当前分支 HEAD：`db991cac67e5376f5547b98fe8626a5fb646fa72`；本提交为 docs-only，仅修改协作文档和 README。
+- 本轮为架构文档静态复审，没有运行代码或 Docker；Trae 报告当前无 Docker 环境，真实容器测试仍需在 Docker Desktop 环境执行。
+
+**已确认修订有效：**
+1. Host 白名单、Origin/null Origin 与 Sec-Fetch-Site 跨站拒绝、方法/Content-Type 限制、无宽松 CORS、随机高熵令牌及最小 health 响应已写入方案；同机同用户信任边界描述基本准确。
+2. 浏览器不持有执行服务令牌，执行仅经 FastAPI 服务端代理；单用户 localhost 演示模式与学校服务器多用户部署前置条件已明确。
+3. 请求模型改为 extra=forbid；审计日志字段最小化，不记录代码、令牌和完整输出。
+4. stdin 成为主方案，文件挂载降为默认禁用备选；超时、输出限制、客户端断连、daemon 中断、并发/速率限制和 mock/真实 Docker 测试边界已有说明。
+5. 第一轮提出的 C-1 至 C-5 设计取值均已采纳；没有发现本轮启动容器执行、宿主机 subprocess 或越界启动 V2-05/06/07 的迹象。
+
+**批准前必须修订的三项：**
+
+1. **镜像 digest 必须是预先审核的信任锚，而不是从可变 tag 自动“自我批准”。**
+   - 当前文档的部署脚本先执行 `docker pull python:3.12-slim`，再从 `RepoDigests[0]` 提取 digest 并写入 `ZD_EXEC_IMAGE_DIGEST`。这只能固定本次拉取结果，不能证明该镜像 digest 已由项目负责人预先审核。
+   - 改为在受信任、可审查的版本化配置/发布清单中预先锁定已批准的完整 digest；部署脚本按 digest 拉取，并校验实际镜像 digest 与批准值完全一致。不得从可变 tag 自动生成并接受新的信任值。
+   - 镜像更新必须经负责人明确批准、更新锁定值并重跑安全测试；执行请求仍不可指定镜像。记录平台架构及多架构 manifest/平台子 digest 的选取规则。
+
+2. **容器清扫必须严格限定为智导实训创建并拥有的容器。**
+   - 当前“本实例残留 + 超过五分钟的全局孤儿”范围不够精确。所有由执行服务创建的容器应同时带稳定的应用归属标签（例如 `zhidao-exec-managed=true`）和实例 ID 标签。
+   - 清扫只能处理带有应用归属标签、且满足本实例残留或明确孤儿条件的容器；禁止按“所有已停止容器/全局容器”清扫，绝不能删除其他 Docker 项目或用户创建的容器。
+   - 明确 Windows `O_EXCL` 锁文件在进程崩溃后可能残留的恢复规则：必须能安全判断锁所有者是否仍存活，并以原子方式接管；不得仅凭锁文件年龄直接删除可能仍有效的锁。可改用具备进程退出释放/abandoned mutex 语义的系统级锁。
+
+3. **把 Docker attach 双向流协议写清楚，避免输入/输出帧处理混淆。**
+   - 当前“8 字节头 + payload”表述没有明确该 framing 对输入 stdin 和输出 stdout/stderr 各自如何应用。
+   - V2-04B 实现前应依据 Docker Engine API attach 协议和所用 Docker SDK 的实际行为，明确 TTY 设置、stdin 写入格式、stdout/stderr 读取与解复用、EOF/半关闭处理。不得未经验证就给 Python 源码输入流添加输出帧头。
+   - 增加真实 Docker 集成测试：发送一段最小 Python 源码，验证其正确执行；分别验证 stdout/stderr 解复用、非 ASCII 输入、较大输入、EOF、超时和断连清理。若 SDK 抽象与预期不一致，先验证低层协议再选实现，不得静默退回宿主机执行。
+   - 参考：Docker Engine API attach 文档 https://docs.docker.com/reference/api/engine/version/v1.44/ 。
+
+**附带加固建议（可与上述修订一起完成）：**
+- 不要把“Windows 默认 ACL”视为必然只允许当前用户读取；令牌文件应显式设置并验证 ACL（例如检查父目录继承权限），且不输出令牌值。
+- 测试报告应把“协议/mock 测试通过”和“真实 Docker 隔离测试通过”分栏统计，不能用 238 项既有测试通过替代新执行器测试。
+
+**复审结论：**
+- <badge>暂不批准 V2-04B</badge> 第二轮修订方向总体正确，但上述三项是进入实现前的架构阻塞项。
+- 本轮没有修改业务代码，没有启动 V2-04B，也没有合并任何分支。Trae 完成文档修订并独立提交后，再由 ChatGPT 进行第三轮复审；复审通过前不得实现容器执行。
+- `main` 与 `trae-dev` 保持不动；项目负责人明确授权合并前，V2 分支绝不与 `main` 合并。
