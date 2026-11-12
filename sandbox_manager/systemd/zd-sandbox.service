@@ -1,0 +1,27 @@
+[Unit]
+Description=ZhiDao Sandbox Manager (Docker execution node)
+Documentation=file:///opt/zd-sandbox/SANDBOX_DEPLOYMENT.md
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 专用非 root 账号，仅加入 docker 组（**不要**把 docker.sock 暴露给执行容器）
+User=zd-sandbox
+Group=zd-sandbox
+EnvironmentFile=/etc/zd-sandbox/manager.env
+WorkingDirectory=/opt/zd-sandbox
+ExecStart=/opt/zd-sandbox/venv/bin/python -m sandbox_manager
+Restart=on-failure
+RestartSec=3
+# 加固：管理器进程本身也不需要写系统目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run /var/run
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

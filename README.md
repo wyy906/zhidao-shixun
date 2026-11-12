@@ -1,4 +1,4 @@
-# 智导实训
+﻿# 智导实训
 
 > AI 视觉感知与实时操作引导平台 —— 面向高校多学科数字化实验教学。
 >
@@ -22,7 +22,9 @@
 三端互不共享代码，只通过 HTTP 通信：
 
 - **网页端**：教师创建/导入实验、查看进度与统计、批阅报告；学生查看实验、逐步操作、在线写并运行 Python、提交报告。
-- **后端**：鉴权、实验与进度、AI 屏幕指导（教程关键词快路径 + 多模态视觉兜底）、代码运行、数据分析。
+- **后端**：鉴权、实验与进度、AI 屏幕指导（教程关键词快路径 + 多模态视觉兜底）、代码执行任务转发、数据分析。
+- **沙箱执行节点**：独立 Linux + Docker，每位学生的代码在一次性临时容器内执行（默认禁网、只读根文件系统、资源限额）。
+  部署见 [SANDBOX_DEPLOYMENT.md](SANDBOX_DEPLOYMENT.md)。
 - **桌面助手**：常驻托盘，用 Windows UI Automation 读取控件坐标，透明悬浮层在真实软件上画绿框标注下一步该点哪里。
 
 ## 2. 技术栈
@@ -52,6 +54,13 @@
 │   ├── requirements.txt
 │   ├── requirements-dev.txt
 │   └── .env.example        # 环境变量模板（不含真实密钥）
+├── sandbox_manager/        # 独立 Linux 执行节点（Docker 临时容器沙箱）
+│   ├── server.py           # 管理接口（令牌 / TLS）
+│   ├── runner.py           # 容器创建、监控、回收
+│   ├── container_spec.py   # 安全参数（禁网 / 只读 / 资源限额）
+│   ├── sandbox_image/      # 固定 Python 镜像
+│   ├── scripts/            # 构建镜像、实机隔离验证
+│   └── tests/              # 无需 Docker 的单元测试
 ├── frontend/               # Vue 3 网页端
 │   ├── src/
 │   │   ├── views/          # auth / student / teacher
@@ -155,6 +164,11 @@ python src\main.py
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | token 有效期（分钟） | 1440 |
 | `ALLOW_PUBLIC_REGISTER` | 是否开放公开注册 | false |
 | `AI_API_BASE_URL` / `AI_API_KEY` / `AI_VISION_MODEL` | OpenAI 兼容多模态接口；三项留空则只用关键词快路径 | 空 |
+| `CODE_EXECUTION_ENABLED` | 代码执行总开关；false 时 `/code/run` 一律 503 | true |
+| `SANDBOX_MANAGER_URL` / `SANDBOX_MANAGER_TOKEN` | 独立执行节点地址与管理令牌；留空则拒绝执行 | 空 |
+| `SANDBOX_MANAGER_CA_FILE` / `_CLIENT_CERT` / `_CLIENT_KEY` | 内网 TLS / 双向 TLS | 空 |
+| `CODE_RUN_TIMEOUT_SECONDS` | 执行超时上限（学生不可提高） | 10 |
+| `CODE_MAX_INPUT_BYTES` / `CODE_MAX_OUTPUT_BYTES` | 代码输入 / 输出上限（字节） | 65536 |
 
 ### 前端 `frontend/.env`
 
@@ -185,7 +199,7 @@ POST   /api/v1/experiments/{id}/start | /step | /submit
 GET/PUT /api/v1/experiments/{id}/report    POST /api/v1/experiments/{id}/report/submit
 GET    /api/v1/progress/{exp_id}
 POST   /api/v1/ai/guide | /screen-guide | /analyze-screen | /diagnose/{id} | /verify/{id}/{step_id}
-POST   /api/v1/code/run
+POST   /api/v1/code/run              GET  /api/v1/code/tasks/{task_id}
 GET    /api/v1/analytics/overview | /students | /experiments/{id}
 GET    /health
 ```
@@ -201,13 +215,23 @@ python -m pytest -q
 ```
 
 - 测试位于 `backend/tests/`（`conftest.py`、`test_auth.py`、`test_experiments.py`、
-  `test_progress.py`、`test_report.py`）。
+  `test_progress.py`、`test_report.py`、`test_config_isolation.py`、`test_code_sandbox.py`）。
 - **完全隔离**：每个测试使用 `tmp_path` 下独立的临时 SQLite 库，`get_db` 通过
   `dependency_overrides` 替换；导入 app 之前已把 `DATABASE_URL` 指向一次性临时文件，
   不会连接、修改或删除真实数据库。
 - **不读取真实 `.env`**：pytest 启动时把 `ZD_ENV_FILE` 指向一个不存在的临时文件，
   配置加载器因此不会读到 `backend/.env`（该路径可用 `ZD_ENV_FILE` 自定义，正常开发不受影响）。
-- 不需要联网、不需要真实 AI Key。
+- 代码执行测试使用假沙箱管理器（`FakeSandbox`），不会在本机执行学生代码。
+- 不需要联网、不需要真实 AI Key、不需要 Docker。
+
+沙箱管理器单元测试（无需 Docker）：
+
+```powershell
+cd ..            # 仓库根目录
+python -m pytest -q sandbox_manager/tests
+```
+
+真实容器隔离必须在独立 Linux 执行节点验证，见 [SANDBOX_DEPLOYMENT.md](SANDBOX_DEPLOYMENT.md)。
 
 ### 9.2 前端
 
@@ -222,14 +246,18 @@ npm run type-check  # 等价命令
 
 ### 9.3 测试现状
 
-- 后端：**53 项用例，全部通过**。
+- 后端：**67 项用例，全部通过**。
+- 沙箱管理器：**35 项单元测试，全部通过**（容器参数与管理接口，无 Docker 依赖）。
 - 前端：`npm test`（vue-tsc）通过。
+- 代码执行的**真实容器隔离尚未在 Linux 节点验证**。
 - 详见 [TEST_REPORT.md](TEST_REPORT.md)。
 
 ## 10. 安全说明（重要）
 
-1. **`POST /api/v1/code/run` 无沙箱**：会在服务端以子进程执行任意 Python 代码，仅适合本机/内网教学，
-   切勿暴露到公网。
+1. **代码执行已沙箱化**：学生 Python 代码只发送到独立 Linux 执行节点，在一次性 Docker 容器中运行
+   （默认禁网、只读根文件系统、非 root、资源限额）。业务后端没有任何本机执行路径；沙箱不可用时
+   一律返回 503，绝不降级。部署与验证见 [SANDBOX_DEPLOYMENT.md](SANDBOX_DEPLOYMENT.md)。
+   > 当前开发环境没有 Linux 执行节点，**真实隔离尚未实机验收**。
 2. **不要提交 `.env`、密钥、数据库**：`.gitignore` 已覆盖 `.env`、`*.db`、`*.log`、`node_modules`、
    `dist` 等；`ai_review/` 本地审核快照已被忽略。
 3. **JWT 密钥**：`APP_ENV` 非 `development` 时若仍使用默认密钥，应用会拒绝启动。

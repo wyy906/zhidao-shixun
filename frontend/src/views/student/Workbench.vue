@@ -285,15 +285,19 @@ async function runCode() {
   runOutput.value = ''
   runIsError.value = false
   try {
-    const res = await codeApi.run(code, 20)
+    const res = await codeApi.run(code, 10)
     runMs.value = res.duration_ms
     const parts: string[] = []
     if (res.stdout) parts.push(res.stdout.trimEnd())
     if (res.stderr) parts.push(res.stderr.trimEnd())
     runOutput.value = parts.join('\n') || '（无输出）'
     runIsError.value = res.exit_code !== 0 || res.timed_out
-  } catch {
-    runOutput.value = '运行失败：请检查后端服务是否可用'
+  } catch (err: any) {
+    // 后端在沙箱不可用时会返回明确提示（不包含服务器内部细节）
+    const detail = err?.response?.data?.detail
+    runOutput.value = typeof detail === 'string' && detail
+      ? `运行失败：${detail}`
+      : '运行失败：请检查后端服务是否可用'
     runIsError.value = true
   } finally {
     running.value = false

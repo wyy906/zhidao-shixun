@@ -1,9 +1,10 @@
-# 下一步
+﻿# 下一步
 
 ## 现状一句话
 
-代码基线已入库，后端 53 项 pytest 与前端 `npm test` 全部通过；回归网已建立，
-下一步可以开始处理**已知风险**（第一优先是 `/code/run` 无沙箱与弱默认密码）。
+后端 67 项 pytest、沙箱管理器 35 项单元测试、前端 `npm test` 全部通过；
+学生代码已改为「独立 Linux 执行节点 + 一次性 Docker 容器」执行，业务后端不再持有本机执行路径。
+**真实容器隔离尚未在 Linux 节点验证**，下一步是在执行节点运行 `verify_isolation.py` 并记录实机结果。
 
 ---
 
@@ -25,6 +26,22 @@
 - 修复 3 个真实缺陷（D-01 步骤序号越界、D-02 不存在实验写孤儿进度、D-09 测试可能读取真实 .env），
   详见 `TEST_REPORT.md` 7.1。
 
+### 阶段 3-A：代码执行沙箱（已实现，待实机验证）
+
+- `POST /code/run` 不再在业务后端或本机 subprocess 执行代码，改为：
+  校验 → 创建 `CodeTask` → 转发独立沙箱管理器 → 轮询结果。
+- 新增 `GET /code/tasks/{task_id}`：学生只能看自己的任务，教师可查看；task_id 为 uuid4，不可猜测。
+- 沙箱管理器（`sandbox_manager/`，Linux）：Docker 一次性容器、`network=none`、只读根文件系统、
+  非 root、drop ALL caps、no-new-privileges、内存/CPU/进程/磁盘/输出限制、任务结束强制回收。
+- 安全失败：管理器未配置 / 不可用 / Docker 异常 / 镜像 digest 不匹配 / 清理失败 → 一律拒绝执行，
+  不存在回退本机执行的代码路径。
+- 服务重启会把 `queued/running` 任务标记为失败，不会当成成功。
+- 新增测试：后端 14 项（`tests/test_code_sandbox.py`）+ 管理器 35 项，后端总数 53 → **67**。
+- 部署与验证：见 `SANDBOX_DEPLOYMENT.md`、`sandbox_manager/scripts/verify_isolation.py`。
+
+> ⚠️ 开发机为 Windows 且无 Docker，**容器隔离能力未实机验证**。在负责人完成 Linux 节点验收前，
+> 不得对外宣称沙箱已通过安全验收。
+
 ---
 
 ## 需要负责人决策的问题
@@ -38,16 +55,20 @@
 | D-07 | 覆盖导入会连带删除学生进度与报告 | 确认是否改为保留/归档历史进度 |
 | R-01 | 后端 `admin_password` 默认 `demo123`；桌面端内置 `auto_login("admin","demo123")` | 首次启动强制改密；桌面端移除默认凭据 |
 | R-02 | `sqlalchemy>=2.0.35` 实测会装到 2.1.8，其 C 扩展在启用应用控制的机器上被拦截 | 收敛版本上限或改纯 Python 安装 |
-| R-05 | `POST /code/run` 无沙箱，可执行任意 Python | 阶段 3 最高优先 |
+| S-04 | 执行超时由最大 30s 收紧为 10s（学生不可提高），`/code/run` 输入上限改为 64KB | 确认教学实验是否够用；如不足请调整 `CODE_RUN_TIMEOUT_SECONDS`（管理员配置） |
+| S-05 | 移除了 AST 危险模块黑名单（改由容器真隔离） | 确认是否接受 `import os` 等代码在沙箱内运行 |
+| S-06 | 未部署执行节点时 `/code/run` 返回 503（此前可直接运行） | 部署顺序需先上线执行节点，再开启 `CODE_EXECUTION_ENABLED` |
 | R-06 | 桌面端 GUI/UIA/悬浮层仍未实跑验证 | 需人工点验 |
 
 ---
 
-## 阶段 3：风险治理与工程化（建议下一轮）
+## 阶段 3：风险治理与工程化（进行中）
 
-1. **P0 `/code/run` 沙箱化**：子进程权限、超时与内存上限、危险模块黑名单；或明确禁用公网部署。
+1. **P0 `/code/run` 沙箱化**：已完成架构与代码；**待 Linux 执行节点实机验证**
+   （`SANDBOX_DEPLOYMENT.md` 第 9、10 节 + `verify_isolation.py`）。
 2. **P0 凭据治理**：修复 R-01；确认 `AI_API_KEY` 只存在于本地 `.env`。
-3. **P1 数据库迁移**：`alembic` 目前只有 `env.py`，补首个 revision，结束 `create_all` 与迁移双轨。
+3. **P1 数据库迁移**：`alembic` 目前只有 `env.py`，补首个 revision，结束 `create_all` 与迁移双轨
+   （阶段 3-A 新增了 `code_tasks` 表）。
 4. **P1 导入校验**：`POST /experiments/import` 的 `adapter` 结构弱校验，错误会延迟到桌面端才暴露。
 5. **P1 桌面端拆分**：`desktop/src/ui/main_window.py` 偏大，按「窗口选择 / 实验驱动 / 教程 / 悬浮层」拆分。
 6. **P2 体验**：Monaco 懒加载（当前约 3.3 MB）；桌面端补断线重连提示。
@@ -60,5 +81,7 @@
 ## 测试维护约定
 
 - 新增接口或修改业务规则时，必须同步补 `backend/tests/` 用例。
+- 沙箱相关改动必须同时运行 `python -m pytest -q sandbox_manager/tests`。
 - 用例不得依赖网络、真实 AI Key、真实数据库。
+- 不得把模拟测试（FakeRunner / 参数级单测）写成“真实隔离已验证”。
 - `pytest` 出现失败时先判断是代码缺陷还是用例过期，**不得通过删断言或 skip 变绿**。

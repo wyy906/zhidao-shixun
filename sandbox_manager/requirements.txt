@@ -1,0 +1,4 @@
+# 沙箱管理器依赖（安装在独立 Linux 执行节点）
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+docker>=7.0.0

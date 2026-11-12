@@ -117,3 +117,30 @@ class ExperimentReport(Base):
     submitted = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ========== 代码执行任务（沙箱） ==========
+class CodeTask(Base):
+    """学生代码执行任务
+
+    代码本身不落库（只在内存中转发给沙箱管理器），这里只保存任务状态与结果，
+    用于按用户隔离查询、以及服务重启后把未完成任务标记为失败。
+    """
+    __tablename__ = "code_tasks"
+
+    # uuid4().hex：不可猜测，避免通过 task_id 越权访问他人任务
+    id = Column(String(32), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    # queued / running / succeeded / failed / timeout / resource_exceeded / cancelled
+    status = Column(String(24), nullable=False, default="queued", index=True)
+    code_length = Column(Integer, default=0)
+    timeout_seconds = Column(Integer, default=10)
+    stdout = Column(Text, default="")
+    stderr = Column(Text, default="")
+    exit_code = Column(Integer)
+    duration_ms = Column(Integer)
+    error_code = Column(String(32))
+    error_message = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime)
+    finished_at = Column(DateTime)

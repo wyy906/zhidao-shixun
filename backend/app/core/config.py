@@ -54,6 +54,27 @@ class Settings(BaseSettings):
     ai_api_key: str = ""
     ai_vision_model: str = ""
 
+    # ===== 代码执行沙箱（学生代码只在独立 Linux 执行节点运行）=====
+    # 关闭开关：false 时 /code/run 直接返回 503，不执行任何代码
+    code_execution_enabled: bool = True
+    # 独立沙箱管理器地址，例如 https://10.0.0.20:8443
+    # 留空表示未部署执行节点 → 所有执行请求一律拒绝（不会回退本机执行）
+    sandbox_manager_url: str = ""
+    # 管理接口共享令牌（必填）；生产建议同时启用内网 TLS / 双向 TLS
+    sandbox_manager_token: str = ""
+    sandbox_manager_ca_file: str = ""
+    sandbox_manager_client_cert: str = ""
+    sandbox_manager_client_key: str = ""
+    # 单次管理接口请求超时（秒）
+    sandbox_request_timeout_seconds: float = 5.0
+    # 同步兼容接口最多等待时长（秒）；超过则取消任务并安全失败
+    sandbox_sync_wait_seconds: float = 20.0
+
+    # 学生不可通过请求参数突破以下上限（由管理员在配置中设定）
+    code_run_timeout_seconds: int = 10
+    code_max_input_bytes: int = 65536
+    code_max_output_bytes: int = 65536
+
     @model_validator(mode="after")
     def _validate_jwt_secret(self) -> "Settings":
         """生产环境强制使用强 JWT 密钥，避免令牌可被伪造"""

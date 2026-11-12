@@ -31,12 +31,36 @@ def _ensure_admin() -> None:
         db.close()
 
 
+def _fail_interrupted_tasks(db) -> int:
+    """服务重启时，把上次未完成的代码执行任务标记为失败
+
+    容器由独立执行节点回收，业务后端重启后无法再确认这些任务是否成功，
+    因此绝不能把它们当成成功状态返回。
+    """
+    from app.models import CodeTask
+
+    interrupted = db.query(CodeTask).filter(CodeTask.status.in_(["queued", "running"])).all()
+    for task in interrupted:
+        task.status = "failed"
+        task.error_code = "service_restarted"
+        task.error_message = "服务重启，任务已中断"
+        task.stderr = "代码执行环境已重启，任务中断，请重新运行。"
+    if interrupted:
+        db.commit()
+    return len(interrupted)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时建表，关闭时清理"""
     # 开发环境自动建表（生产建议用 alembic migrate）
     Base.metadata.create_all(bind=engine)
     _ensure_admin()
+    db = SessionLocal()
+    try:
+        _fail_interrupted_tasks(db)
+    finally:
+        db.close()
     yield
 
 
