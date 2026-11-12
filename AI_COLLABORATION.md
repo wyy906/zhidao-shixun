@@ -2458,3 +2458,62 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 | N-A92 | 令牌信息不完整/AccessCheck 结果不确定（AccessStatus=FALSE 原因不明、granted 为 0 等） | 任何不确定分支 | fail-closed 拒绝启动，**绝不退回仅按用户 SID 计算** | 是 | 是 | 是 | 是 |
 
 **范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；**未实现 AccessCheck/GetTokenInformation 任何业务代码**（修订 4 为设计，全部【未验证】）；`executor_image_lock.json` 保持原样（pending、digest 全 null）；未实现容器执行、未新增 subprocess、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未创建或合并 PR、未合并任何分支。验证 = 文档设计审查 + 官方文档核对 + 既有基线回归（238 passed）；修订 1–7 与 N-A79~N-A92 **全部未实机运行**；mock 可验项与 Windows 实机必须项已逐项标注，实测归 V2-04B。
+
+
+### 2026-11-13｜角色：ChatGPT｜V2-04A 第十一轮架构复审：暂不批准，发现 SID 属性常量错误及 AccessCheck 与文件系统授权语义缺口
+
+**审查基准：**
+- Trae 第十一轮修订 commit：`7a6a17b8c0cb1fe2f984bf5ae66bd51566fa5ff0`。
+- 分支：`feat/zhidao-shixun-v2-rebuild`；复审时分支 HEAD 与该 commit 一致（compare status=identical）；相对第十轮基线 `41dbdf2f7c3dc9daca64b0ebda4c7165433a2911` 领先 1 个提交。
+- 本轮提交仅修改 `AI_COLLABORATION.md` 与 `README.md`，docs-only；未发现代码改动。
+- 已先读取 `CHATGPT_PROJECT_REASONING_BASIS.md`，再读取最新协作文档、README、第十一轮条目、风险表、决策表和提交 diff；另核对 Microsoft Learn 的 SID Attributes、TOKEN_GROUPS、AccessCheck、文件/目录访问权、文件系统备份/还原特权与 NtCreateFile 文档。
+- 本轮为文档/API 契约静态复审；未运行 Windows 实机 ACL、Token、AccessCheck、NtCreateFile 或文件系统操作测试。238 passed 是既有回归结果，不是本轮安全设计验证。
+
+**结论：第十一轮仍不批准 V2-04A；V2-04B 继续禁止启动。** 第十一轮已正确识别“DACL 授权面不等于令牌化有效权限”这一核心问题，并补入 AccessCheck 设计，但 SID 属性常量表存在直接错误，且 AccessCheck 结果被过度解释为完整文件系统有效权限，尚不能构成安全闭环。
+
+**已认可的修订：**
+1. 已把用户 SID 与组 SID 的令牌属性纳入讨论，不再仅凭用户 SID 对应 ACE 推断有效权限。
+2. 对 deny-only SID 的定性方向正确：它只匹配 Deny ACE，不参与 Allow ACE；但其常量值写错（见阻塞项 1）。
+3. 开发模式选择方案 B 的产品取舍可以接受：管理员提升令牌属于明确信任边界，不应宣称对其具备防篡改保证。
+4. 最终安装模式采用安装时账户检查 + 每次启动实际进程令牌检查的双时点思路正确；不允许静默改写/忽略 DACL ACE。
+5. 静态 DACL 模板检查与动态令牌化检查分层是合理方向；mock 与 Windows 实机验证边界也已明确。
+6. 第十轮无条件“有效权限等于批准掩码”声明已被条件化为 DACL 授权面结论；R-4B-7/R-4B-9 风险描述比上一轮清楚。
+
+**阻塞项 1：SID Attributes 常量值发生交叉错置，deny-only 的数值尤其关键。**
+- 第十一轮写为：`SE_GROUP_USE_FOR_DENY_ONLY = 0x0002`、`SE_GROUP_ENABLED_BY_DEFAULT = 0x0001`、`SE_GROUP_MANDATORY = 0x0010`。
+- Microsoft Learn 的 `TOKEN_GROUPS` / `SID Attributes in an Access Token` 定义为：
+  - `SE_GROUP_MANDATORY = 0x00000001`
+  - `SE_GROUP_ENABLED_BY_DEFAULT = 0x00000002`
+  - `SE_GROUP_ENABLED = 0x00000004`
+  - `SE_GROUP_USE_FOR_DENY_ONLY = 0x00000010`
+- 因此本轮把 deny-only 与 enabled-by-default 的 bit 值混淆，也把 mandatory 的值写错。若实现照文档常量判断，可能把普通 enabled-by-default SID 错当 deny-only，或漏识别真正 deny-only SID；这直接影响 Administrators ACE 是否被计入 Allow，属于安全阻塞。
+- 同时修正“用户 SID 永远参与”的绝对表述：普通令牌中 TokenUser 的 SID 参与访问检查；但 Microsoft 文档说明 CreateRestrictedToken 可将任意 SID（包括 user SID）设置为 deny-only。若本设计拒绝某类受限令牌，应写清拒绝条件及覆盖范围，不应宣称普遍规则。
+- 必须以 Win32 SDK / Microsoft Learn 常量为唯一基准，表格、伪代码、测试夹具和未来实现统一使用同一数值；增加对照测试，确保 deny-only=0x10、enabled=0x4、enabled-by-default=0x2、mandatory=0x1。
+
+**阻塞项 2：AccessCheck 的 GrantedAccess 不包含“由哪条 ACE / 哪个 SID 授予”的来源信息。**
+- 第十一轮方案 B 要求：当 `granted == FILE_ALL_ACCESS` 且“超出部分经 Administrators/SYSTEM enabled SID 授予”时允许启动并降级；若来源无法归属则拒绝。
+- Microsoft AccessCheck API 返回 GrantedAccess 掩码、AccessStatus 和 PrivilegeSet（使用的特权）；其返回值没有逐位 ACE 来源、SID 来源或 ACE provenance。
+- 因此不能仅凭 `GrantedAccess == FILE_ALL_ACCESS` 得出“来源是 Administrators/SYSTEM”。必须另行定义可审计的归因方法（例如：静态 DACL 模板已严格匹配 + 完整 TokenGroups Attributes 检查 + 对每个可匹配 ACE 的 SID 进行确定性分析，并与 AccessCheck 结果交叉验证）；或者采用更简单、更保守的策略：开发模式只要检测到 Administrators SID 为 enabled 就统一标记保护声明降级，其他任何超出批准掩码的情况拒绝启动。不得把 AccessCheck 输出本身描述成能报告授权来源。
+- SYSTEM SID 在交互式开发令牌中也不能被当作默认正常来源；须明确其出现时的策略。
+
+**阻塞项 3：把 AccessCheck(MAXIMUM_ALLOWED) 当成 NTFS 文件系统完整有效权限全集，结论过度。**
+- AccessCheck 检查给定 SECURITY_DESCRIPTOR 与 impersonation token 的访问关系；它不等于对所有实际文件系统操作路径（打开、覆盖、删除、重命名、备份/还原意图）的完整模拟。
+- Microsoft 文件访问文档明确：删除/重命名文件可由“文件自身 DELETE”或“父目录 FILE_DELETE_CHILD”任一路径授权。故检查 .env 文件 SD 本身不能证明不可删除；必须对其直接父目录及所有受控父目录逐一检查 FILE_DELETE_CHILD，并把目录对象上的 FILE_DELETE_CHILD（0x40）与文件对象权限区分。N-A89 当前未明确检查对象是父目录，测试定义不足。
+- Microsoft 文件系统协议的打开流程还定义了 `FILE_OPEN_FOR_BACKUP_INTENT`：当令牌具备 SeBackupPrivilege / SeRestorePrivilege 时，文件系统可在常规 DesiredAccess/DACL 检查前授予额外 BackupAccess / RestoreAccess（包括 FILE_GENERIC_READ、FILE_GENERIC_WRITE、WRITE_DAC、WRITE_OWNER、DELETE 等）。这说明“对 SD 调用一次 AccessCheck”不足以自动证明实际文件系统打开行为不会受备份/还原特权影响。
+- 第十一轮仅写“PrivilegeSet 未报告使用 SeBackupPrivilege/SeRestorePrivilege”还不够：必须说明该 Win32 AccessCheck 的 PrivilegeSet 是否、以及在何种调用/文件系统路径下能覆盖这些文件系统特权；不能把文件系统的 FILE_OPEN_FOR_BACKUP_INTENT 处理假定为普通 AccessCheck 已模拟。
+- 修订必须明确：受控服务令牌中相关高风险特权的允许/拒绝策略（建议对 SeBackupPrivilege、SeRestorePrivilege、SeTakeOwnershipPrivilege、SeSecurityPrivilege 等做明确 allowlist/denylist，而不是只依赖 PrivilegeSet）；服务自身所有文件打开都禁止 backup intent，且需说明如何防止其他同令牌代码调用该标志；实际操作层需用真实 Windows 文件系统 API 做负向验证。
+- AccessCheck 可保留为 DACL + Token 的静态/辅助核验层，但不能单独宣称是 NTFS 实际有效权限的完整证明。
+
+**阻塞项 4：N-A89 与文件/父目录权限矩阵需补齐。**
+- `FILE_DELETE_CHILD (0x40)` 是目录权限，不是文件数据访问权限；它影响父目录中的子项删除。
+- N-A86~N-A88 需明确目标对象（文件还是目录）；N-A89 必须明确对 .env 的每一级父目录安全描述符执行 AccessCheck/实际操作验证，覆盖直接父目录与上层目录链。
+- 对删除、重命名、覆盖、替换、创建同名文件分别列出实际文件系统操作、需要检查的对象与访问权，不得只用一个抽象“额外位”测试替代操作语义。
+
+**需补充澄清（暂不单独构成新的阻塞项，但必须纳入下一轮）：**
+1. Microsoft 的 MS-DTYP Access Check Algorithm 文档说明 MAXIMUM_ALLOWED 会枚举 DACL 授权并返回最大可授予掩码，同时明确提示不推荐将其作为一般请求模式。若保留它作为诊断用途，需解释适用边界，并用逐项最小权限检查/真实文件打开结果交叉验证。
+2. TokenRestrictedSids 非空与“任何形式的受限/过滤令牌”不是同义词。Microsoft IsTokenRestricted 文档明确其只检查 restricting SID 列表；CreateRestrictedToken 也可通过禁用 SID、删除 privilege 或添加 restricting SID 产生不同形式。应明确本设计到底拒绝哪类令牌，不要把空 TokenRestrictedSids 说成“绝非受限令牌”。
+3. SeChangeNotifyPrivilege 的存在/启用检查可以作为部署前置，但“缺失时 RootDirectory 相对打开必然因 traverse 检查失败”的表述仍需以实际 NtCreateFile 路径测试确认；不得仅从全路径访问规则推断所有相对句柄打开行为。
+4. 令牌组属性表中其余常量、TokenUser/TokenGroups 查询边界、PrivilegeSet 缓冲区处理、GenericMapping、OWNER RIGHTS、实际句柄 DesiredAccess 与文件系统打开结果均需 Windows 实机验证。
+5. README 当前状态与协作文档应继续明确：238 项是既有回归；本轮 N-A79~N-A92 仍全部是设计未运行；无 Windows ACL/Token/AccessCheck 实机证明。
+
+**复审结论：** V2-04A 第十一轮不通过；V2-04B 禁止启动。下一轮仅允许 docs-only 修订 AI_COLLABORATION.md 与 README.md，修正 SID Attributes 常量、AccessCheck 来源归因、文件系统备份/还原特权、父目录 FILE_DELETE_CHILD 与实际文件系统操作矩阵；不得实现 AccessCheck 业务代码或 Docker executor。镜像锁定清单继续 pending/null；不得修改 main/trae-dev，不得创建/合并 PR，不得合并任何分支。
