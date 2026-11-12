@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第九轮架构修订已提交：修复第八轮复审四项阻塞——①文件/目录句柄掩码分离：文件 0x00120081（FILE_READ_DATA+FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE）、目录 0x00120080（FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE，不含 0x1，不获 FILE_LIST_DIRECTORY）；②目录 DACL 回 4 ACE 补运行账户元数据 ACE 0x00100080（FILE_READ_ATTRIBUTES+SYNCHRONIZE），有效权限与句柄掩码逐位吻合，逐位证明无 LIST/ADD/DELETE/DELETE_CHILD/WRITE_DAC/WRITE_OWNER；③FILE_SHARE_DELETE 保护范围分层界定（文件/父目录/子项/五操作表）；④NtCreateFile ctypes 前置条件（UNICODE_STRING 16B/OBJECT_ATTRIBUTES 48B/IO_STATUS_BLOCK 16B、对齐、调用约定、NTSTATUS 转换、CreateOptions 值）全部标注【未验证】；N-A49~N-A64；待 ChatGPT 第九轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十轮架构修订已提交：修复第九轮复审两项阻塞——①最终安装模式目录 READ_CONTROL 缺口：服务账户 ACE 由 0x00100080 改为 0x00120080（READ_CONTROL 显式，不依赖 owner 路径），N-A54 修正为成功前提成立、失败分支 N-A65；②文件 ACE 统一：FILE_READ_EA(0x8) 核对为不需要，最终模式 .env ACE 由历史 0x00120089 统一为 0x00120081，全文现行唯一文件模板=文件句柄掩码=有效权限；③Owner 硬前置：开发模式目录/文件 owner=运行账户、最终模式均=SYSTEM，启动时句柄上 Owner 硬检查 fail-closed，明确 OWNER RIGHTS 只作用于 owner；④最终安装五级目录逐级分析（Program Files 根/程序目录/ProgramData 根/受信任根+config/.env），每级明确 owner/DACL/服务账户有效权限/核验者/权限位；N-A65~N-A78；全部标注【未验证】；待 ChatGPT 第十轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1180,6 +1180,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-12 | C-4 部署边界：V2-04B 为单用户 Windows 本地演示（仅 127.0.0.1）；多用户/局域网/公网部署前必须补认证、会话授权、配额、租户隔离（V2-07 前置） | 采纳 |
 | 2026-11-12 | C-5 审计日志：最小化本地文件日志，仅元数据（request_id/会话 ID/时长/退出状态/清理状态），不记录代码、令牌、完整输出 | 采纳 |
 | 2026-11-12 | V2-04A 第三轮修订：镜像信任锚改为版本化锁定清单（executor_image_lock.json，批准前 digest=null、fail-closed，按 digest 拉取并核对，tag 仅参考）；清扫改为 API 层双标签过滤（zhidao-exec-managed=true + instance），running 容器绝不清扫，禁 prune；生命周期锁改 Windows 命名 Mutex（WAIT_ABANDONED 语义），废弃 O_EXCL；attach 协议明确化（tty=False/open_stdin=True、stdin 原始无帧头、输出 8 字节帧解复用，V2-04B 先协议探针再实现）；令牌 .env 显式 icacls ACL + 启动自检 fail-closed | 采纳 ChatGPT 第二轮复审三项阻塞项与附带建议，无降低 |
+| 2026-11-13 | V2-04A 第十轮修订：现行唯一权限模板定版——文件句柄/文件 ACE 统一 `0x00120081`（FILE_READ_EA 核对为不需要，撤销历史 0x00120089）；最终安装模式目录服务账户 ACE 显式含 READ_CONTROL（`0x00120080`，修复第九轮 0x00100080 缺口，GetSecurityInfo 才可运行）；两模式 DACL 同构 4 ACE，最终模式全部受控对象 owner=SYSTEM；Owner 一致性为启动硬检查（fail-closed）；最终安装五级目录逐级权限表 | 采纳 ChatGPT 第九轮复审两项阻塞项与澄清项，方案 B（辅助组件传句柄）维持弃用 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -1203,7 +1204,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | R-4B-1：容器逃逸残余风险依赖 Docker Desktop/WSL2 VM 边界 | 极端内核漏洞场景下隔离失效 | cap_drop ALL、no-new-privileges、非 root、无 socket/privileged 缩小攻击面；VM 边界残余风险接受并记录；镜像内无任何密钥 | 已记录（接受） |
 | R-4B-2：attach 双向流协议已明确（stdin 原始/输出帧解复用），但 docker-py 实际行为需实测确认 | SDK 抽象与协议预期不符会导致实现偏差 | V2-04B 首项任务为协议探针测试（stdout/stderr 分流+EOF 验证），探针通过后才实现执行器；不符则验证低层协议再选实现，绝不静默退回宿主机执行 | 待 V2-04B 实测 |
 | R-4B-4：镜像锁定清单 executor_image_lock.json 已真实提交（V2-04A 第四轮），当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest，两者都填）并更新清单；批准后重跑安全测试；部署脚本属 V2-04B 计划实现 | 待负责人审批 |
-| R-4B-5：.env 第九轮模板（文件句柄 0x00120081 含 FILE_READ_DATA+FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE；目录句柄 0x00120080 仅元数据读取，不含 0x1 不获 FILE_LIST_DIRECTORY；目录 DACL 4 ACE：OWNER RIGHTS 0x00020000 + 运行账户 0x00100080（FILE_READ_ATTRIBUTES+SYNCHRONIZE，仅目录元数据） + SYSTEM/Administrators 0x001F01FF，运行账户目录有效权限 0x00120080 与句柄掩码逐位吻合）+ 逐级句柄校验 + 句柄上 GetSecurityInfo/属性/FileId/卷序列号核验闭环 TOCTOU，尚未 Windows 实机验证 | ACL/共享模式实际行为与设计不符时令牌保护弱于预期；ctypes 结构布局在 32/64 位下偏差 | V2-04B 按模板全量构造 + 逐位比对有效权限 + N-A1~N-A64 共 64 项负向测试；任一不符拒绝启动；Administrators/SYSTEM 的 FILE_ALL_ACCESS 为明确接受的本机管理员/SYSTEM 信任边界 | 待 V2-04B 实测 |
+| R-4B-5：.env 第十轮模板（现行唯一批准值）——文件句柄=文件 ACE=`0x00120081`（FILE_READ_DATA+FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE，FILE_READ_EA 已核对撤销）；目录句柄=`0x00120080`；目录 ACE：开发模式运行账户 `0x00100080`（owner=运行账户，READ_CONTROL 经 OWNER RIGHTS，owner 一致性为启动硬检查）/ 最终安装模式服务账户 `0x00120080`（owner=SYSTEM，READ_CONTROL 显式，不依赖 owner）；两模式 DACL 同构 4 ACE（OWNER RIGHTS 0x00020000 + 运行/服务账户 + SYSTEM/Administrators 0x001F01FF），SE_DACL_PROTECTED 关闭继承 + 逐级句柄校验 + 句柄上 GetSecurityInfo/属性/FileId/卷序列号核验闭环 TOCTOU，尚未 Windows 实机验证 | ACL/共享模式实际行为与设计不符时令牌保护弱于预期；ctypes 结构布局在 32/64 位下偏差；最终模式祖先链（ProgramData 默认 DACL）行为未实测 | V2-04B 按模板全量构造 + 有效权限逐位比对 + Owner 硬检查 + DACL 逐项比对 + N-A1~N-A78 共 78 项负向测试；任一不符拒绝启动；Administrators/SYSTEM 的 FILE_ALL_ACCESS 为明确接受的本机管理员/SYSTEM 信任边界 | 待 V2-04B 实测 |
 | R-4B-7：同用户进程（B）可读取 .env 密钥（同用户信任边界，Windows ACL 机制原理上无法阻止同 token 读取/进程注入/内存读取） | 同用户恶意进程可窃取 AI 密钥 | 本设计明确不宣称阻止同用户读取，仅保证其无法篡改/删除/替换 .env 或其 DACL；残余风险如实记录；完整隔离依赖后续独立服务账户/隔离部署（学校服务器部署前置条件，第二轮阻塞检查单） | 接受并记录；V2-07 前置条件 |
 | R-4B-8：开发模式（用户 profile 下）同用户进程可替换项目根/祖先目录/程序文件/启动入口（Windows 用户 profile 默认权限，第七轮威胁模型表"不能替换祖先"表述错误已撤销） | 被篡改的祖先可能影响下次启动加载的代码，仅靠 .env DACL 无法保护整个安装环境 | 开发模式如实标注同用户信任边界不宣称阻止；启动时路径链逐级校验（FileId/卷 ID/reparse 检查）失败即拒绝启动；完整防护依赖最终安装模式（Program Files + ProgramData 受控 ACL + 专用服务账户）列为 V2-07 前置条件，未实机验证前标注【未验证】 | 接受并记录（开发模式）；V2-07 前置 |
 | R-4B-6：清扫状态白名单（仅 exited/dead）与 force=false 非强制删除尚未 Docker 实测 | 误删 paused/created 等运行语义容器，或删除冲突处理不当 | 七项校验+四项删除前核验+force=false+失败不扩大范围；N-S1~N-S23 负向测试设计覆盖全部状态与竞态场景 | 待 V2-04B 实测 |
@@ -2193,6 +2194,99 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 
 **复审状态：** V2-04A 暂不批准；V2-04B 禁止启动。第九轮复审通过前维持该状态。
 
+
+### 2026-11-13｜Trae：V2-04A 架构第十轮修订（最终安装模式 READ_CONTROL 缺口修复 / 文件 ACE 统一 0x00120081 / Owner 硬前置 / 最终安装五级目录分析 / N-A65~N-A78，docs-only）
+
+**修订 0：现行唯一批准模板总表（本条取代全部历史值；历史条目不改写，任何冲突以本条为准）**
+
+| 对象 | 句柄 DesiredAccess | DACL 运行/服务账户 ACE | 开发模式有效权限 | 最终安装模式有效权限 |
+|---|---|---|---|---|
+| .env 文件 | `0x00120081` | `0x00120081`（两模式同值） | `0x00120081`（owner=运行账户：OWNER RIGHTS 0x20000 ∪ 显式 ACE） | `0x00120081`（owner=SYSTEM：仅显式 ACE） |
+| 受控链各级目录 | `0x00120080` | 开发 `0x00100080` ／ 最终 `0x00120080` | `0x00120080`（READ_CONTROL 经 OWNER RIGHTS，依赖 owner=运行账户硬前置） | `0x00120080`（READ_CONTROL 显式，不依赖 owner） |
+
+- **撤销声明**：①最终安装模式 .env 文件 ACE 旧值 `0x00120089`（含 FILE_READ_EA 0x8 残留）撤销——第九轮映射文字中的该值作废；②第九轮"最终安装模式服务账户目录 ACE `0x00100080`"撤销（READ_CONTROL 缺口，见修订 1）；③第七/八轮条目中出现的 `0x00120089` 均为历史记录，不再是现行模板；④最终安装模式"文件 owner=服务账户"的旧表述撤销，统一为 owner=SYSTEM（见修订 3）。
+- **本轮核对的 Microsoft Learn 文档**：GetSecurityInfo（调用者打开句柄时必须持有 READ_CONTROL，除非调用者本身就是对象 owner）、File Access Rights Constants（ACCESS_MASK 在文件/目录对象上的双语义）、CreateFileW。文档语义属设计依据；所有 Windows 实际行为均【未验证】。
+
+**修订 1：最终安装模式目录 READ_CONTROL 缺口修复（响应第九轮阻塞项 1；承认第九轮该处设计不可运行）**
+
+- **缺口确认**：第九轮最终模式（目录 owner=SYSTEM、服务账户 ACE `0x00100080`）下，服务账户①非 owner（OWNER RIGHTS ACE 仅对 owner 生效，不适用）②ACE 不含 READ_CONTROL(0x00020000)③SYSTEM 的 FILE_ALL_ACCESS 属 SYSTEM 自身权限，不转授 → GetSecurityInfo 读取 Owner/DACL 必然 ACCESS_DENIED。第九轮 N-A54"经模板 ACE 成功"的预期错误，本轮修正（修订 5）。
+- **方案选择：方案 A 扩展——服务账户 ACE 显式加入 READ_CONTROL**。方案 B（受信任辅助组件读取安全描述符后传递）维持第九轮弃用结论：需明确辅助组件进程身份（管理员/SYSTEM 提权）、IPC 边界（跨进程 DuplicateHandle 及源/目标进程句柄复制授权）、句柄生命周期（辅助组件崩溃时的句柄回收）、句柄到达执行服务后仍需二次核验——新增一个高权限信任面与 IPC 面，其风险显著高于授予"读安全描述符"权限（READ_CONTROL 只读 Owner/DACL，不能修改任何属性）。方案 C：无更优。
+- **新最终安装模式目录 DACL 模板（4 条 ACE；与开发模式同构，仅 ACE 2 的 SID 与掩码不同）**：
+
+| 序 | 主体 SID | 类型 | Mask（hex） | 位分解（目录语义） | Flags |
+|---|---|---|---|---|---|
+| 1 | S-1-3-4（OWNER RIGHTS） | ALLOW | `0x00020000` | READ_CONTROL——最终模式 owner=SYSTEM，本 ACE 仅对 SYSTEM 生效且被其显式 SYSTEM ACE 覆盖（冗余但保留：模板结构两模式统一；若 owner 漂移为服务账户则立即生效，中和隐式 WRITE_DAC） | 0x0 |
+| 2 | `<服务账户 SID>` | ALLOW | `0x00120080` | SYNCHRONIZE(0x00100000) + READ_CONTROL(0x00020000) + FILE_READ_ATTRIBUTES(0x80)——READ_CONTROL **显式授予，不再依赖 owner 路径** | 0x0 |
+| 3 | S-1-5-18（SYSTEM，= owner） | ALLOW | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+| 4 | S-1-5-32-544（Administrators） | ALLOW | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+
+- **逐位证明（服务账户有效目录权限 = `0x00120080`）不含**：FILE_LIST_DIRECTORY(0x1)✗、FILE_ADD_FILE(0x2)✗、FILE_ADD_SUBDIRECTORY(0x4)✗、FILE_TRAVERSE(0x20)✗、FILE_DELETE_CHILD(0x40)✗、DELETE(0x00010000)✗、WRITE_DAC(0x00040000)✗、WRITE_OWNER(0x00080000)✗。
+- **目录句柄 DesiredAccess 维持 `0x00120080` 不变**：第九轮逐位推导仍成立；新模板下有效权限与句柄掩码逐位相等——请求的每一位均被授予，无多余位。
+- **具体回答"能否调用 GetSecurityInfo：能"**——目录句柄以 `0x00120080` 打开（含 READ_CONTROL），满足 GetSecurityInfo 文档前提；因此 Owner 查询、DACL 查询、GetFileInformationByHandleEx（FileIdInfo/AttributeInfo，需 FILE_READ_ATTRIBUTES）、FSCTL_GET_REPARSE_POINT、以该句柄为 NtCreateFile RootDirectory 相对打开全部可行。**不允许获得**：列出目录内容、创建/删除/替换子项、修改自身或子项 DACL/owner。全部【未验证】。
+
+**修订 2：.env 文件 ACE 统一为 `0x00120081`（响应第九轮阻塞项 2）**
+
+- **FILE_READ_EA(0x8) 核对结论：不需要，撤销**。运行期 API 全集与所需访问位：ReadFile→FILE_READ_DATA(0x1)；GetFileInformationByHandleEx（FileIdInfo/AttributeInfo）→FILE_READ_ATTRIBUTES(0x80)；GetSecurityInfo→READ_CONTROL；FSCTL_GET_REPARSE_POINT→FILE_READ_ATTRIBUTES；NtCreateFile/CreateFileW 打开本身→上述掩码。**无一读取扩展属性**——FILE_READ_EA 仅 `NtQueryInformationFile(FileFullEaInformation)` 类 EA 内容读取需要，本设计不存在该调用；保留 0x8 即授予无用途的额外权限，违反最小权限原则。
+- **新 .env 文件 DACL 模板（两模式统一，4 条 ACE，替代历史 0x00120089）**：
+
+| 序 | 主体 SID | 类型 | Mask（hex） | 位分解（文件语义） | Flags |
+|---|---|---|---|---|---|
+| 1 | S-1-3-4（OWNER RIGHTS） | ALLOW | `0x00020000` | READ_CONTROL | 0x0 |
+| 2 | `<运行/服务账户 SID>` | ALLOW | `0x00120081` | SYNCHRONIZE + READ_CONTROL + FILE_READ_ATTRIBUTES + FILE_READ_DATA——**逐位证明不含**：FILE_READ_EA(0x8)✗、FILE_WRITE_DATA(0x2)/FILE_APPEND_DATA(0x4)✗、FILE_EXECUTE(0x20)✗、FILE_DELETE_CHILD(0x40)✗、DELETE✗、WRITE_DAC✗、WRITE_OWNER✗ | 0x0 |
+| 3 | S-1-5-18（SYSTEM） | ALLOW | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+| 4 | S-1-5-32-544（Administrators） | ALLOW | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+
+- **一致性闭环**：文件句柄 DesiredAccess（`0x00120081`）== 文件 ACE（`0x00120081`）== 两模式有效权限（开发：OWNER RIGHTS∪ACE=`0x00120081`；最终：显式 ACE=`0x00120081`）。风险表 R-4B-5、测试表、README 同步更新；**全文现行唯一文件模板为 `0x00120081`**。
+
+**修订 3：Owner 硬前置条件（响应第九轮澄清项 1）**
+
+- **启动检查流程（两模式一致，fail-closed）**：句柄打开成功 → GetSecurityInfo(handle, OWNER_INFORMATION) → GetSecurityDescriptorOwner → 与该模式批准 owner SID **严格相等**；不匹配或查询失败 → 记审计 + 拒绝启动。文件与目录分别检查，分别比对各自批准值。
+- **Owner 批准值与三种 owner 行为区分**：
+
+| 模式 | 目录 owner（批准值） | 文件 owner（批准值） | OWNER RIGHTS 作用对象 | 服务/运行账户 READ_CONTROL 来源 |
+|---|---|---|---|---|
+| 开发模式 | 运行账户 | 运行账户 | 运行账户：中和隐式 WRITE_DAC，保留 READ_CONTROL | OWNER RIGHTS(0x20000) ∪ 目录显式 ACE 0x100080 ／ ∪ 文件显式 ACE 0x120081 |
+| 最终安装模式 | SYSTEM（S-1-5-18） | SYSTEM（S-1-5-18） | 仅 SYSTEM（其权限已由显式 SYSTEM ACE 提供，冗余无害） | **必须且只来自显式 ACE**（目录 `0x120080`／文件 `0x120081`） |
+| owner=Administrators（任一模式） | **未批准状态** | **未批准状态** | 中和 Administrators 隐式 WRITE_DAC（不影响服务账户权限） | owner 检查失败 → 拒绝启动 |
+
+- **明确声明**：不得因运行账户存在显式 ACE 就假定 OWNER RIGHTS ACE 已给它 READ_CONTROL——OWNER RIGHTS 只作用于对象 owner，与 ACE 2 无关。最终模式（owner=SYSTEM）服务账户 READ_CONTROL 必须显式在 ACE 中（修订 1）；开发模式依赖"目录 owner=运行账户"这一前提，该前提是**启动硬条件**：owner 不符 → OWNER RIGHTS 假设失效 → READ_CONTROL 缺失 → GetSecurityInfo 失败 → 拒绝启动（N-A73）。
+- 最终模式统一 owner=SYSTEM 的理由：服务账户权限**全部**来自显式 ACE，完全不存在 owner 隐式路径（若服务账户为 owner，即使有 OWNER RIGHTS 中和，仍多一条依赖 OWNER RIGHTS ACE 存续的隐式路径）；owner 核验值单一，安装脚本与启动检查断言简单。
+
+**修订 4：最终安装模式五级目录逐级分析（响应第九轮澄清项 3；不用"Users 只读"式笼统表述）**
+
+| 层级 | Owner | DACL | 服务账户有效权限 | 谁读 Owner/DACL | 需 READ_CONTROL？ | 需 FILE_READ_ATTRIBUTES？ | 需 SYNCHRONIZE？ | FILE_LIST_DIRECTORY？ | 可创建/删除/替换子项？ | 可改 DACL？ | 权限不足 fail-closed |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1. `C:\Program Files`（根） | SYSTEM | 默认继承（Users 读+执行；Administrators/SYSTEM 写） | 继承 Users：读+执行（含 READ_CONTROL、LIST、traverse）——**服务运行期不打开该级** | 管理员安装脚本（安装期断言 owner=SYSTEM 且无 Users 写入 ACE） | 否（不在句柄链内） | 否 | 否 | 继承存在——公开程序目录无密钥，与受控链"句柄不列目录"约束无关 | 否（Users 无写权限）【未验证】 | 否 | 安装脚本断言失败 → 安装中止；运行期不依赖该级 |
+| 2. `C:\Program Files\ZhidaoShixun`（程序目录） | SYSTEM | 同上继承 | 同上 | 同上 | 否 | 否 | 否 | 同上 | 否【未验证】 | 否 | 同上 |
+| 3. `C:\ProgramData`（根） | SYSTEM | 默认（SYSTEM/Administrators 完全；Users 读；CREATOR OWNER 子项专有） | **服务运行期不打开该级**（受信任根以绝对路径直接打开，无需父句柄）——但该级 DACL 决定受信任根本身可否被替换 | 管理员安装脚本 | 否 | 否 | 否 | — | 否（Users 无 DELETE/FILE_DELETE_CHILD/FILE_ADD_FILE → 不能重命名/删除/替换 ZhidaoShixun 目录）【未验证】 | 否 | 安装脚本断言失败 → 安装中止；该级 DACL 作为运行期前提记录 |
+| 4. `C:\ProgramData\ZhidaoShixun`（受信任根）+ `\config` 子目录 | SYSTEM | **修订 1 目录模板（4 ACE），SE_DACL_PROTECTED 关闭继承** | `0x00120080`（显式 READ_CONTROL + FILE_READ_ATTRIBUTES + SYNCHRONIZE） | 服务账户（运行期逐级句柄核验，每级 GetSecurityInfo）＋管理员安装脚本（安装期应用与断言模板） | **是**（显式 ACE 0x00020000） | **是**（0x80） | **是**（0x100000） | **否**（句柄掩码与 ACE 均不含 0x1） | **否**（无 ADD/DELETE/DELETE_CHILD） | **否**（无 WRITE_DAC/WRITE_OWNER） | 任一查询失败或模板比对不一致 → 拒绝启动 + 审计 |
+| 5. `…\config\.env` | SYSTEM | **修订 2 文件模板（4 ACE）** | `0x00120081`（显式） | 服务账户（句柄核验）＋管理员安装脚本 | 是（0x00020000） | 是（0x80） | 是（0x100000） | 不适用（文件对象；0x1 为 FILE_READ_DATA，已授予且为读取密钥所必需） | 否（无任何写/删能力） | 否 | 任一失败 → 拒绝启动 + 审计 |
+
+- **说明**：①1/2/3 级继承的 Users 权限（含 LIST/traverse）与本设计"受控链句柄不列目录"不矛盾——后者只约束 .env 受控链上由服务打开的句柄掩码；受控链（4/5 级）已按模板 SE_DACL_PROTECTED 收紧，不继承 Users 权限。②服务运行期句柄链 = 受信任根（CreateFileW 绝对路径 + FILE_FLAG_OPEN_REPARSE_POINT）→ config（NtCreateFile 相对）→ .env（NtCreateFile 相对）；1/2/3 级不进入句柄链，其保护由默认 ACL + 安装期脚本断言承担（程序完整性属 V2-07 部署边界）。③FILE_TRAVERSE：祖先级 Users 含 traverse，但 SeChangeNotifyPrivilege bypass（第八轮已确认）使其不构成屏障，不作为安全依据。④全部【未验证】。
+
+**修订 5：N-A54 修正 + 新增 N-A65~N-A78（14 项，全部为设计未运行）**
+
+- **N-A54 修正声明**：第九轮预期"经模板 ACE 成功"在旧掩码 `0x00100080` 下不成立（缺 READ_CONTROL）；本轮按修订 1 新模板重写为：显式 READ_CONTROL 使打开与 GetSecurityInfo 成功，Owner==SYSTEM、DACL 与模板逐项一致 → 正常运行。同场景"ACE 缺 READ_CONTROL"的失败分支由 N-A65 承接。
+
+| # | 前提 | 攻击/异常操作 | 预期结果 | 拒绝启动 | 审计 | mock 可验 | 需实机 |
+|---|---|---|---|---|---|---|---|
+| N-A54（修正） | 最终安装模式新模板：目录 owner=SYSTEM、服务账户 ACE `0x00120080` | 服务账户打开目录句柄 + GetSecurityInfo 查 Owner/DACL + FileId/属性查询 | 全部成功；Owner==S-1-5-18、DACL 与模板逐项一致 → 正常启动 | 否（正常路径） | 是 | 是 | 是 |
+| N-A65 | 最终模式：目录 owner=SYSTEM，服务账户 ACE 沿用旧值 `0x00100080`（缺 READ_CONTROL） | 打开目录句柄（0x80+0x100000 位足够，可成功）→ GetSecurityInfo 读 Owner/DACL | GetSecurityInfo ACCESS_DENIED → fail-closed 拒绝启动（修正第九轮错误预期） | 是 | 是 | 是 | 是 |
+| N-A66 | 最终模式新模板已应用 | 服务账户调用 GetSecurityInfo 读 Owner/DACL 并与批准模板比对 | 成功且一致 → 正常启动（回归用例）；不一致 → 拒绝启动 | 视比对结果 | 是 | 是 | 是 |
+| N-A67 | 最终模式目录 ACE 错误遗漏 READ_CONTROL（如仍配 0x00100080） | 启动时有效权限/模板逐项比对 | 与批准掩码 `0x00120080` 不符（缺 0x20000）→ 拒绝启动；即使比对被绕过，GetSecurityInfo 也失败（N-A65） | 是 | 是 | 是 | 是 |
+| N-A68 | 最终模式目录 ACE 错误授予 FILE_LIST_DIRECTORY | 有效权限比对 | 比批准掩码多 0x1 → 拒绝启动（证明实现级模板校验必须存在；OS 层服务账户将可列目录） | 是 | 是 | 是 | 是 |
+| N-A69 | 最终模式目录 ACE 错误授予 FILE_ADD_FILE | 有效权限比对 | 多 0x2 → 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A70 | 最终模式目录 ACE 错误授予 FILE_DELETE_CHILD | 有效权限比对 | 多 0x40 → 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A71 | 最终模式 .env ACE 仍使用历史旧值 `0x00120089` | 文件有效权限比对 | 比 `0x00120081` 多 FILE_READ_EA(0x8) → 拒绝启动（旧值已撤销） | 是 | 是 | 是 | 是 |
+| N-A72 | 文件 ACE 掩码小于文件句柄 DesiredAccess（如 ACE=0x00100080、句柄请求 0x00120081） | 打开 .env 文件句柄 | 请求位未被 DACL 授予 → 打开失败 → 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A73 | 开发模式目录 owner ≠ 运行账户（漂移为 SYSTEM/Administrators） | 启动 Owner 硬检查 | OWNER RIGHTS READ_CONTROL 前提失效 → owner 核验失败 → 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A74 | 最终模式目录 owner ≠ SYSTEM | 启动 Owner 硬检查 | 与批准 owner S-1-5-18 不符 → 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A75 | 最终模式某级祖先（受信任根/config）缺服务账户 READ_CONTROL | 该级 GetSecurityInfo | 失败 → fail-closed 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A76 | 某级目录安全描述符读取失败（任意原因：权限/句柄失效/系统错误） | GetSecurityInfo | 一律 fail-closed 拒绝启动，不降级、不跳过、不缓存旧值继续 | 是 | 是 | 是 | 是 |
+| N-A77 | 文件或目录 Owner 检查失败（查询失败或与批准值不符） | GetSecurityInfo → GetSecurityDescriptorOwner | 拒绝启动 + 审计 | 是 | 是 | 是 | 是 |
+| N-A78 | 启动时发现最终模式 DACL 与批准模板不一致（多余 ACE / 缺失 ACE / mask 偏差 / 继承未关闭） | DACL 逐项比对（ACE 数、SID 顺序、mask、Flags、SE_DACL_PROTECTED） | 不一致 → 拒绝启动 + 审计 | 是 | 是 | 是 | 是 |
+
+**范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；`executor_image_lock.json` 保持原样（pending、digest 全 null）；未实现容器执行、未新增 subprocess、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未创建或合并 PR、未合并任何分支。验证 = 文档设计审查 + 既有基线回归（238 passed）；修订 0–4 与 N-A65~N-A78 **全部未实机运行**，mock 可验项（实现级模板比对/Owner 硬检查断言）与 Windows 实机必须项（OS 权限行为、GetSecurityInfo 实际返回）已逐项标注，实测归 V2-04B。
 
 ### 2026-11-13｜角色：ChatGPT｜V2-04A 第九轮架构复审：暂不批准，发现最终安装模式 ACL 权限缺口
 
