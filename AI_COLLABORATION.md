@@ -954,10 +954,10 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 - ChatGPT 进行第五轮复审；通过前 V2-03 保持"待审查"，V2-04 不启动。
 
 **关联提交：**
-- 修复 commit SHA 见下方复审摘要（同批次推送）。
+- 修复 commit：`f1c4f72`（fix(v2-03): fourth review round，7 文件 +156/-8；被复审提交 76ea86b→00456b1，复审基准 5616b05）。
 
 **给 ChatGPT 的复审摘要：**
-- 修复 commit：`见 git log 顶部`（fix(v2-03) 第四轮：schema_version/verifier.type Literal 镜像 + 23 项双通道测试 + 注释修正 + @types/node 声明）。
+- 修复 commit：`f1c4f72`（第四轮：schema_version/verifier.type Literal 镜像 + 23 项双通道测试 + 注释修正 + @types/node 声明）。
 - 测试：238 passed / 0 failed / 0 skipped（Windows 本机实测）；前端构建通过。
 - 镜像覆盖清单：schema_version 1.1 通过 / 1.0、9.9、2.0、空串拒绝（双通道）；四种白名单 type 通过（完整模型 + VerifierDef 单独）/ 五种未知 type 拒绝（双通道 + 单独）。
 
