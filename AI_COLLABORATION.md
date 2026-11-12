@@ -25,7 +25,7 @@
 
 ### Git 分支纪律
 - V2 所有新开发只提交到 feat/zhidao-shixun-v2-rebuild。
-- main 是旧项目线，禁止向其提交 V2 内容；不直接合并，不自动创建 PR。
+- main 是旧项目线，禁止向其提交 V2 内容；**未经项目负责人明确说“同意合并”，绝不将 V2 分支合并到 main**。即使所有阶段和最终测试全部通过，也必须等待负责人明确授权；不得自动创建/合并 PR，不得擅自调用任何合并操作。
 - 不要把旧项目业务实现直接复制进 V2。旧代码只作历史参考；V2 必须重新设计目录、模块边界和业务实现。
 - 不得未经盘点就删除整个仓库。先列出旧文件，区分可复用通用工具与必须重建模块，再实施清理。
 - 每个阶段独立 commit；推送前先 pull/rebase。
@@ -170,7 +170,7 @@
 
 ## 7. 当前任务（ChatGPT 更新，Trae 执行）
 
-### 当前总任务：V2-03 实验任务与步骤数据模型
+### 当前总任务：V2-04 Python 网页实验闭环（先完成隔离架构评审，再实施）
 
 V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑通最小闭环，再扩展功能”的顺序开发，不要一次性生成庞大系统。
 
@@ -261,6 +261,30 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 6. 跨端 Schema 与模型一致，README/协作文档更新；测试命令和结果真实记录。
 7. Trae 独立提交 V2-03 commit，并按标准交接模板记录修改文件、测试命令、结果、未完成项和下一阶段建议。
 
+#### V2-04A｜Python 实验 Docker 隔离执行架构评审（当前先执行此子阶段）
+
+**目标：** 在写任何真实容器执行代码前，先把不可信 Python 代码的安全边界、组件隔离、调用协议和可验证测试设计清楚。现有 `server/app/services/executor/base.py` 只是拒绝执行的接口占位，绝不允许把它替换成宿主机 subprocess 执行。
+
+**Trae 本轮只做设计与审查材料，不实现容器执行：**
+1. 盘点现有 executor 接口、FastAPI 路由、配置、契约和测试；确认 Web/API 业务进程当前没有 Docker socket 挂载或 Docker SDK 访问。
+2. 提出组件边界：Web/API 业务进程只通过受限、带版本的内部请求调用独立执行服务/工作进程；Docker daemon socket（若方案需要）只能存在于独立执行边界，绝不挂载给 Web/API 业务进程。说明 Windows Docker Desktop 下如何部署、启动、鉴权、限制调用方和关闭服务。
+3. 固定执行策略，不接受学生请求自定义 Docker 参数：固定且受控的 Python 镜像/命令；代码通过标准输入或受控临时输入传递，禁止 shell 拼接；不允许用户指定镜像、命令、卷挂载、设备、环境变量或网络。
+4. 明确容器安全参数：`network_mode=none`、非 root、只读根文件系统、丢弃 Linux capabilities、`no-new-privileges`、CPU/内存/PID/执行时间/输出大小上限、临时工作目录或受控 tmpfs、自动清理；不挂载宿主机敏感目录，不挂载 Docker socket 到学生容器。
+5. 说明镜像获取/校验策略、Docker 不可用/镜像缺失/启动失败/超时/输出超限/执行器异常时的错误行为。任何异常必须明确失败或不确定，**绝不退化为宿主机执行**。
+6. 给出威胁模型：恶意代码、fork bomb、内存/CPU 消耗、无限输出、文件系统探测、网络外传、容器逃逸风险、并发滥用和执行服务被伪造请求调用；逐项说明缓解措施与残余风险。
+7. 设计自动化测试矩阵：安全配置不可关闭、请求字段白名单、超时终止、输出截断、容器清理、无网络、非 root、只读根文件系统、资源限制、Docker 不可用拒绝执行、任何路径均无宿主机回退。
+8. 说明验证证据如何收集：单元测试可 mock Docker API，但至少规划真实 Docker Desktop 集成测试；不能把 mock 测试写成真实容器隔离已验证。
+9. 将架构方案、威胁模型、接口草案、测试矩阵和风险写入本文件交接记录；不另建第二份交流文档。
+
+**本轮禁止事项：**
+- 不实现 Docker 容器执行、Python 运行 API 或前端运行按钮。
+- 不新增宿主机 subprocess 代码执行路径。
+- 不把 Docker SDK/socket 直接放进 FastAPI 业务进程。
+- 不实现 AI 模型调用、RAG、OCR、UI Automation 或 MySQL Workbench 功能。
+- 不启动 V2-05/V2-06/V2-07。
+
+**V2-04A 验收：** 架构边界清楚且符合 D-1；Web/API 与 Docker daemon 权限隔离；威胁模型和测试矩阵完整；Windows Docker Desktop 部署方式可行；ChatGPT 复审通过后，才下达 V2-04B 容器执行实现任务。
+
 #### 后续阶段顺序
 - V2-03：实验任务与步骤数据模型、规范化 JSON Schema、验证器注册机制。
 - V2-04：Python 网页实验闭环 + Docker 隔离执行 + 可验证结果。
@@ -280,8 +304,8 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
-| V2-03 | 实验任务与步骤数据模型 | 待审查（第四轮两项镜像遗漏已修复，等待第五轮复审） | Schema 1.1（schema_version/verifier.type 均 Literal 镜像）、逐字段镜像 Pydantic（+镜像表驱动测试）、四道门加载校验、验证器白名单只读注册表、状态机私有化+四公开入口（+6×6 穷举测试）、238 项测试 | Trae |
-| V2-04 | Python网页实验闭环 | 未开始 | 编辑、Docker隔离运行、验证、步骤推进；禁止宿主机直接执行不可信代码 | Trae |
+| V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（先做 V2-04A 隔离架构评审；未授权前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -294,6 +318,34 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜角色：ChatGPT｜V2-03 第五轮源码复审：通过
+
+**审查基准：**
+- 已先读取 `CHATGPT_PROJECT_REASONING_BASIS.md`，再读取当前分支最新 `AI_COLLABORATION.md`、`README.md`、V2-03 Schema、Pydantic 模型、加载器、依赖图、验证器注册表、状态机和对应测试。
+- 当前分支最新 HEAD：`7f83aa3417d71b20fb9d7157b2eaa566fed9d6be`（docs-only，父提交为 Trae 修复 commit `f1c4f723e53e4d349f2b7f8c82bde60632de1e92`）。
+- 本轮为 GitHub 源码静态审查；Trae 报告 Windows 本机 238 passed / 0 failed / 0 skipped、前端构建通过；ChatGPT 未在独立 Windows 环境重跑。该修复 commit 当前未返回 CI status checks。
+
+**复审确认：**
+1. `ExperimentDefinition.schema_version` 已使用 `Literal["1.1"]`，镜像 JSON Schema `const: "1.1"`。
+2. `VerifierDef.type` 已使用四种类型的 Literal，镜像 JSON Schema enum；未知类型在独立 Pydantic 校验中拒绝。
+3. 新增双通道镜像测试直接调用 JSON Schema validator 与 Pydantic `model_validate()`，不经过 loader；合法版本/四种白名单类型通过，非法版本/未知类型拒绝。
+4. 加载器保持版本门、Schema 门、Pydantic 门、语义门；文件/字段错误可定位；适配器与环境一致性、依赖存在/无环、验证器参数和环境匹配均有语义校验。
+5. 验证器注册表为只读映射；未知验证器 fail-closed；MySQL reserved 类型按已批准决策允许结构加载但求值返回 `uncertain`，不会伪装通过。
+6. 状态机低层转换为私有 `_transition()`，公开入口执行快照/依赖检查；`uncertain` 不推进；测试覆盖 6×6 转换组合、uncertain 全组合和依赖传播。
+7. 未发现实验 JSON 可注入任意 Python 模块、函数、命令或动态导入路径。
+
+**结论：**
+- 本轮未发现新的 V2-03 阻断问题，V2-03 标记为已完成。
+- 测试通过数以 Trae 本机报告为依据；本次审查不等同于 ChatGPT 独立运行测试或 CI 认证。
+- V2-04 先进行 Docker 隔离执行架构评审（V2-04A）；架构经复审通过后再实现容器执行（V2-04B）。不得直接跳过安全设计。
+
+**关联提交：**
+- Trae 修复：`f1c4f723e53e4d349f2b7f8c82bde60632de1e92`
+- 最新分支 HEAD（本次审查基准）：`7f83aa3417d71b20fb9d7157b2eaa566fed9d6be`
+
+---
+
 
 ### 2026-11-12｜Trae：V2-03 第三轮复审四项全部修复，215 项测试通过（含镜像表驱动与状态机穷举）
 
