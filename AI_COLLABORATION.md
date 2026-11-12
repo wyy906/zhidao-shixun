@@ -280,7 +280,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
-| V2-03 | 实验任务与步骤数据模型 | 待审查（第二轮收尾已修复，等待复审） | Schema 1.1（preconditions 必填）、四道门加载校验、验证器白名单只读注册表、状态机私有化+四公开入口、110 项测试 | Trae |
+| V2-03 | 实验任务与步骤数据模型 | 待审查（第三轮发现 Pydantic/Schema 镜像约束遗漏及非法转换测试不穷尽，待修复） | Schema 1.1（preconditions 必填）、四道门加载校验、验证器白名单只读注册表、状态机私有化+四公开入口、110 项测试 | Trae |
 | V2-04 | Python网页实验闭环 | 未开始 | 编辑、Docker隔离运行、验证、步骤推进；禁止宿主机直接执行不可信代码 | Trae |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
@@ -294,6 +294,59 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜角色：ChatGPT｜V2-03 第三轮静态复审：暂不通过，发现 Schema/Pydantic 镜像约束遗漏
+
+**审查基准：**
+- 当前分支：`feat/zhidao-shixun-v2-rebuild`。
+- 已先读取 `CHATGPT_PROJECT_REASONING_BASIS.md`，再读取本文件、README、实验定义 Schema、模型、加载器、状态机、验证器注册表、仓库和相关测试。
+- Trae 第二轮收尾修复提交：`76ea86b`（以 Trae 交接记录为准）；Trae 报告 Windows 本机全量测试 110 passed / 0 failed / 0 skipped。ChatGPT 本轮为 GitHub 源码静态复审，未独立运行测试。
+
+**已确认第二轮两项修复有效：**
+1. `preconditions` 已加入 JSON Schema step.required；Pydantic 字段无默认值；`[]` 合法；缺失、空数组和非法项有测试。
+2. 低层 `transition()` 已改为私有 `_transition()`；公开业务入口包含 `start_step`、`refresh_ready_steps`、`apply_skip_propagation`、`apply_verification_result`。领域流程测试通过公开入口执行；验证结果必须作用于 IN_PROGRESS，uncertain 不推进；输入快照保持不变。
+3. 验证器注册表使用 MappingProxyType；未知/预留验证器 fail-closed；加载器包含版本、JSON Schema、Pydantic、语义四道校验。
+4. 实验仓库会检查跨文件重复 experiment_id；不引入数据库，符合当前阶段范围。
+
+**仍需修复（V2-03 暂不通过）：**
+
+1. **Pydantic 模型与 JSON Schema 仍有多处约束不一致。** 当前加载器先执行 JSON Schema，所以部分非法数据仍会被挡住；但 Pydantic 模型本身并未镜像 Schema，违背“双重约束一致”的设计要求，也可能使未来绕过 loader 的内部调用接受不合规对象。已确认至少包括：
+   - `StepDefinition.depends_on`：Schema 要求 uniqueItems，且每项符合 step_id pattern；Pydantic 目前只有 list[str] + max_length，没有去重和格式校验。
+   - `ExpectedState.artifacts`：Schema 每项要求 1..200 字符；Pydantic 目前只有 list[str] + max_length，没有逐项长度/空字符串校验。
+   - `AdapterSpec.capabilities`：Schema 要求 uniqueItems，且每项 1..40 字符；Pydantic 目前没有对应逐项与去重校验。
+   - `ExperimentDefinition.prerequisites`：Schema 每项要求 1..200 字符；Pydantic 目前没有对应逐项校验。
+   - 请完整逐字段比对 Schema 与 Pydantic，不要只修上述已发现项；所有类型、必填、枚举、长度、数组数量、唯一性、正则和额外字段策略都要一致。若某项刻意不镜像，必须提出明确理由并经负责人确认，不能默认留差异。
+
+2. **镜像一致性测试覆盖不足。**
+   - 当前 preconditions 镜像测试只证明一个非法项会被 Schema 拒绝，不能证明所有字段约束一致。
+   - 请新增表驱动测试：对每类 Schema 约束构造非法数据，分别直接交给 JSON Schema validator 与 Pydantic model_validate，断言两者都拒绝；同时为合法边界值断言两者都接受。
+   - 特别覆盖 depends_on 重复/非法 ID、artifacts 空字符串/超长、capabilities 重复/空字符串/超长、prerequisites 空字符串/超长。
+
+3. **状态机禁止转换测试不够穷尽。**
+   - 当前合法转换测试覆盖了 TRANSITIONS 中列出的合法边；非法转换测试只列出部分组合。
+   - 请对全部 StepStatus × StepStatus 有序组合做穷举测试：表中允许的组合必须成功（PASSED/FAILED 传入对应 VerifyOutcome），表中不允许的组合必须抛 IllegalTransition；同时保留 uncertain 不推进、终态不可回退和公开入口依赖检查测试。
+   - 这是测试完整性修复，不要求改变当前状态机规则，除非测试暴露实际逻辑问题。
+
+4. **同步修正文档中的过时说明。**
+   - `state_machine.py` 顶部仍称 transition 是内部原语且未列出 apply_verification_result；改为准确描述私有 `_transition` 和四个公开业务入口。
+   - `schema_version.py` 注释仍称 preconditions 是“新增可选字段”；当前 1.1 实际要求显式提供（空数组表示无额外条件），同步修正。
+   - `test_verifier_registry.py` 中“普通模块级映射、实验 JSON 只能引用字符串”与 MappingProxyType 实际实现不符，修正测试注释。
+   - README、experiments README、协作文档保持 Schema 1.1、必填语义、110 项 Trae 测试报告及“复审未通过”的状态一致。
+
+**复审结论：**
+- 第二轮要求的两个核心修复已在代码中体现。
+- 因 Pydantic 与 JSON Schema 镜像约束仍有遗漏，且状态转换非法组合测试未穷尽，V2-03 暂不通过。
+- V2-03 保持“待审查”；V2-04 不得启动。不要为了赶进度降低双重校验或测试要求。
+
+**本次实际修改：**
+- 仅更新本协作文档记录第三轮复审结果和下一步任务；未修改业务代码，未修改 main / trae-dev。
+- README 同步当前真实复审状态。
+
+**下一步：**
+- Trae 按上述四项完成修复，独立提交新 commit，报告完整 pytest 结果、修改文件和 Schema/Pydantic 穷举镜像测试结果。
+- ChatGPT 基于新 SHA 进行第四轮复审；通过后再启动 V2-04。
+
+---
 
 ### 2026-11-12｜Trae：V2-03 第二轮复审两项收尾修复完成，110 项测试通过
 
