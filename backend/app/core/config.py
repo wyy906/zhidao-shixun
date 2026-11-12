@@ -1,4 +1,5 @@
 """全局配置（pydantic-settings 从 .env 读取）"""
+import os
 from pathlib import Path
 from typing import List
 
@@ -7,7 +8,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根（backend/ 目录），无论从哪个 CWD 启动都能找到 .env
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_ENV_FILE = _PROJECT_ROOT / ".env"
+_DEFAULT_ENV_FILE = _PROJECT_ROOT / ".env"
+
+# 允许通过 ZD_ENV_FILE 显式指定 env 文件路径（相对路径按当前工作目录解析）。
+# 测试会把它指向一个不存在的临时文件，从而彻底不读取 backend/.env。
+_ENV_FILE = Path(os.environ.get("ZD_ENV_FILE", str(_DEFAULT_ENV_FILE)))
 
 _DEFAULT_JWT_SECRET = "change-me-in-production"
 

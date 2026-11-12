@@ -2,7 +2,7 @@
 
 ## 现状一句话
 
-代码基线已入库，后端 49 项 pytest 与前端 `npm test` 全部通过；回归网已建立，
+代码基线已入库，后端 53 项 pytest 与前端 `npm test` 全部通过；回归网已建立，
 下一步可以开始处理**已知风险**（第一优先是 `/code/run` 无沙箱与弱默认密码）。
 
 ---
@@ -14,13 +14,16 @@
 - `backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/` 已入库。
 - 密钥、数据库、日志、依赖、构建产物、`ai_review/` 全部排除。
 
-### 阶段 2：最小自动化测试（本轮）
+### 阶段 2：最小自动化测试（已完成）
 
-- 新增 `backend/tests/`：`conftest.py` + 4 个用例文件，共 **49 项**，全部通过。
+- 新增 `backend/tests/`：`conftest.py` + 5 个用例文件，共 **53 项**，全部通过。
 - 测试数据库三层隔离：临时 `DATABASE_URL` + `tmp_path` 独立 SQLite + `dependency_overrides`。
+- **配置隔离**：新增 `ZD_ENV_FILE` 环境变量，pytest 在导入 app 前将其指向不存在的临时文件，
+  测试完全不读取真实 `backend/.env`；`tests/test_config_isolation.py` 提供 4 项验证。
 - 前端 `frontend/package.json` 新增 `npm test`（vue-tsc 类型检查），实测退出码 0。
 - 新增 `backend/requirements-dev.txt`（`-r requirements.txt` + `pytest`）。
-- 修复 2 个真实缺陷（步骤序号越界、对不存在实验写孤儿进度），详见 `TEST_REPORT.md` D-01 / D-02。
+- 修复 3 个真实缺陷（D-01 步骤序号越界、D-02 不存在实验写孤儿进度、D-09 测试可能读取真实 .env），
+  详见 `TEST_REPORT.md` 7.1。
 
 ---
 

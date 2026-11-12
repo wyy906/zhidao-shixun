@@ -28,6 +28,8 @@ _GUARD_DB = Path(_GUARD_DIR) / "guard.db"
 # 环境变量优先级高于 .env，这里强制覆盖，避免读到真实配置
 os.environ["DATABASE_URL"] = f"sqlite:///{_GUARD_DB.as_posix()}"
 os.environ["APP_ENV"] = "development"
+# 关键：把 env 文件指向一个**不存在**的临时路径，确保测试完全不读取 backend/.env
+os.environ["ZD_ENV_FILE"] = str(Path(_GUARD_DIR) / "no-such-test.env")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402

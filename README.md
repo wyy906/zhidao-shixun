@@ -205,7 +205,9 @@ python -m pytest -q
 - **完全隔离**：每个测试使用 `tmp_path` 下独立的临时 SQLite 库，`get_db` 通过
   `dependency_overrides` 替换；导入 app 之前已把 `DATABASE_URL` 指向一次性临时文件，
   不会连接、修改或删除真实数据库。
-- 不需要联网、不需要真实 AI Key，也不读取真实 `.env`。
+- **不读取真实 `.env`**：pytest 启动时把 `ZD_ENV_FILE` 指向一个不存在的临时文件，
+  配置加载器因此不会读到 `backend/.env`（该路径可用 `ZD_ENV_FILE` 自定义，正常开发不受影响）。
+- 不需要联网、不需要真实 AI Key。
 
 ### 9.2 前端
 
@@ -220,7 +222,7 @@ npm run type-check  # 等价命令
 
 ### 9.3 测试现状
 
-- 后端：49 项用例，全部通过。
+- 后端：**53 项用例，全部通过**。
 - 前端：`npm test`（vue-tsc）通过。
 - 详见 [TEST_REPORT.md](TEST_REPORT.md)。
 
