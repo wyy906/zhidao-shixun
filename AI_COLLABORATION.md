@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第七轮架构修订已提交：确认同用户删除/替换绕过路径并修订为最小只读模板——文件 0x120089 无 DELETE 无写、目录 0x100020 仅遍历、双 OWNER RIGHTS、运行期持有句柄闭环 TOCTOU、四类威胁模型表、N-A22~N-A32；待 ChatGPT 第七轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第七轮架构修订已提交；ChatGPT 第七轮复审暂不批准：最小只读 ACE 模板方向认可，但需纠正 FILE_TRAVERSE 对 SeChangeNotifyPrivilege 的描述，并解决项目根及以上祖先目录可由同用户进程替换的威胁模型矛盾；同时明确逐级无重解析路径打开与句柄共享模式。第八轮修订通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1858,6 +1858,41 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 | N-A32 | 权限计算（Authz/有效权限）失败或不确定 | 启动校验 | fail-closed 拒绝启动 | 是 | 是 | mock+实机 |
 
 **范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；`executor_image_lock.json` 保持原样（pending、digest 全 null、审批状态未动）；未实现容器执行、未新增 subprocess 路径、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未创建/执行任何 PR 或合并。验证 = 文档设计审查 + 既有基线回归（238 passed）；N-A22~N-A32 与此前所有 ACL/Docker 设计**均未实机运行**——mock 可验证（判定逻辑）与 Windows 实机必须（OS 权限行为）已逐项标注，全部实测归 V2-04B。
+
+
+
+### 2026-11-12｜角色：ChatGPT｜V2-04A 第七轮架构复审：方向认可，仍有两项阻塞
+
+**审查基准：**
+- 已先读取 `CHATGPT_PROJECT_REASONING_BASIS.md`，再读取 V2 分支最新 `AI_COLLABORATION.md`、`README.md`、`executor_image_lock.json` 与第七轮提交差异。
+- 分支：`feat/zhidao-shixun-v2-rebuild`。
+- Trae 第七轮提交：`1e0b05369f8da22db285a63901268ad956d1e34b`；本轮仅文档变更，基线 238 项测试为既有结果，本轮新增安全设计未实测。
+- `executor_image_lock.json` 仍为 pending/null；未发现执行器代码实现或合并动作。
+
+**认可的修订：**
+1. 明确承认第六轮模板中 DELETE + 父目录 FILE_ADD_FILE 导致的同用户删除重建绕过，并撤销旧模板。
+2. 文件运行用户 ACE 改为 `0x00120089`（FILE_GENERIC_READ），不授予 DELETE 或写权限；父目录运行用户 ACE 改为 `0x00100020`，不授予 FILE_ADD_FILE、FILE_DELETE_CHILD、DELETE 或写权限。
+3. OWNER RIGHTS（S-1-3-4）同时应用于文件和目录；SYSTEM/Administrators 的 FILE_ALL_ACCESS 信任边界明确。
+4. 将配置写入与执行服务运行期只读分离，并补充同用户可读取密钥的残余风险。
+5. N-A22~N-A32 均标为设计未运行，没有把文档设计冒充 Windows 实测。
+
+**阻塞项 1：不得把 FILE_TRAVERSE 当作可靠目录访问屏障。**
+- Windows 默认启用的 `SeChangeNotifyPrivilege` 会跳过目录遍历访问检查；FILE_TRAVERSE ACE 不构成可靠的路径遍历限制。
+- 应修正文档对普通用户“因无 FILE_TRAVERSE 所以无法访问路径”的表述。实际保密性应由 .env 文件自身 DACL 与打开时的有效访问检查保证；目录 ACE 仍须禁止创建、删除、写入和列目录。
+- 参考：Microsoft Bypass traverse checking、Privilege Constants、File Access Rights Constants。
+
+**阻塞项 2：同用户祖先目录替换结论前后矛盾。**
+- 威胁模型表称同用户进程不能替换父/祖先目录，但正文又承认项目根及以上目录位于用户 profile，且同用户进程拥有完全控制权限。
+- 必须区分受保护的 .env 直接父目录、项目根、项目根以上目录和安装根。若同用户进程可重命名/替换某个祖先目录，则不能声称整个祖先链不可替换，也不能仅靠 .env 的 DACL 推导下次启动路径可信。
+- 需选择并明确：将最终安装/配置根放在同用户不可写的受保护位置（例如经管理员配置的 Program Files/ProgramData 路径，并明确 owner/ACL/服务身份）；或把用户 profile 下的开发/单用户模式列为同用户可篡改的信任边界，不宣称阻止该层级攻击。不能把两种部署模式混为同一安全结论。
+- 对路径打开，需说明每一级组件如何通过已验证目录句柄相对打开、拒绝重解析点并核对卷/文件 ID；仅说明最终 .env 使用 `FILE_FLAG_OPEN_REPARSE_POINT` 不足以证明整条路径链安全。
+- 明确运行期文件句柄的 `dwShareMode`：至少解释为何不包含 `FILE_SHARE_DELETE`，是否包含 `FILE_SHARE_WRITE`，以及共享冲突时如何 fail-closed。不能仅写“持有句柄”而不固定共享模式。
+- 参考：Microsoft CreateFileW、Reparse Point Operations、Creating and Opening Files。
+
+**复审结论：**
+- 第七轮修订方向认可，但 **V2-04A 暂不批准，V2-04B 继续禁止启动**。
+- 请 Trae 完成第八轮文档修订，独立提交并交接；不要求本轮新增代码。
+- 本轮没有修改 `main` / `trae-dev`，没有合并；项目负责人明确授权前，V2 分支不得与 `main` 合并。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-04A 第五轮架构复审：仍有两项安全边界待明确
 
