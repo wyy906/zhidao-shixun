@@ -2049,3 +2049,44 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 - Trae 需完成第六轮架构文档修订并独立提交；第六轮复审通过前不得实现容器执行。
 - 当前未运行 Docker/Windows ACL 实测；未批准镜像 digest；未启动执行器实现。
 - 项目负责人明确说“同意合并”前，V2 分支绝不与 `main` 合并；`main` 与 `trae-dev` 保持不动。
+
+
+### 2026-11-12｜角色：ChatGPT｜V2-04A 第八轮复审：暂不批准，发现目录句柄权限掩码与 ACL 矛盾
+
+**审查基准：**
+- Trae 第八轮修订 commit：`8fbc72b469e29f98e71a3601a488a6ffd2024b85`。
+- 分支：`feat/zhidao-shixun-v2-rebuild`；复审时分支 HEAD 与该 commit 一致（compare status=identical）。
+- 已读取：`CHATGPT_PROJECT_REASONING_BASIS.md`、最新 `AI_COLLABORATION.md`、`README.md`、第八轮提交差异；并核对 Microsoft Learn 文件/目录访问权限、CreateFileW、NtCreateFile、删除与共享模式文档。
+
+**结论：第八轮修订确实纠正了 FILE_TRAVERSE / SeChangeNotifyPrivilege 语义，以及开发模式 C/D 祖先路径的信任边界；逐级相对打开与句柄读取方向可以保留。但第八轮仍有新的架构阻塞，本轮不批准 V2-04A，不得进入 V2-04B。**
+
+**阻塞项 1：文件与目录句柄错误地复用同一个 `dwDesiredAccess=0x00120089`。**
+- 该掩码包含 `0x1`。对普通文件是 `FILE_READ_DATA`；对目录同一位是 `FILE_LIST_DIRECTORY`，即列出目录内容。
+- 第八轮文档一方面声明目录句柄不需要 `FILE_LIST_DIRECTORY`，另一方面将该掩码用于根目录及每一级目录句柄，语义自相矛盾。
+- 目录句柄的访问掩码必须与文件句柄分开定义，逐位解释目录对象上的实际权限，并以 Windows 实测证明不会意外授予列目录能力。
+
+**阻塞项 2：目录 DACL 没有运行服务账户 ACE，却要求服务账户打开目录句柄并核验 Owner/DACL/属性。**
+- 第八轮父目录模板仅有 OWNER RIGHTS、SYSTEM、Administrators 三条 ACE，明确运行用户没有目录 ACE。
+- 最终安装模式又规定目录 owner 为 SYSTEM、服务账户仅读。
+- 但逐级方案要求运行服务账户取得目录句柄，并通过该句柄核验安全描述符、属性、FileId 等。文档没有证明在当前 DACL 下服务账户如何取得所需的 `READ_CONTROL`、`FILE_READ_ATTRIBUTES`、`SYNCHRONIZE` 等最小访问。
+- 必须给出可执行且最小权限的设计：明确目录句柄所需的每个访问位、对应 ACE/主体/owner、实际打开 API 与安全描述符读取 API；如果改由受信任高权限配置组件验证并传递句柄，也必须说明进程边界、句柄继承/复制和生命周期。不得假定“只读”自动等于可读取安全描述符。
+
+**需要澄清项 3：FILE_SHARE_DELETE 的保护范围。**
+- 不设置 `FILE_SHARE_DELETE` 可阻止后续请求 DELETE 访问的打开操作；但文件删除权限还可能来自父目录 `FILE_DELETE_CHILD`。
+- 必须分别说明：文件句柄对 .env 自身删除/重命名的约束、目录句柄对目录自身删除/重命名的约束、父目录 DACL 对子项删除的约束。不能将目录句柄共享模式描述成单独阻止所有子项删除。
+- 对同用户进程的 N-A41/N-A42 及新增目录子项删除路径，应设计 Windows 实机测试。
+
+**需要澄清项 4：NtCreateFile 仍属于未验证实现方案。**
+- Microsoft 文档确认 `OBJECT_ATTRIBUTES.RootDirectory` 支持相对目录句柄解析，`FILE_OPEN_REPARSE_POINT` 可阻止目标对象的常规重解析；这不证明 Python ctypes 结构体布局、调用约定、NTSTATUS 转换、句柄访问掩码和具体 Windows 文件系统行为已验证。
+- 保留 fail-closed、不得回退按路径打开的原则；实机不兼容时重新设计并复审。
+
+**第八轮已解决并予以认可的内容：**
+1. 承认 SeChangeNotifyPrivilege 使 FILE_TRAVERSE ACE 不能作为可靠遍历屏障。
+2. 将 .env 文件自身 DACL 作为保密性核心边界，并区分遍历、列目录、打开、读取、创建/删除/替换能力。
+3. 如实承认开发模式下项目根/祖先目录可被同用户进程替换，记录 R-4B-8；最终安装模式作为后续前置条件且未验证。
+4. 使用已验证父目录句柄进行单级相对打开的方向，以及不按路径重开 .env 的原则。
+5. 将 NtCreateFile/ctypes 和 ACL/共享模式实测状态如实标注为未验证。
+
+**下一步：** Trae 进行第九轮架构修订，仅修正目录句柄访问掩码、目录句柄校验所需最小权限/ACL、共享模式保护范围及对应负向测试设计。第九轮仍为 docs-only；不得实现 Docker 执行器、FastAPI 执行 API、Python 运行接口或前端运行按钮。镜像锁定文件保持 pending/null。不得修改 main/trae-dev，不得创建或合并 PR，不得合并任何分支。
+
+**复审状态：** V2-04A 暂不批准；V2-04B 禁止启动。第九轮复审通过前维持该状态。
