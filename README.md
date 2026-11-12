@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**V2-02 基础工程骨架、V2-03 实验定义与步骤数据模型已完成。** V2-03 第五轮源码复审通过；Trae 报告 Windows 本机全量测试为 238 passed / 0 failed / 0 skipped，前端 vue-tsc + vite 构建通过。V2-04A：Trae 已完成第三轮架构修订，逐项响应第二轮复审三项阻塞项——镜像信任锚改为版本化锁定清单（executor_image_lock.json，批准前 digest=null、fail-closed，不编造信任值，按 digest 拉取并核对，tag 仅参考）；容器清扫改为 API 层双标签过滤（zhidao-exec-managed=true + instance），running 容器绝不清扫、禁全局 prune，生命周期锁改 Windows 命名 Mutex（WAIT_ABANDONED 原子接管，废弃 O_EXCL）；attach 双向流协议明确化（tty=False/open_stdin=True、stdin 原始无帧头、输出 8 字节帧解复用、EOF/半关闭处理），V2-04B 先协议探针再实现并新增 9 项真实 Docker 集成测试；令牌 .env 显式 icacls ACL + 启动自检 fail-closed。写入 AI_COLLABORATION.md，待 ChatGPT 第三轮架构复审；**复审通过前不实现容器执行（V2-04B）。** 本机未安装 Docker（Trae 已实测确认），容器行为的真实验证需在安装 Docker Desktop 的环境进行。AI 指导、屏幕标注等业务功能尚未实现。
+**V2-02 基础工程骨架、V2-03 实验定义与步骤数据模型已完成。** V2-03 第五轮源码复审通过；Trae 报告 Windows 本机全量测试为 238 passed / 0 failed / 0 skipped，前端 vue-tsc + vite 构建通过。V2-04A：Trae 已完成第三轮架构文档修订；ChatGPT 第三轮静态复审确认镜像预审批、应用标签清扫、命名 Mutex 和 attach 协议方向有效，但发现四项仍需修订：文档声称新增的 executor_image_lock.json 与拉取脚本在 Git 中不存在；旧实例孤儿扫描与双标签精确过滤逻辑矛盾；icacls /inheritance:r /grant:r 不能清除其他主体的显式 ACE，无法证明令牌仅当前用户可读；多架构 manifest digest 与平台子 digest 的校验目标未定义清楚。**第三轮复审暂不批准 V2-04B；修订通过前不实现容器执行。** Docker attach 写半关闭仍须在指定 docker-py + Windows Docker Desktop 环境用协议探针验证。本机未安装 Docker，真实容器测试依赖具备 Docker Desktop 的环境。AI 指导、屏幕标注等业务功能尚未实现。
 
 仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
 
