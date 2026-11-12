@@ -7,7 +7,8 @@
 - 工作区：`c:\Users\wyy\Desktop\GitHub-chatgpt-tare`（clone 自 `https://github.com/wyy906/zhidao-shixun.git`）
 - 被测代码：`C:\Users\wyy\Desktop\sxzd`（本地目录，**非 Git 仓库**；远程仓库内无业务代码）
 - 操作系统：Windows / Python 3.13.14 / Node v26.13.0 / npm 11.20.0 / Git 2.56.0
-- 总体结论：**后端与前端可运行，桌面端仅通过导入级验证，项目无任何自动化测试。**
+- 总体结论：**代码基线已入库并完成三端验证**；后端/前端/桌面端均能在干净环境建立并通过启动或导入检查，
+  项目仍**没有自动化测试套件**。
 
 > 说明：以下每条结果均为本轮实际执行所得。未执行的项明确标注「未执行」，不做推测性「通过」结论。
 
@@ -111,11 +112,85 @@
 
 ---
 
+## 阶段 1 复验（代码基线迁入后，2026-11-12）
+
+基线提交：`3032872`（111 files changed, 11389 insertions）
+
+### T-09 敏感信息扫描与脱敏
+
+- 环境：仓库工作区，扫描 `git diff --cached` 全量新增内容
+- 命令/操作：正则匹配 `nvapi-` / `sk-` / `ghp_` / `AKIA` / `C:\\Users\\` / `c:/Users/`
+- 预期结果：0 命中
+- 实际结果：**首次扫描命中严重问题**——5 个脚本硬编码了真实 NVIDIA API Key
+  （`check_nv_models.py`、`test_model_access.py`、`test_model_compare.py`、`test_visual_api.py`、`test_nv_vl.py`），
+  另有 4 个脚本硬编码个人绝对路径 `c:/Users/wyy/Desktop/sxzd/backend`。
+  已全部改为读取 `NV_API_KEY` 环境变量与相对路径（`Path(__file__).resolve().parent.parent`）。
+  复扫结果：`NO MATCH`。
+- 结论：**通过（问题已修复后再提交）**
+- 证据：修复后暂存内容扫描 0 命中；敏感文件名匹配（`.env` / `*.db` / `*.log` / `node_modules` / `dist`）为 `NONE`
+
+### T-10 后端（干净环境）
+
+- 环境：仓库副本 `C:\Users\wyy\.zd_baseline_be`，**全新 venv**，无 `.env`、无数据库
+- 命令/操作：`pip install -r requirements.txt` → `uvicorn app.main:app --port 8012` →
+  请求 `/health`、`/openapi.json`、`POST /api/v1/auth/login`、无 token 访问 `/api/v1/experiments`
+- 预期结果：可启动、可登录、鉴权生效
+- 实际结果：
+  - `pip install` 成功；但 SQLAlchemy 解析到 **2.1.8**，其 C 扩展 `_collections_cy.pyd` 被本机
+    应用控制策略拦截（`ImportError: DLL load failed while importing _collections_cy`）。
+    回退 `sqlalchemy==2.0.36` 后正常。**属主机策略限制，非代码问题**。
+  - 启动成功，`/health` = `{"status":"ok","app":"智导实训"}`，OpenAPI **23 条路由**
+  - 首次启动自动建表 + 创建管理员；`admin/demo123` 登录返回 **200**
+  - 无 token 访问 `/api/v1/experiments` 返回 **401**
+  - 启动时正确输出警告：「JWT_SECRET_KEY 仍为默认值，仅可用于本地开发」
+- 结论：通过
+- 证据：uvicorn 日志、health 响应、登录响应体、401 状态码
+
+### T-11 前端（干净环境）
+
+- 环境：全新目录（无 `node_modules`），从 `package-lock.json` 安装
+- 命令/操作：`npm ci` → `npx vue-tsc --noEmit`
+- 预期结果：依赖安装成功且类型检查无错误
+- 实际结果：`added 115 packages in 9s`；`vue-tsc` 退出码 **0**
+- 结论：通过
+- 证据：命令输出
+
+### T-12 桌面端（干净环境）
+
+- 环境：仓库副本独立 venv，安装 `desktop/requirements.txt`（PySide6 6.12.0、pywinauto 0.6.9、comtypes 1.5.0、mss 10.2.0、pywin32 312）
+- 命令/操作：`QT_QPA_PLATFORM=offscreen` 下导入 `src.ui.main_window`、`src.core.uia`、
+  `src.core.screen`、`src.overlays.annotation`、`src.network.api_client`、`src.config.settings`
+- 预期结果：无导入错误
+- 实际结果：`desktop clean import ok`
+- 结论：通过（**导入级**）
+- 未覆盖：GUI 实际弹出、UIA 取控件、窗口枚举、截图链路、悬浮层绘制。原因：会接管用户桌面并弹全屏悬浮层，需人工在场验证。
+
+### T-13 仓库整洁性
+
+- 环境：仓库工作区
+- 命令/操作：`git status --porcelain -uall` 全量统计 + 敏感文件名匹配
+- 预期结果：仅包含源码与文档
+- 实际结果：111 个文件；`backend 42 / frontend 24 / desktop 18 / scripts 16 / demo_shots 6 / docs 2 / experiment_packs 1`
+  （另 `.gitignore`、`README.md` 为修改）。无 `.env`、`*.db`、`*.log`、`node_modules`、`dist`、`*.tsbuildinfo`
+- 结论：通过
+
+### T-14 启动脚本缺陷（已修复）
+
+- 环境：`scripts/start-backend.ps1`、`scripts/start-frontend.ps1`
+- 命令/操作：静态审阅路径拼接
+- 预期结果：脚本能从任意工作目录定位到 backend/frontend
+- 实际结果：原代码 `Set-Location "$PSScriptRoot\backend"` 指向 `scripts\backend`（不存在），
+  两处均已改为 `$PSScriptRoot\..\backend` / `..\frontend`
+- 结论：**通过（缺陷已修复）**
+- 未覆盖：脚本会安装依赖并长驻前台，未实际执行
+
 ## 本机环境限制（影响复现）
 
 - 全局 Git 配置存在 `url.https://ghfast.top/https://github.com/.insteadOf=https://github.com/`，
   所有 GitHub 请求被改写到镜像代理；若代理不可用会导致 clone/push 失败，需注意。
 - 本机无 `gh` CLI、无 credential helper、无 `GH_TOKEN`/`GITHUB_TOKEN`，**推送需要凭据**。
+- 本机启用应用控制策略：新建虚拟环境中带 C 扩展的 `.pyd`（实测 SQLAlchemy 2.1.8 的 `_collections_cy.pyd`）
+  会被拦截，需回退到纯 Python 可用的版本才能导入；该限制不影响已安装的全局环境。
 - 后端与桌面端依赖安装在系统 Python 中，未使用虚拟环境，版本漂移风险较高。
 
 ## 后续测试记录模板

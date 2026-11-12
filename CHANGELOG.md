@@ -1,5 +1,54 @@
 # 更新记录
 
+## 2026-11-12 — 阶段 1：建立现有项目代码基线
+
+提交：`3032872` `feat: import existing project code baseline`（111 files, +11389）
+
+### 新增（代码基线）
+
+- 迁入 `backend/`（FastAPI + SQLAlchemy，42 文件）、`frontend/`（Vue 3 + TS，24 文件）、
+  `desktop/`（PySide6 桌面助手，18 文件）、`scripts/`（16 文件）、`experiment_packs/`（1 个实验包）。
+- 新增 `demo_shots/`（6 张产品界面截图，已逐张核查无隐私信息）。
+- 新增 `docs/README.md` 与 `docs/visual_result.json`（纯文本，不含个人桌面截图）。
+
+### 安全修复
+
+- **删除 5 个脚本中硬编码的真实 NVIDIA API Key**（`check_nv_models.py`、`test_model_access.py`、
+  `test_model_compare.py`、`test_visual_api.py`、`test_nv_vl.py`），改为读取环境变量 `NV_API_KEY`；
+  未设置时给出明确提示并退出。
+- 清理 4 个脚本中的个人绝对路径 `c:/Users/wyy/Desktop/sxzd/backend`，改为基于
+  `Path(__file__).resolve().parent.parent` 的相对路径。
+- 扩充 `.gitignore`：新增 `ai_review/`、`.screenshots/`、`docs/*.png`、`*.tsbuildinfo`、
+  `frontend/vite.config.js`、`frontend/vite.config.d.ts`。
+- 未入库：`*.env` 真实配置、`*.db`/`*.sqlite`、`*.log`、`node_modules`、`dist`、`ai_review/`（329 MB，保留本地）。
+
+### 配置与文档
+
+- 重写 `backend/.env.example`：补充 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ALLOW_PUBLIC_REGISTER`，
+  密钥项全部为占位值，并注明生产环境必须替换 `JWT_SECRET_KEY`。
+- 重写 `README.md`：架构、技术栈、目录结构、三端安装启动、环境变量表、默认账号、
+  接口清单、测试现状、安全说明、Windows 平台限制。
+
+### 缺陷修复
+
+- `scripts/start-backend.ps1`、`scripts/start-frontend.ps1` 的 `Set-Location` 少一级目录
+  （指向不存在的 `scripts\backend`），已改为 `..\backend` / `..\frontend`。
+
+### 验证（全部为实际执行）
+
+- 后端：干净 venv + 全新目录（无 `.env`、无数据库）启动成功，`/health` ok、23 条路由、
+  首次建库建管理员、`admin` 登录 200、无 token 访问 401。
+- 前端：全新目录 `npm ci`（115 packages）+ `vue-tsc --noEmit` 退出码 0。
+- 桌面端：独立 venv 安装 PySide6 6.12.0 等依赖，离屏导入 6 个模块通过（GUI 未实跑）。
+- 推送前扫描：暂存内容敏感信息 0 命中；无 `.env`/`*.db`/`*.log`/`node_modules`/`dist`。
+
+### 未做（按约束）
+
+- 未修改 `main` 分支，未合并协作文档。
+- 未删除 `C:\Users\wyy\Desktop\sxzd` 与 `ai_review/`。
+- 未使用 `git push --force`。
+- 未大规模重构业务代码，未删除任何已有功能。
+
 ## 2026-11-12 — 阶段 0：项目接入与现状盘点
 
 ### 接入

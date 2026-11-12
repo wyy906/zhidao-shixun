@@ -1,59 +1,61 @@
 # 任务看板
 
-## 当前阶段：阶段 0 — 项目接入与现状盘点（已基本完成，有 1 项待确认）
+## 当前阶段：阶段 1 — 建立现有项目代码基线（已完成，待验收）
 
-### P0：必须先完成
+### 阶段 1 任务
 
-- [x] 检查 Trae 当前打开的项目目录与 Git 状态。
-  - 证据：工作区 `c:\Users\wyy\Desktop\GitHub-chatgpt-tare` 已成功 clone 远程仓库，`git status -sb` 输出 `## trae-dev...origin/trae-dev`，工作区干净。
-- [x] 判断本地是否已有项目代码；若有，列出目录结构、主要模块和入口文件。
-  - 证据：工作区内（远程仓库内容）**只有 9 份协作文档 + README，无任何业务代码**。
-    真实代码位于 `C:\Users\wyy\Desktop\sxzd`，但该目录**不是 Git 仓库**。详见 TEST_REPORT.md T-02 / T-03。
-- [x] 对比本地目录与 GitHub 远程仓库，确认是否存在未提交/未推送内容。
-  - 证据：`git ls-tree -r --name-only origin/main` 仅 `README.md`；`origin/trae-dev` 为 9 份文档。
-    本地 `sxzd` 的 backend/frontend/desktop/scripts/experiment_packs 全部**未进入远程仓库**。
-- [x] 检查是否包含密钥、Token、Cookie、个人数据、数据库文件或大体积产物。
-  - 证据：`C:\Users\wyy\Desktop\sxzd\backend\.env` 含真实 `AI_API_KEY`、`JWT_SECRET_KEY`；
-    `ai_review\backend\.env` 是**第二份带密钥的副本**；另有 `zd_shixun.db`（真实用户数据）、
-    `node_modules` 310.6 MB、`ai_review` 329.3 MB、`docs` 10.9 MB 图片、`dist` 6.8 MB。
-    当前仓库内**无**任何密钥（已核对 trae-dev 文件清单）。
-- [x] 识别项目使用的语言、框架、依赖和启动方式。
-  - 详见 TASK_BOARD 下方「技术栈摘要」与 TEST_REPORT.md T-04 / T-05。
-- [x] 在不修改业务代码的前提下，尝试运行现有项目并记录结果。
-  - 证据：后端实启成功、`/health` 返回 ok、OpenAPI 23 条路由；前端 `vue-tsc` 退出码 0；
-    桌面端离屏导入成功（GUI 未实际弹出）。详见 TEST_REPORT.md T-06 ~ T-08。
-- [x] 输出项目盘点报告与建议的下一阶段任务。
-  - 证据：见 NEXT_STEPS.md 与 CHANGELOG.md 2026-11-12 条目。
+- [x] 备份/确认原项目可恢复，不删除原目录。
+  - 证据：迁移全程为**只读复制**，`C:\Users\wyy\Desktop\sxzd` 未被修改、未被删除；
+    `ai_review/` 按要求保留在本地且已加入 `.gitignore`。
+- [x] 确认工作分支为 `trae-dev`。
+  - 证据：`git branch --show-current` = `trae-dev`，`git status -sb` = `## trae-dev...origin/trae-dev`。
+- [x] 对比本地与远程差异，不覆盖已有代码。
+  - 证据：远程仅有 9 份协作文档 + README；代码目录（backend/frontend/desktop/scripts 等）在远程**不存在**，
+    无路径冲突。唯一被覆盖的是 `README.md`（按要求重写）与 `.gitignore`（按要求扩充）。
+- [x] 完善 `.gitignore`。
+  - 证据：新增 `ai_review/`、`.screenshots/`、`docs/*.png`、`*.tsbuildinfo`、
+    `frontend/vite.config.js`、`frontend/vite.config.d.ts` 等规则。
+- [x] 迁入 backend、frontend、desktop、scripts、experiment_packs。
+  - 证据：共 111 个待提交文件（含 `demo_shots/` 6 张产品截图、`docs/` 2 个文本文件）。
+- [x] 生成安全 `.env.example`（仅变量名 + 占位值）。
+  - 证据：`backend/.env.example` 补入 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ALLOW_PUBLIC_REGISTER`，
+    密钥项全部为占位值；`frontend/.env.example` 无敏感项。
+- [x] 完善 README（三端安装、启动、环境变量、Windows 限制）。
+  - 证据：`README.md` 已重写为 12 节完整说明。
+- [x] 检查硬编码密钥、默认弱密码、真实账号、数据库、个人数据。
+  - 证据：**发现并修复** 5 个脚本硬编码的真实 NVIDIA API Key（改为读取 `NV_API_KEY` 环境变量）；
+    清理 4 个脚本中的个人绝对路径；`*.db`、`.env`、`ai_review/` 均未入库。
+    遗留：`backend/app/core/config.py` 的 `admin_password="demo123"` 与
+    `desktop/src/network/api_client.py` 的 `auto_login("admin","demo123")` 仍为弱默认值（未改动代码，见风险清单）。
+- [x] 后端启动、前端类型检查、桌面端导入检查。
+  - 证据：见 `TEST_REPORT.md` T-09 ~ T-12。
+- [x] 干净环境验证。
+  - 证据：后端在独立 venv + 全新目录启动成功并可登录；前端在全新目录 `npm ci` 后类型检查通过。
+- [x] 推送前执行文件清单与敏感信息扫描。
+  - 证据：`git status --porcelain -uall` 111 项，敏感文件正则匹配 0 命中。
+- [x] 提交并推送到 `origin/trae-dev`。
+  - 证据：提交 SHA 见下方「提交记录」。
 
-### 阻塞项（需项目负责人确认，Trae 不擅自处理）
+## 提交记录
 
-- [ ] **B-01 本地代码是否迁入仓库、以什么顺序迁入。**
-  远程仓库当前为空壳；本地 `sxzd` 是唯一真实代码来源。迁入涉及 300 MB+ 依赖与二进制产物、
-  两份带密钥的 `.env`、真实用户数据库，必须先剔除再提交。**需明确授权后再执行。**
-- [ ] **B-02 敏感文件清理策略。** `ai_review/` 目录整体是待清理的审核快照（内含 `.env`、`*.db`、
-      `uvicorn.log`、`child_log.txt`），不建议入库；是删除、还是纳入 `.gitignore` 后保留在本地？
-- [ ] **B-03 main 与 trae-dev 的合并节奏。** main 仍停在 `11698fa`（只有 README），
-      trae-dev 已领先 8 个文档提交。是否把协作文档同步回 main，需负责人决定（本轮不动 main）。
-
-### P1：盘点通过后再做
-
-- [ ] 确定首版 MVP 范围和可验收演示流程。
-- [ ] 确定前后端/桌面助手的模块边界。
-- [ ] 建立最小可运行开发环境和基础测试（当前**零自动化测试**）。
-- [ ] 按确认后的方案分阶段实现，不进行无必要的大规模重构。
-
-## 技术栈摘要（来自本地实盘，非文档推测）
-
-| 端 | 技术 |
+| 提交 | 内容 |
 |---|---|
-| backend | Python 3.13、FastAPI、SQLAlchemy 2、SQLite、python-jose(JWT)、bcrypt、httpx |
-| frontend | Vue 3.5 + TypeScript + Vite 4、Element Plus、Pinia、Vue Router、Monaco、ECharts |
-| desktop | PySide6(Qt6)、comtypes/IUIAutomation、pywin32、mss、WGC 截图、httpx（**仅 Windows**） |
+| `0293b69` | 阶段 0 盘点文档 |
+| `3032872` | `feat: import existing project code baseline`（111 files, +11389） |
+| 本条文档提交 | `docs: record stage-1 baseline import` |
+
+## 遗留问题（需负责人决策）
+
+- [ ] **R-01 弱默认密码**：后端 `admin_password` 默认 `demo123`；桌面端 `auto_login` 内置 `admin/demo123`。
+      建议改为首次启动强制改密 + 桌面端不再内置默认凭据。涉及业务代码，本轮未改。
+- [ ] **R-02 SQLAlchemy 版本上限**：`requirements.txt` 仅写 `>=2.0.35`，实测会装到 2.1.8；
+      在开启应用控制策略的机器上其 C 扩展会被拦截。建议评估是否收敛到 `>=2.0.35,<2.1`。
+- [ ] **R-03 `docs/*.png`**：11 张调试截图（10.87 MB）含个人桌面内容，已排除入库；如需文档配图需重新截图。
+- [ ] **R-04 自动化测试**：仍为 0，`scripts/test_*.py` 是调试脚本，不可作为回归。
+- [ ] **R-05 `POST /code/run` 无沙箱**：可执行任意 Python，属高危。
 
 ## 任务状态说明
 - 待办：尚未开始
 - 进行中：正在开发
 - 阻塞：缺少信息/环境/权限
 - 完成：有代码、测试或可复现证据支持
-
-每项任务完成时，补充负责人、改动文件、验证方式和结果。
