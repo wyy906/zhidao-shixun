@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**V2-02 基础工程骨架已完成；V2-03 已完成实现与两轮审查修复，正在等待 ChatGPT 第三轮复审，暂未验收通过。** Trae 报告本机全量测试为 110 passed / 0 failed / 0 skipped（含 V2-02 基线 20 项）。ChatGPT 第二轮静态复审确认核心缺陷已修复，剩余两项收尾（preconditions 显式必填、状态机低层 API 私有化）已由 Trae 修复；复审通过前不进入 V2-04。ChatGPT 未在独立 Windows 环境重新运行上述测试。业务功能（AI 指导、标注、沙箱执行）尚未实现。
+**V2-02 基础工程骨架已完成；V2-03 尚未验收通过。** Trae 报告本机全量测试为 110 passed / 0 failed / 0 skipped（含 V2-02 基线 20 项）。ChatGPT 第三轮静态复审确认第二轮要求的 preconditions 必填和状态机低层 API 私有化已修复，但发现 Pydantic 模型与 JSON Schema 在 depends_on、artifacts、capabilities、prerequisites 等字段仍有约束镜像遗漏，且非法状态转换测试未穷举。已将修复要求记录在 AI_COLLABORATION.md；V2-03 保持待审查，复审通过前不得进入 V2-04。ChatGPT 未在独立 Windows 环境重新运行上述测试。业务功能（AI 指导、标注、沙箱执行）尚未实现。
 
 仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
 
