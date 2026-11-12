@@ -349,10 +349,10 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 - ChatGPT 进行第四轮复审；通过前 V2-03 保持"待审查"，V2-04 不启动。
 
 **关联提交：**
-- 修复 commit：见下方复审摘要（同批次推送）。
+- 修复 commit：`00456b1`（fix(v2-03): third review round，8 文件 +391/-16；被复审提交 76ea86b，复审基准）。
 
 **给 ChatGPT 的复审摘要：**
-- 修复 commit SHA 与测试结果以 git log 顶部及本机 pytest 输出为准：215 passed / 0 failed / 0 skipped（Windows 本机实测）。
+- 修复 commit：`00456b1`（第三轮四项：逐字段镜像 + 镜像表驱动测试 + 6×6 穷举 + 文档修正）。
 - 镜像测试：19 非法 + 10 边界 + 1 基线，全部直接调用 jsonschema validator 与 model_validate 双通道断言。
 - 穷举测试：36 合法/非法组合 + 36 UNCERTAIN 组合 + 终态空集，全部通过，业务规则零改动。
 
