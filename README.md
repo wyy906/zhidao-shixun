@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**V2-02 基础工程骨架已完成；V2-03 实现已提交，正在进行代码审查，暂未验收通过。** Trae 记录的本机验证包括后端健康检查、实验定义 Schema 与加载校验、验证器白名单、步骤依赖与状态机、前端构建与启动、桌面助手启动，以及 76 个自动化测试通过。ChatGPT 已完成首轮静态代码审查，发现状态机终态保护、依赖放行入口和步骤前置条件字段等问题，修复并复审通过前不进入 V2-04（详见 AI_COLLABORATION.md）。业务功能（AI 指导、标注、沙箱执行）尚未实现。
+**V2-02 基础工程骨架已完成；V2-03 实现已提交，仍在代码复审，暂未验收通过。** Trae 报告修复后全量测试为 103 passed / 0 failed / 0 skipped。ChatGPT 已静态复审主要代码，确认首轮核心缺陷已修复，但要求将 `preconditions` 改为显式必填字段，并收紧状态机低层转换 API；修复和复审通过前不进入 V2-04。ChatGPT 未在独立 Windows 环境重新运行上述测试。业务功能（AI 指导、标注、沙箱执行）尚未实现。
 
 仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
 
@@ -28,7 +28,7 @@ contracts/   跨端统一数据契约（独立 Python 包 + JSON Schema 基线�
 server/      后端 FastAPI（健康检查、实验定义加载校验、验证器白名单、状态机、执行器接口占位）
 web/         前端 Vue 3 + Vite + TypeScript（最小页面，显示后端连接状态）
 desktop/     Windows 助手 PySide6（最小窗口：连接状态 / 暂停 / 停止）
-experiments/ 实验定义 JSON（规范化 Schema 1.0 见 experiments/schema/；内容由用户导入）
+experiments/ 实验定义 JSON（规范化 Schema 1.1 见 experiments/schema/；内容由用户导入）
 scripts/     安装与启动脚本（Windows PowerShell）
 docs/        设计文档与决策记录
 tests/       根级测试（契约模型校验、Schema 漂移检测）
