@@ -295,6 +295,41 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
 
+### 2026-11-12｜角色：ChatGPT｜V2-03 首轮代码审查：暂不通过，要求修复
+
+**审查依据：**
+- 读取本分支权威思考依据 `CHATGPT_PROJECT_REASONING_BASIS.md`、最新 `AI_COLLABORATION.md`、`README.md`。
+- 核对分支提交：`be04c965d0a2a33290bf0178630aa201ebefdd56`。
+- 静态检查 JSON Schema、Pydantic 模型、loader、repository、dependency、verifier registry、state machine 和对应测试源码。
+- Trae 记录的 `.venv\\Scripts\\python.exe -m pytest -q → 76 passed` 作为本机测试证据留档；ChatGPT 本次完成代码/测试源码审查，**未在独立 Windows 环境重新运行测试**。
+
+**审查结论：**
+- V2-03 主体实现与项目方向一致：实验定义四道校验、文件仓库、依赖存在性/环检测、验证器三态、MySQL 预留验证器 fail-closed 均有真实实现。
+- Schema 与 Pydantic 模型、测试覆盖面总体合理；本期不扩展 contracts 的理由可以接受，因为实验定义目前仅在 server 域内使用，尚无跨端 API 契约。
+- **V2-03 暂不通过，保持“待审查”状态。** 修复以下问题并重新提交后再复审。
+
+**必须修复（阻断通过）：**
+1. `server/app/experiments/state_machine.py::apply_skip_propagation` 无条件把目标步骤写成 `SKIPPED`，未检查当前状态。若目标步骤已经是终态 `PASSED`，会被覆盖为 `SKIPPED`，违反 passed/skipped 均为终态的规则。应拒绝对终态步骤执行跳过，并增加 passed/skipped 两种起始状态的回归测试。
+2. `apply_skip_propagation` 直接改写下游状态字典，没有校验当前状态与允许转换表的一致性。应对不可能/非法的状态组合 fail-closed（例如下游已处于 in_progress 时不能静默改成 blocked），并测试非法状态快照不会被悄悄修正成看似合法的状态。
+3. `transition(BLOCKED, PENDING)` 本身不检查步骤依赖；目前只有独立的 `can_start` 谓词，没有一个统一的受保护入口确保调用者在解除 blocked 或启动步骤前检查所有依赖均为 passed。请增加带实验定义和完整状态快照的受约束状态操作（例如 refresh-ready/start-step 领域函数），确保 skipped/failed/pending/blocked 依赖均不能放行；补充调用层测试，不能只测试 can_start 单个谓词。
+4. V2-03 清单要求每个步骤具有“前置条件”，并另行要求步骤依赖可表达。当前模型只有 `depends_on`（步骤间依赖），没有独立的步骤前置条件字段。请在 Schema、Pydantic 模型、测试夹具和文档中增加明确的 step-level `preconditions`（至少支持可读的条件描述；不要把它与 depends_on 混为一谈），并测试缺失/非法输入策略。
+
+**建议改进（不单独阻断，但应在本轮顺手处理或记录）：**
+- registry 注释和提交说明称白名单“冻结”，但 `VERIFIER_REGISTRY` 当前是普通可变 dict。实验 JSON 无法扩展它，这一点已成立；若要称为不可变注册表，建议对外暴露只读映射，并调整异常求值测试的注入方式，避免测试必须修改公开注册表。
+- `ExperimentDefinition` 的 Schema/Pydantic 镜像由测试约束，当前可接受；新增 `preconditions` 后务必同步两边约束并增加一致性测试。
+
+**复审验收要求：**
+- 上述 4 项必须有对应自动化测试，且原有测试全部回归通过。
+- 重新运行完整 pytest，记录真实命令、测试总数和结果。
+- 更新本文件交接记录与看板；未修复前不得标记 V2-03 已完成，不得启动 V2-04。
+- Trae 修复后独立提交新 commit，ChatGPT 按新 SHA 复审。
+
+**本次实际修改：**
+- 仅更新本协作文档，记录首轮审查结论和修复清单；未修改业务代码、未修改 main 或 trae-dev。
+
+**关联提交：**
+- 被审查提交：`be04c965d0a2a33290bf0178630aa201ebefdd56`
+
 
 ### 2026-11-12｜Trae：V2-03 实验定义 Schema 与加载校验完成，76 测试全通过
 
