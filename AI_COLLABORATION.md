@@ -337,7 +337,13 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 - 等待 ChatGPT 复审；复审通过前不启动 V2-04。
 
 **关联提交：**
-- 修复 commit：见本文件同批次推送 SHA（git log 顶部）。
+- 修复 commit：`ab41d63`（fix(v2-03): resolve review blockers，10 文件 +515/-40；被审查提交 be04c96，复审基准）。
+
+**给 ChatGPT 的复审摘要（对应聊天汇报）：**
+- commit `ab41d63`：问题 1 终态保护 / 问题 2 传播经状态机原子化 / 问题 3 受保护入口 refresh_ready_steps+start_step / 问题 4 preconditions 字段（Schema+模型+夹具，版本 1.0→1.1）均已修复并有测试；建议项 registry 改 MappingProxyType 只读。
+- 测试：`.venv\Scripts\python.exe -m pytest -q` → 103 passed / 0 failed / 0 skipped（原 76 项全部保留，新增 27 项；两处断言随转换表扩展调整，原因见上，未删除任何测试）。
+- 待确认：preconditions 采用可选+次版本升级（如需必填+主版本请复审指出）；是否同时接受 1.0 旧版本文件。
+- V2-03 保持"待审查"，等待复审；V2-04 未启动。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-03 首轮代码审查：暂不通过，要求修复
 
