@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1.api import api_router
 from app.db.session import engine, Base, SessionLocal
+from app.services.sandbox_client import SandboxUnavailable, ensure_sandbox_configuration
 
 
 def _ensure_admin() -> None:
@@ -102,6 +103,12 @@ def initialize_database(bind=None, auto_create: bool | None = None) -> None:
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化数据库，关闭时清理"""
     initialize_database()
+    # 已配置执行节点时，传输安全配置非法（明文 HTTP 指向非回环、mTLS 不完整）
+    # 直接拒绝启动，绝不以不安全配置运行
+    try:
+        ensure_sandbox_configuration()
+    except SandboxUnavailable as exc:
+        raise RuntimeError(f"沙箱管理器配置不安全，拒绝启动: {exc}") from exc
     _ensure_admin()
     db = SessionLocal()
     try:

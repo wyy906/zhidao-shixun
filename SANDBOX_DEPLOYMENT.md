@@ -136,6 +136,8 @@ ZD_SANDBOX_DISK_MB=16
 ZD_SANDBOX_OUTPUT_BYTES=65536
 ZD_SANDBOX_INPUT_BYTES=65536
 ZD_SANDBOX_MAX_CONCURRENT=2
+# 排队任务上限；0 表示自动 = 4 × 最大并发。超限返回 queue_full（HTTP 429）
+ZD_SANDBOX_MAX_PENDING=0
 
 # 可选：内网 TLS / 双向 TLS
 # 生产环境**必须**配置证书；缺少证书或证书不可读时管理器拒绝启动。
@@ -165,7 +167,10 @@ sudo systemctl status zd-sandbox
 ```
 
 > gVisor / AppArmor / seccomp 是**可配置的增强项**：配置后管理器会在 `/health` 与每次提交前
-> 真实检查（运行时不存在、配置文件缺失、AppArmor 未启用都会拒绝执行），不会只停留在配置文件声明。
+> 检查运行时是否存在、profile 文件是否可读、AppArmor 是否启用；创建容器后还会核对
+> Docker `HostConfig.SecurityOpt` 中确实记录了对应选项。**但 inspect 只能证明配置被记录，
+> 不能证明内核已加载并强制执行**——后者必须在执行节点用 `scripts/verify_isolation.py`
+> 和实际攻击脚本验证，未验证前不得宣称“seccomp/AppArmor 已生效”。
 
 ## 6. 业务后端配置
 
@@ -183,12 +188,21 @@ SANDBOX_MANAGER_CLIENT_KEY=/etc/zd/client.key
 CODE_RUN_TIMEOUT_SECONDS=10
 CODE_MAX_INPUT_BYTES=65536
 CODE_MAX_OUTPUT_BYTES=65536
+# 业务后端侧并发保护：超限返回 429（不创建任务）
+CODE_MAX_CONCURRENT_REQUESTS=8
+CODE_MAX_CONCURRENT_PER_USER=1
 ```
 
 注意事项：
 
+- **非回环地址必须使用 HTTPS**：`http://10.0.0.20` 这类配置会在启动时被拒绝。
+  仅本机开发可设 `SANDBOX_ALLOW_INSECURE_HTTP=true` 且目标为 `127.0.0.1 / ::1 / localhost`。
+- `SANDBOX_MANAGER_CLIENT_CERT` 与 `_CLIENT_KEY` 必须同时配置或同时留空；
+  只配置其中一个会导致启动失败，不存在静默降级为单向 TLS 的路径。
+- 任何情况下都保留证书校验，不支持 `verify=False`。
 - 业务后端**不会**在配置缺失时回退本机执行；未配置或不可用一律返回
   `503 {"detail": "代码执行环境暂不可用，请稍后重试。"}`。
+- 并发超限返回 `429`，文案为“当前代码运行请求过多，请稍后重试。”
 - 不允许把 `AI_API_KEY`、JWT 密钥、数据库连接串传给执行容器；容器环境变量只有学生代码本身。
 - 业务后端不需要 Docker，也不需要挂载 Docker Socket。
 
@@ -234,7 +248,7 @@ curl -s -H "X-Sandbox-Token: $ZD_SANDBOX_TOKEN" https://127.0.0.1:8443/health | 
 | seccomp | Docker 默认 profile；可指定自定义 profile |
 | MAC | 可选 AppArmor / gVisor（配置即校验，不可用则拒绝执行） |
 | 根文件系统 | `read_only=true` |
-| 可写目录 | 仅 `/workspace`（12MB）与 `/tmp`（4MB），tmpfs、`noexec,nosuid,nodev`，合计 16MB |
+| 可写目录 | 仅 `/workspace`（12MB）、`/tmp`（4MB）与 `/dev/shm`（8MB），tmpfs、`noexec,nosuid,nodev`，合计 24MB；其中业务可写磁盘仍为 16MB |
 | 宿主机挂载 | 无（`volumes={}`、`devices=[]`） |
 | 网络 | `network_mode=none` + `network_disabled=true`（无公网 / 局域网 / 业务服务） |
 | 端口映射 | 无 |
@@ -244,8 +258,8 @@ curl -s -H "X-Sandbox-Token: $ZD_SANDBOX_TOKEN" https://127.0.0.1:8443/health | 
 | 初始化 | `init=true`（回收僵尸进程） |
 | 输出 | Docker json-file 日志轮转 `max-size=64k, max-file=1`（总存储 64KB）；返回时流式读取，stdout / stderr 各 32KB 上限，达到上限立即停止读取 |
 | 生命周期 | 任务结束（成功/超时/取消/异常）一律 `remove(force=True)`，含全部子进程 |
-| 启动自检 | 创建后回查 `Config` / `HostConfig`：运行用户、tmpfs 容量与 `noexec/nosuid/nodev`、日志驱动与轮转上限、端口映射、设备与挂载、CPU/内存/进程数、运行时、镜像；任一不符立即删除容器并拒绝执行 |
-| 残留清理 | 管理器启动时删除所有带 `zd.sandbox=1` 标签的容器（上次异常退出遗留） |
+| 启动自检 | 创建后回查 `Config` / `HostConfig`：运行用户、tmpfs 容量与 `noexec/nosuid/nodev`、`ShmSize`、日志驱动与轮转上限、端口映射、设备与挂载、CPU/内存/进程数、`CapAdd` 为空、`Init=true`、`SecurityOpt`（no-new-privileges / 可选 seccomp、AppArmor）、运行时、镜像；任一不符立即删除容器并拒绝执行 |
+| 残留清理 | 管理器启动时只删除带 `zd.sandbox=1` **且** `zd.sandbox.instance=<本实例>` 标签的容器（上次异常退出遗留）；清理失败则拒绝启动 |
 
 超时 / 取消通过 `container.kill()` 终止整个容器，而不是只杀最外层 Python 进程。
 
@@ -330,7 +344,8 @@ docker ps -a --filter label=zd.sandbox=1 -q | xargs -r docker rm -f
 | `/health` 503 `image_missing` | 镜像未构建或 digest 不匹配 | 重新构建并更新 `ZD_SANDBOX_IMAGE` |
 | `/health` 503 `runtime_unavailable` | 配置了 gVisor 但未安装 | 安装 runsc 或清空 `ZD_SANDBOX_RUNTIME` |
 | `/health` 503 `apparmor_unavailable` | 内核未启用 AppArmor | 启用或清空 `ZD_SANDBOX_APPARMOR` |
-| 任务一直 `queued` | 并发已满（默认 2） | 等待或调整 `ZD_SANDBOX_MAX_CONCURRENT`（管理员） |
+| 任务一直 `queued` | 并发或排队已满（默认 2 / 8） | 等待或调整 `ZD_SANDBOX_MAX_CONCURRENT` / `ZD_SANDBOX_MAX_PENDING`（管理员） |
+| 提交返回 429 `queue_full` | 排队任务达到上限 | 业务后端会安全返回“请求过多”，稍后重试；管理员可调整上限 |
 | 任务 `timeout` | 代码超时（上限 10s） | 学生优化代码；不允许提高上限 |
 | 任务 `resource_exceeded` | 内存 / 进程 / 磁盘 / 输出超限 | 学生减少资源占用 |
 | 401 unauthorized | 令牌不一致 | 核对两端令牌 |

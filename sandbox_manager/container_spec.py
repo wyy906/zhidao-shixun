@@ -20,6 +20,7 @@ BOOTSTRAP_CODE = (
 )
 
 SANDBOX_UID = "65534:65534"  # nobody:nogroup
+SHM_BYTES = 8 * 1024 * 1024  # /dev/shm 固定 8MB，避免默认 64MB 绕过磁盘预算
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class SandboxLimits:
     output_bytes: int = 65536
     input_bytes: int = 65536
     max_concurrent: int = 2
+    # 排队任务上限；管理器用 ThreadPoolExecutor 固定线程数，排队任务不占线程
+    max_pending: int = 8
 
     @property
     def stdout_limit(self) -> int:
@@ -108,6 +111,8 @@ def build_container_kwargs(
         },
         "volumes": {},
         "devices": [],
+        # /dev/shm 默认 64MB，会绕过 16MB 磁盘预算，显式收紧到 8MB
+        "shm_size": SHM_BYTES,
         # ===== 资源限制 =====
         "mem_limit": f"{limits.memory_mb}m",
         # memswap == mem：禁止使用 swap，避免内存超限后仍可分配
@@ -151,6 +156,8 @@ def verify_container_security(
     limits: SandboxLimits,
     runtime: str = "",
     image: str = "",
+    seccomp_profile: str = "",
+    apparmor_profile: str = "",
 ) -> None:
     """容器创建后回查 Docker 实际生效的完整配置（Config + HostConfig）
 
@@ -181,8 +188,25 @@ def verify_container_security(
         problems.append(f"CapDrop={cap_drop!r}(未包含 ALL)")
 
     security_opt = host_config.get("SecurityOpt") or []
-    if not any("no-new-privileges" in str(opt) for opt in security_opt):
+    security_values = [str(opt) for opt in security_opt]
+    if not any("no-new-privileges" in opt for opt in security_values):
         problems.append("SecurityOpt 未包含 no-new-privileges")
+    # 注意：Docker inspect 只能确认 profile 选项被记录，无法确认内核真正加载；
+    # 后者需要在执行节点用部署检查（verify_isolation.py）确认。
+    if seccomp_profile and f"seccomp={seccomp_profile}" not in security_values:
+        problems.append(f"SecurityOpt 未包含配置的 seccomp profile: {seccomp_profile}")
+    if apparmor_profile and f"apparmor={apparmor_profile}" not in security_values:
+        problems.append(f"SecurityOpt 未包含配置的 AppArmor profile: {apparmor_profile}")
+
+    cap_add = [str(c).upper() for c in (host_config.get("CapAdd") or [])]
+    if cap_add:
+        problems.append(f"CapAdd 必须为空，实际: {cap_add!r}")
+
+    if not bool(host_config.get("Init")):
+        problems.append("Init 未启用（容器内僵尸进程无法回收）")
+
+    # ===== 共享内存：默认 64MB 会绕过磁盘预算 =====
+    _check("ShmSize", int(host_config.get("ShmSize") or 0), SHM_BYTES)
 
     # ===== 文件系统 =====
     if host_config.get("Binds"):

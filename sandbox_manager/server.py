@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict
 
 from .config import ManagerConfig
 from .container_spec import SandboxLimits
-from .jobs import JobStore
+from .jobs import JobStore, QueueFullError
 from .runner import DockerRunner, SandboxError
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ def create_app(runner=None, config: ManagerConfig | None = None) -> FastAPI:
             output_bytes=cfg.output_bytes,
             input_bytes=cfg.input_bytes,
             max_concurrent=cfg.max_concurrent,
+            max_pending=cfg.effective_max_pending,
         )
     jobs = JobStore(exec_runner, limits)
 
@@ -106,7 +107,11 @@ def create_app(runner=None, config: ManagerConfig | None = None) -> FastAPI:
             exec_runner.check_ready()
         except SandboxError as exc:
             raise _unavailable(exc)
-        return jobs.submit(code, timeout)
+        try:
+            return jobs.submit(code, timeout)
+        except QueueFullError:
+            # 稳定的排队已满错误；被拒绝的请求不会创建任务或容器
+            raise HTTPException(429, {"status": "busy", "error": "queue_full"})
 
     @app.get("/v1/jobs/{job_id}")
     def get_job(job_id: str, _: None = auth) -> dict:

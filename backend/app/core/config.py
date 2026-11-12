@@ -74,11 +74,16 @@ class Settings(BaseSettings):
     sandbox_request_timeout_seconds: float = 5.0
     # 同步兼容接口最多等待时长（秒）；超过则取消任务并安全失败
     sandbox_sync_wait_seconds: float = 20.0
+    # 是否允许使用明文 HTTP 访问沙箱管理器（仅限本机回环 + 本地开发）
+    sandbox_allow_insecure_http: bool = False
 
     # 学生不可通过请求参数突破以下上限（由管理员在配置中设定）
     code_run_timeout_seconds: int = 10
     code_max_input_bytes: int = 65536
     code_max_output_bytes: int = 65536
+    # 业务后端侧并发保护：避免同步等待导致请求堆积
+    code_max_concurrent_requests: int = 8
+    code_max_concurrent_per_user: int = 1
 
     @model_validator(mode="after")
     def _validate_jwt_secret(self) -> "Settings":

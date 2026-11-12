@@ -29,10 +29,14 @@ SUCCESS_RESULT = {
 class FakeSandbox:
     """可控的假沙箱管理器"""
 
-    def __init__(self, result=None, submit_error=False, poll_error=False):
+    def __init__(self, result=None, submit_error=False, poll_error=False,
+                 poll_exception=None, cancel_error=False, missing_job_id=False):
         self.result = dict(result or SUCCESS_RESULT)
         self.submit_error = submit_error
         self.poll_error = poll_error
+        self.poll_exception = poll_exception
+        self.cancel_error = cancel_error
+        self.missing_job_id = missing_job_id
         self.submitted: list[tuple[str, int]] = []
         self.cancelled: list[str] = []
 
@@ -40,16 +44,31 @@ class FakeSandbox:
         self.submitted.append((code, timeout))
         if self.submit_error:
             raise SandboxUnavailable("manager down")
-        return {"job_id": "job-" + uuid.uuid4().hex, "status": "queued"}
+        job_id = "" if self.missing_job_id else "job-" + uuid.uuid4().hex
+        return {"job_id": job_id, "status": "queued"}
 
     def get_job(self, job_id):
         if self.poll_error:
             raise SandboxUnavailable("manager down")
+        if self.poll_exception:
+            raise self.poll_exception
         return dict(self.result)
 
     def cancel(self, job_id):
         self.cancelled.append(job_id)
+        if self.cancel_error:
+            raise SandboxUnavailable("manager down")
         return {"job_id": job_id, "status": "cancelled"}
+
+    # 路由使用异步接口，避免阻塞事件循环
+    async def asubmit(self, code, timeout):
+        return self.submit(code, timeout)
+
+    async def aget_job(self, job_id):
+        return self.get_job(job_id)
+
+    async def acancel(self, job_id):
+        return self.cancel(job_id)
 
 
 def _use_sandbox(fake: FakeSandbox) -> None:
@@ -262,3 +281,147 @@ def test_router_does_not_import_subprocess():
     assert "import subprocess" not in source
     assert "subprocess.run" not in source
     assert "sys.executable" not in source
+
+
+def test_run_endpoint_is_async():
+    """异步路由：轮询等待不阻塞 FastAPI 事件循环"""
+    import inspect
+
+    assert inspect.iscoroutinefunction(code_router.run_code)
+
+
+# ===========================================================================
+# 学生端错误脱敏
+# ===========================================================================
+def test_student_cannot_see_internal_error_details(
+    client, student_headers, teacher_headers, db_session, users
+):
+    secret = (
+        "docker inspect /srv/zd-sandbox/secrets.json failed; image "
+        "zd-sandbox-python@sha256:" + "e" * 64
+    )
+    task = CodeTask(
+        id=uuid.uuid4().hex,
+        user_id=users["student"]["id"],
+        status="failed",
+        timeout_seconds=10,
+        error_code="container_error",
+        error_message=secret,
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    own = client.get(f"/api/v1/code/tasks/{task.id}", headers=student_headers)
+    assert own.status_code == 200
+    body = own.json()
+    assert body["error_message"] == code_router.SAFE_FAILED_MESSAGE
+    assert "/srv/zd-sandbox" not in str(body)
+    assert "sha256:" not in str(body)
+    # 错误码是稳定标识，可以返回；不包含内部路径
+    assert body["error_code"] == "container_error"
+
+    # 教师通过权限检查后可查看内部诊断信息
+    teacher = client.get(f"/api/v1/code/tasks/{task.id}", headers=teacher_headers)
+    assert teacher.status_code == 200
+    assert secret in teacher.json()["error_message"]
+
+
+# ===========================================================================
+# 异常收口：不留下永久 running
+# ===========================================================================
+def test_malformed_job_status_fails_task(client, student_headers, db_session):
+    _use_sandbox(FakeSandbox({"status": "definitely-not-a-status"}))
+    resp = _run(client, student_headers)
+    assert resp.status_code == 503
+
+    task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
+    assert task.status == "failed"
+    assert task.error_code == "sandbox_bad_response"
+
+
+def test_poll_unexpected_exception_fails_task(client, student_headers, db_session):
+    _use_sandbox(FakeSandbox(poll_exception=RuntimeError("boom")))
+    resp = _run(client, student_headers)
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == SAFE_UNAVAILABLE_MESSAGE
+
+    task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
+    assert task.status == "failed"
+    assert task.error_code == "internal_error"
+    assert "boom" not in (task.error_message or "")
+
+
+def test_result_save_failure_closes_task(client, student_headers, db_session, monkeypatch):
+    """模拟保存结果失败：不得假称成功，任务落为安全终态"""
+    _use_sandbox(FakeSandbox())
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("db commit failed")
+
+    monkeypatch.setattr(code_router, "_save_result", _boom)
+    resp = _run(client, student_headers)
+    assert resp.status_code == 503
+
+    task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
+    assert task.status in {"failed", "timeout"}
+    assert task.error_code == "internal_error"
+
+
+def test_missing_job_id_fails_closed(client, student_headers, db_session):
+    _use_sandbox(FakeSandbox(missing_job_id=True))
+    resp = _run(client, student_headers)
+    assert resp.status_code == 503
+    task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
+    assert task.status == "failed"
+    assert task.error_code == "sandbox_bad_response"
+
+
+def test_sync_wait_timeout_with_cancel_failure_still_terminates(
+    client, student_headers, db_session, monkeypatch
+):
+    fake = FakeSandbox({
+        "status": "running", "stdout": "", "stderr": "",
+        "exit_code": None, "duration_ms": None,
+    }, cancel_error=True)
+    _use_sandbox(fake)
+    monkeypatch.setattr(settings, "sandbox_sync_wait_seconds", 0.05)
+
+    resp = _run(client, student_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "timeout"
+    assert fake.cancelled  # 已尽力取消
+
+    task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
+    assert task.status == "timeout"
+
+
+# ===========================================================================
+# 并发保护
+# ===========================================================================
+def test_concurrency_guard_limits_global_and_per_user():
+    guard = code_router.ConcurrencyGuard()
+    assert guard.try_acquire(1, global_max=2, per_user_max=1) is True
+    assert guard.try_acquire(1, global_max=2, per_user_max=1) is False
+    assert guard.try_acquire(2, global_max=2, per_user_max=1) is True
+    assert guard.try_acquire(3, global_max=2, per_user_max=1) is False
+    guard.release(1)
+    assert guard.try_acquire(1, global_max=2, per_user_max=1) is True
+
+
+def test_concurrent_request_rejected_before_submit(
+    client, student_headers, users, monkeypatch
+):
+    fake = FakeSandbox()
+    _use_sandbox(fake)
+    monkeypatch.setattr(settings, "code_max_concurrent_per_user", 1)
+    code_router.guard.reset()
+    student_id = users["student"]["id"]
+    assert code_router.guard.try_acquire(student_id, 8, 1) is True
+    try:
+        resp = _run(client, student_headers)
+        assert resp.status_code == 429
+        assert resp.json()["detail"] == code_router.SAFE_BUSY_MESSAGE
+        assert fake.submitted == []
+    finally:
+        code_router.guard.release(student_id)
+        code_router.guard.reset()

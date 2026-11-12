@@ -9,6 +9,7 @@ import pytest
 
 from sandbox_manager.container_spec import (
     BOOTSTRAP_CODE,
+    SHM_BYTES,
     SandboxLimits,
     build_container_kwargs,
     verify_container_security,
@@ -134,7 +135,10 @@ def _attrs(image=IMAGE, **host_overrides) -> dict:
         "NanoCpus": int(limits.cpu_cores * 1_000_000_000),
         "PidsLimit": limits.pids_limit,
         "CapDrop": ["ALL"],
+        "CapAdd": [],
         "SecurityOpt": ["no-new-privileges:true"],
+        "Init": True,
+        "ShmSize": SHM_BYTES,
         "Binds": None,
         "Devices": [],
         "PortBindings": {},
@@ -164,6 +168,10 @@ def test_verify_accepts_expected_container_attrs():
     {"NanoCpus": 0},
     {"PidsLimit": 0},
     {"CapDrop": []},
+    {"CapAdd": ["NET_ADMIN"]},
+    {"Init": False},
+    {"ShmSize": 64 * 1024 * 1024},
+    {"ShmSize": 0},
     {"SecurityOpt": []},
     {"Binds": ["/:/host"]},
     {"Devices": [{"PathOnHost": "/dev/sda"}]},
@@ -177,6 +185,26 @@ def test_verify_accepts_expected_container_attrs():
 def test_verify_rejects_weak_container_attrs(overrides):
     with pytest.raises(RuntimeError):
         verify_container_security(_attrs(**overrides), SandboxLimits())
+
+
+def test_kwargs_set_shm_size_to_8mb():
+    assert _kwargs()["shm_size"] == SHM_BYTES
+
+
+def test_verify_requires_configured_seccomp_profile():
+    profile = "/etc/zd-sandbox/seccomp.json"
+    good = _attrs(SecurityOpt=["no-new-privileges:true", f"seccomp={profile}"])
+    verify_container_security(good, SandboxLimits(), seccomp_profile=profile)
+    with pytest.raises(RuntimeError, match="seccomp"):
+        verify_container_security(_attrs(), SandboxLimits(), seccomp_profile=profile)
+
+
+def test_verify_requires_configured_apparmor_profile():
+    profile = "zd-sandbox-profile"
+    good = _attrs(SecurityOpt=["no-new-privileges:true", f"apparmor={profile}"])
+    verify_container_security(good, SandboxLimits(), apparmor_profile=profile)
+    with pytest.raises(RuntimeError, match="AppArmor"):
+        verify_container_security(_attrs(), SandboxLimits(), apparmor_profile=profile)
 
 
 def test_verify_checks_tmpfs_flags_and_capacity():

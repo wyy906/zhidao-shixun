@@ -62,6 +62,14 @@ class ManagerConfig:
     output_bytes: int = 65536
     input_bytes: int = 65536
     max_concurrent: int = 2
+    # 排队任务上限；0 表示自动取 4 × max_concurrent
+    max_pending: int = 0
+
+    @property
+    def effective_max_pending(self) -> int:
+        if self.max_pending > 0:
+            return self.max_pending
+        return max(1, 4 * self.max_concurrent)
 
     def validate(self) -> None:
         if not self.token:
@@ -85,6 +93,8 @@ class ManagerConfig:
             raise ValueError("输出 / 输入上限必须为正数")
         if self.max_concurrent <= 0:
             raise ValueError("最大并发必须为正数")
+        if self.max_pending < 0:
+            raise ValueError("排队上限不能为负数（0 表示自动 = 4 × 最大并发）")
 
         # ===== 传输安全：生产必须 HTTPS，禁止静默降级 =====
         cert, key, ca = self.tls_cert_file, self.tls_key_file, self.tls_client_ca_file
@@ -149,6 +159,7 @@ class ManagerConfig:
             output_bytes=_int("ZD_SANDBOX_OUTPUT_BYTES", 65536),
             input_bytes=_int("ZD_SANDBOX_INPUT_BYTES", 65536),
             max_concurrent=_int("ZD_SANDBOX_MAX_CONCURRENT", 2),
+            max_pending=_int("ZD_SANDBOX_MAX_PENDING", 0),
         )
         cfg.validate()
         return cfg

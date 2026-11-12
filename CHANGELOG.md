@@ -1,5 +1,33 @@
 # 更新记录
 
+## 2026-11-12 — 阶段 3-A 第三轮 P1 修复
+
+### 修复
+
+- **队列上限**：`sandbox_manager/jobs.py` 改用固定线程池，新增 `max_pending`
+  （默认 `4 × max_concurrent`，可用 `ZD_SANDBOX_MAX_PENDING` 配置）；
+  超限返回稳定 `queue_full`（HTTP 429），被拒绝的请求不创建任务、不启动容器。
+- **传输安全**：业务后端强制非回环地址使用 HTTPS；明文 HTTP 仅允许显式开启
+  `SANDBOX_ALLOW_INSECURE_HTTP` 且目标为回环地址；`client_cert` / `client_key`
+  必须成对，缺失时启动失败；任何情况下不关闭证书校验。
+- **错误脱敏**：管理器不再向接口返回 Docker 错误 / 镜像地址 / 宿主机路径，
+  仅写服务端日志；学生任务查询返回固定安全文案，教师经权限检查可查看内部诊断。
+- **`/dev/shm`**：显式设置为 8MB，并在 Docker 实际 `HostConfig.ShmSize` 中回查。
+- **安全配置回查**：新增 seccomp / AppArmor 选项、`CapAdd` 为空、`Init=true`、
+  `ShmSize` 校验；任一项不匹配即删除容器并拒绝执行。
+- **异步与并发保护**：`/code/run` 改为异步路由 + `httpx.AsyncClient`；
+  连接/读取超时与连接池上限；后端全局与每用户并发上限（429），避免请求堆积。
+- **异常收口**：畸形响应、轮询异常、保存失败统一落到安全终态并尽力取消沙箱任务，
+  不再静默留下永久 `running` 任务。
+
+### 测试
+
+- 后端 pytest：75 → **97 项**。
+- 沙箱管理器：80 → **93 项**（新增队列上限、shm、seccomp/AppArmor 回查、脱敏测试）。
+- 前端 `npm test`：通过。
+- 真实 Linux / Docker 实机验证（队列压测、shm 挂载、seccomp/AppArmor 内核生效、
+  异步并发压测）**仍未执行**，不得视为已验收。
+
 ## 2026-11-12 — 阶段 3-A 第二轮审查补充修复
 
 ### 修复

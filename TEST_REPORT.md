@@ -12,8 +12,8 @@
 | 日期 | 2026-11-12 |
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
-| 后端测试 | **75 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **80 项，全部通过**（`sandbox_manager/tests/`） |
+| 后端测试 | **97 项，全部通过**（`backend/tests/`） |
+| 沙箱管理器测试 | **93 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -22,9 +22,9 @@
 
 ## 2. 结论摘要
 
-1. 后端 75 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移。
-2. 沙箱管理器 80 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
-   生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额与生命周期。
+1. 后端 97 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全。
+2. 沙箱管理器 93 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+   生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与生命周期。
 3. 学生代码**已不在业务后端进程内执行**，也不再作为本机 subprocess 运行；沙箱不可用时一律 503，不存在降级路径。
 4. 测试在**无网络、无真实 AI Key、无真实数据库、无真实 `.env`、无 Docker** 的条件下可重复运行。
 5. 测试过程中发现 8 个问题：**2 个已修复**，**6 个待负责人决策**；1 项（桌面端 GUI）**尚未验证**。
@@ -47,7 +47,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（75 项 + 80 项）
+## 4. 后端自动化测试（97 项 + 93 项）
 
 ### 4.1 用例分布
 
@@ -58,27 +58,29 @@
 | `tests/test_progress.py` | 11 | 11 | 0 |
 | `tests/test_report.py` | 10 | 10 | 0 |
 | `tests/test_config_isolation.py` | 4 | 4 | 0 |
-| `tests/test_code_sandbox.py` | 16 | 16 | 0 |
+| `tests/test_code_sandbox.py` | 25 | 25 | 0 |
+| `tests/test_sandbox_client.py` | 13 | 13 | 0 |
 | `tests/test_migration_code_tasks.py` | 1 | 1 | 0 |
 | `tests/test_db_init.py` | 5 | 5 | 0 |
-| **backend 合计** | **75** | **75** | **0** |
-| `sandbox_manager/tests/test_container_spec.py` | 32 | 32 | 0 |
-| `sandbox_manager/tests/test_server.py` | 17 | 17 | 0 |
+| **backend 合计** | **97** | **97** | **0** |
+| `sandbox_manager/tests/test_container_spec.py` | 39 | 39 | 0 |
+| `sandbox_manager/tests/test_server.py` | 19 | 19 | 0 |
+| `sandbox_manager/tests/test_jobs.py` | 4 | 4 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_runner.py` | 17 | 17 | 0 |
-| **管理器合计** | **80** | **80** | **0** |
+| **管理器合计** | **93** | **93** | **0** |
 
 ### 4.2 实际执行结果
 
 ```
 # backend
 python -m pytest -q
-75 passed, 297 warnings in 47.26s
+97 passed, 334 warnings in 53.95s
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-80 passed, 1 warning in 1.00s
+93 passed, 1 warning in 1.17s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -131,6 +133,17 @@ python -m pytest -q sandbox_manager/tests
   不做“先读完无限日志再截断”。
 - **数据库初始化**：开发环境默认 `create_all`；生产环境（或 `DB_AUTO_CREATE=false`）
   缺少表时拒绝启动并提示 `alembic upgrade head`；迁移补齐 `code_tasks` 后可通过检查。
+- **队列上限**：管理器使用固定线程池，排队任务上限 `4 × 最大并发`（可配置），
+  超限返回稳定 `queue_full`；被拒绝的请求不创建任务、不启动容器；取消/开始执行会释放容量。
+- **传输安全**：非回环地址强制 HTTPS；明文 HTTP 仅限显式开发开关 + 回环地址；
+  客户端证书与私钥必须成对，缺失时启动失败；保留证书校验。
+- **错误脱敏**：管理器只返回固定安全文案，内部细节仅写服务端日志；学生任务查询
+  不返回 Docker 错误、镜像地址、宿主机路径；教师可查看内部诊断。
+- **/dev/shm**：固定 8MB，并在 Docker 实际配置中回查，防止默认 64MB 绕过磁盘预算。
+- **安全配置回查**：seccomp / AppArmor 选项、`CapAdd` 为空、`Init`、`ShmSize`
+  等逐项与实际 `HostConfig` 比对，不匹配即删除容器拒绝执行。
+- **异步轮询与异常收口**：路由改为 `async` + `httpx.AsyncClient`，不阻塞事件循环；
+  畸形响应 / 异常 / 保存失败都会把任务落到安全终态，并尽力取消沙箱任务。
 
 ## 5. 数据库与配置隔离验证（实测输出）
 
@@ -200,6 +213,10 @@ python -m pytest -q sandbox_manager/tests
 | S-07 | 启动清理失败在真实 Docker 下的阻断效果 | FakeDocker 验证抛错，未在真实节点停止 Docker 验证 |
 | S-08 | 多实例清理隔离 | 标签过滤逻辑已测，未在真实多实例节点验证 |
 | S-09 | 日志轮转与流式读取的真实字节上限 | 单元测试使用假日志流，未在真实 Docker json-file 驱动下验证 |
+| S-10 | 队列上限在真实高并发下的表现 | 线程级单元测试通过，未在真实节点做压力测试 |
+| S-11 | `/dev/shm` 8MB 在真实容器中的实际挂载 | 仅验证 inspect 字段与创建参数 |
+| S-12 | seccomp / AppArmor 是否被内核真正加载并生效 | 只能验证 Docker 记录了配置，无法从 inspect 证明内核强制 |
+| S-13 | 异步接口在真实并发下的连接池与线程行为 | 仅接口级测试，未做真实压测 |
 
 ### 7.4 阶段 3-A 的用户可见行为变化（已记录，非缺陷）
 
@@ -227,6 +244,10 @@ python -m pytest -q sandbox_manager/tests
 | 清理只作用于本实例 | 是 | 是（标签过滤） | **未验证** |
 | 输出流式限额 | 是 | 是（假日志流） | **未验证** |
 | 生产库必须迁移而非 create_all | 是 | 是（临时 SQLite + Alembic） | **未验证**（真实库升级） |
+| 队列上限 / queue_full | 是 | 是（线程模拟） | **未验证**（真实压测） |
+| `/dev/shm` 8MB | 是 | 是（inspect 字段） | **未验证**（真实挂载） |
+| seccomp / AppArmor 记录回查 | 是 | 是（模拟 attrs） | **未验证**（内核实际加载） |
+| 异步轮询不阻塞事件循环 | 是 | 接口测试 + 静态检查 | **未验证**（真实压测） |
 | 启动清理残留容器 | 是 | 是（FakeDocker） | **未验证** |
 | 镜像 digest 校验 | 是 | 是 | **未验证**（真实 daemon 字段） |
 | 生产强制 HTTPS / mTLS | 是 | 是（配置与启动参数） | **未验证**（真实握手） |
@@ -254,6 +275,18 @@ python -m pytest -q sandbox_manager/tests
 | F-10 | 清理仅按 `zd.sandbox=1`，可能误删其他实例容器 | 增加 `zd.sandbox.instance`（及 `zd.sandbox.job`）标签，清理只匹配本实例；明确单实例/多实例策略 | `test_runner.py` 2 项 + `test_container_spec.py` 1 项 |
 | F-11 | 日志整块读取后再截断，双通道未分别限额 | 日志按流读取，达到上限停止；stdout/stderr 各 32KB，日志存储总量 64KB | `test_runner.py` 2 项 + `test_container_spec.py` 1 项 |
 | F-12 | 生产环境仍依赖 `create_all` 自动建表 | `DB_AUTO_CREATE` 策略：开发默认建表，生产缺表拒绝启动并提示 Alembic；迁移测试补齐 | `test_db_init.py` 5 项 |
+
+#### 第三轮审查（P1）修复
+
+| 编号 | 问题 | 修复 | 回归测试 |
+|---|---|---|---|
+| F-13 | 管理器任务队列无上限，可被大量阻塞线程打满 | 固定线程池 + `max_pending`（默认 4×并发），超限 `queue_full`；拒绝请求不建任务/容器 | `test_jobs.py` 4 项、`test_server.py` 1 项 |
+| F-14 | 后端允许明文 HTTP 访问管理器，mTLS 配置可缺失 | 非回环强制 HTTPS；回环 HTTP 需显式开发开关；证书/私钥必须成对；启动校验 | `test_sandbox_client.py` 13 项 |
+| F-15 | 内部错误信息会返回给学生 | 管理器固定安全文案 + 内部日志；学生接口固定文案，教师经权限检查看详情 | `test_server.py` 1 项、`test_code_sandbox.py` 1 项 |
+| F-16 | `/dev/shm` 默认 64MB 绕过磁盘预算 | 显式 8MB 并在 `HostConfig.ShmSize` 回查 | `test_container_spec.py` 3 项 |
+| F-17 | seccomp/AppArmor/CapAdd/Init 未回查实际配置 | 逐项比对 `SecurityOpt`、`CapAdd`、`Init`、`ShmSize`，不匹配删容器 | `test_container_spec.py` 4 项 |
+| F-18 | 同步轮询占用线程池 | `async def` + `httpx.AsyncClient` + 连接/读取超时与连接池上限；后端并发保护 429 | `test_code_sandbox.py` 4 项 |
+| F-19 | 异常路径可能留下永久 running 任务 | 畸形响应 / 异常 / 保存失败统一收口为安全终态并尽力取消 | `test_code_sandbox.py` 4 项 |
 
 ## 8. 历史记录（仅追溯，不代表当前状态）
 
@@ -324,6 +357,16 @@ python -m pytest -q sandbox_manager/tests
 - 输出改为流式读取并分通道限额（stdout/stderr 各 32KB，日志存储 64KB）。
 - 数据库初始化区分开发 / 生产：生产缺表拒绝启动，必须先 `alembic upgrade head`。
 - 后端测试 70 → **75**，管理器测试 71 → **80**。
+
+### 8.8 阶段 3-A 第三轮 P1 修复
+
+- 管理器队列上限（固定线程池 + `max_pending` + `queue_full`）。
+- 后端强制 HTTPS / 完整 mTLS；明文 HTTP 仅限显式本地开发回环。
+- 学生端错误信息在后端接口层脱敏；教师可查看内部诊断。
+- `/dev/shm` 固定 8MB；seccomp/AppArmor/CapAdd/Init 实际配置回查。
+- 代码执行接口改异步，增加连接池与并发保护，避免阻塞事件循环 / 请求堆积。
+- 异常路径统一收口，任务不会静默永久停在 `running`。
+- 后端测试 75 → **97**，管理器测试 80 → **93**；真实 Linux 实机验证仍未完成。
 
 ## 9. 本机环境限制（影响复现）
 

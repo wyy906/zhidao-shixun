@@ -121,6 +121,7 @@ class DockerRunner:
             output_bytes=self.config.output_bytes,
             input_bytes=self.config.input_bytes,
             max_concurrent=self.config.max_concurrent,
+            max_pending=self.config.effective_max_pending,
         )
 
     # ------------------------------------------------------------------
@@ -234,6 +235,8 @@ class DockerRunner:
                 self.limits(),
                 self.config.runtime,
                 self.config.image,
+                self.config.seccomp_profile,
+                self.config.apparmor_profile,
             )
         except RuntimeError as exc:
             try:

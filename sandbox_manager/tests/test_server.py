@@ -3,6 +3,7 @@
 验证：管理接口认证、输入校验、超时上限、任务状态流转、取消、重启后任务不存在
 （业务后端会把这种情况按“沙箱不可用”安全失败）。
 """
+import logging
 import time
 
 import pytest
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from sandbox_manager.config import ManagerConfig
 from sandbox_manager.container_spec import SandboxLimits
+from sandbox_manager.jobs import SAFE_JOB_FAILED_MESSAGE
 from sandbox_manager.runner import SandboxError
 from sandbox_manager.server import create_app
 
@@ -226,3 +228,64 @@ def test_startup_cleanup_success_enters_service():
     with TestClient(create_app(runner=runner, config=_config())) as client:
         assert runner.cleaned == 1
         assert client.get("/health", headers=HEADERS).status_code == 200
+
+
+# ===========================================================================
+# 队列上限
+# ===========================================================================
+class _CapacityRunner(FakeRunner):
+    def __init__(self):
+        super().__init__(block=True)
+
+    def limits(self):
+        return SandboxLimits(max_concurrent=1, max_pending=1)
+
+
+def test_queue_full_returns_stable_error():
+    runner = _CapacityRunner()
+    with TestClient(create_app(runner=runner, config=_config())) as client:
+        first = client.post("/v1/jobs", json={"code": "print(1)", "timeout": 1}, headers=HEADERS)
+        assert first.status_code == 202
+        end = time.monotonic() + 2
+        while not runner.calls and time.monotonic() < end:
+            time.sleep(0.02)
+        second = client.post("/v1/jobs", json={"code": "print(2)", "timeout": 1}, headers=HEADERS)
+        assert second.status_code == 202
+        third = client.post("/v1/jobs", json={"code": "print(3)", "timeout": 1}, headers=HEADERS)
+        assert third.status_code == 429
+        assert third.json()["detail"]["error"] == "queue_full"
+        # 收尾：取消所有任务，避免执行线程挂住
+        client.delete(f"/v1/jobs/{first.json()['job_id']}", headers=HEADERS)
+        client.delete(f"/v1/jobs/{second.json()['job_id']}", headers=HEADERS)
+
+
+# ===========================================================================
+# 内部错误脱敏
+# ===========================================================================
+class _LeakyRunner(FakeRunner):
+    def run_job(self, code, timeout, cancel_event=None, job_id=""):
+        raise SandboxError(
+            "container_error",
+            "docker inspect /srv/zd-sandbox/secrets.json failed, image "
+            "zd-sandbox-python@sha256:" + "d" * 64,
+        )
+
+
+def test_job_error_is_sanitized_but_logged(caplog):
+    runner = _LeakyRunner()
+    with caplog.at_level(logging.WARNING):
+        with TestClient(create_app(runner=runner, config=_config())) as client:
+            created = client.post(
+                "/v1/jobs", json={"code": "print(1)", "timeout": 1}, headers=HEADERS
+            )
+            body = _wait(client, created.json()["job_id"])
+
+    assert body["status"] == "failed"
+    assert body["error_code"] == "container_error"
+    assert body["error_message"] == SAFE_JOB_FAILED_MESSAGE
+    assert body["stderr"] == SAFE_JOB_FAILED_MESSAGE
+    text = str(body)
+    assert "/srv/zd-sandbox" not in text
+    assert "sha256:" not in text
+    # 内部细节只保留在受控服务端日志中，便于排错
+    assert "/srv/zd-sandbox" in caplog.text

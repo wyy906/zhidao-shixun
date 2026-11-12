@@ -167,7 +167,9 @@ python src\main.py
 | `AI_API_BASE_URL` / `AI_API_KEY` / `AI_VISION_MODEL` | OpenAI 兼容多模态接口；三项留空则只用关键词快路径 | 空 |
 | `CODE_EXECUTION_ENABLED` | 代码执行总开关；false 时 `/code/run` 一律 503 | true |
 | `SANDBOX_MANAGER_URL` / `SANDBOX_MANAGER_TOKEN` | 独立执行节点地址与管理令牌；留空则拒绝执行 | 空 |
-| `SANDBOX_MANAGER_CA_FILE` / `_CLIENT_CERT` / `_CLIENT_KEY` | 内网 TLS / 双向 TLS | 空 |
+| `SANDBOX_MANAGER_CA_FILE` / `_CLIENT_CERT` / `_CLIENT_KEY` | 内网 TLS / 双向 TLS（证书与私钥必须成对） | 空 |
+| `SANDBOX_ALLOW_INSECURE_HTTP` | 是否允许明文 HTTP 访问管理器（仅限本机回环开发，默认拒绝） | false |
+| `CODE_MAX_CONCURRENT_REQUESTS` / `CODE_MAX_CONCURRENT_PER_USER` | 代码执行全局 / 每用户并发上限，超限 429 | 8 / 1 |
 | `CODE_RUN_TIMEOUT_SECONDS` | 执行超时上限（学生不可提高） | 10 |
 | `CODE_MAX_INPUT_BYTES` / `CODE_MAX_OUTPUT_BYTES` | 代码输入 / 输出上限（字节） | 65536 |
 
@@ -248,8 +250,8 @@ npm run type-check  # 等价命令
 
 ### 9.3 测试现状
 
-- 后端：**75 项用例，全部通过**。
-- 沙箱管理器：**80 项单元测试，全部通过**（容器参数、镜像校验、TLS、启动清理、输出限额、生命周期，无 Docker 依赖）。
+- 后端：**97 项用例，全部通过**。
+- 沙箱管理器：**93 项单元测试，全部通过**（容器参数、镜像校验、TLS、启动清理、输出限额、队列上限、生命周期，无 Docker 依赖）。
 - 前端：`npm test`（vue-tsc）通过。
 - 代码执行的**真实容器隔离与 TLS 握手尚未在 Linux 节点验证**。
 - 详见 [TEST_REPORT.md](TEST_REPORT.md)。

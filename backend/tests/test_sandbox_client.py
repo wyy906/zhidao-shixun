@@ -1,0 +1,138 @@
+"""沙箱管理客户端传输安全测试（不访问网络）
+
+覆盖：
+  - 非回环 HTTP 被拒绝；回环 HTTP 仅在显式开发开关下允许；
+  - 客户端证书 / 私钥必须成对；
+  - 完整 mTLS 配置正确传递给 httpx；
+  - 畸形响应按安全失败处理；
+  - 启动配置校验。
+"""
+import httpx
+import pytest
+
+from app.services import sandbox_client
+from app.services.sandbox_client import (
+    SandboxBadResponse,
+    SandboxClient,
+    SandboxUnavailable,
+    ensure_sandbox_configuration,
+)
+
+BASE_HTTPS = "https://sandbox.internal:8443"
+
+
+def _client(**overrides) -> SandboxClient:
+    data = {
+        "base_url": BASE_HTTPS,
+        "token": "test-token",
+        "ca_file": "",
+        "client_cert": "",
+        "client_key": "",
+        "request_timeout": 5.0,
+        "allow_insecure_http": False,
+    }
+    data.update(overrides)
+    return SandboxClient(**data)
+
+
+def test_https_configuration_accepted():
+    client = _client()
+    client.validate_config()
+    kwargs = client._client_kwargs()
+    assert kwargs["verify"] is True  # 保留证书校验，绝不为 False
+    assert kwargs["cert"] is None
+
+
+def test_non_loopback_http_rejected():
+    client = _client(base_url="http://10.0.0.5:8443")
+    with pytest.raises(SandboxUnavailable, match="insecure"):
+        client.validate_config()
+
+
+def test_loopback_http_requires_explicit_dev_flag():
+    client = _client(base_url="http://127.0.0.1:8443")
+    with pytest.raises(SandboxUnavailable):
+        client.validate_config()
+
+    dev = _client(base_url="http://127.0.0.1:8443", allow_insecure_http=True)
+    dev.validate_config()
+
+    localhost = _client(base_url="http://localhost:8443", allow_insecure_http=True)
+    localhost.validate_config()
+
+
+def test_insecure_flag_does_not_allow_remote_hosts():
+    client = _client(base_url="http://192.168.1.9:8443", allow_insecure_http=True)
+    with pytest.raises(SandboxUnavailable):
+        client.validate_config()
+
+
+def test_half_mtls_configuration_rejected(tmp_path):
+    cert = tmp_path / "client.crt"
+    cert.write_text("dummy", encoding="utf-8")
+    with pytest.raises(SandboxUnavailable, match="together"):
+        _client(client_cert=str(cert)).validate_config()
+    with pytest.raises(SandboxUnavailable, match="together"):
+        _client(client_key=str(cert)).validate_config()
+
+
+def test_full_mtls_configuration_passed_to_http_client(tmp_path):
+    ca = tmp_path / "ca.crt"
+    cert = tmp_path / "client.crt"
+    key = tmp_path / "client.key"
+    for path in (ca, cert, key):
+        path.write_text("dummy", encoding="utf-8")
+
+    client = _client(ca_file=str(ca), client_cert=str(cert), client_key=str(key))
+    client.validate_config()
+    kwargs = client._client_kwargs()
+    assert kwargs["verify"] == str(ca)
+    assert kwargs["cert"] == (str(cert), str(key))
+
+
+def test_missing_certificate_file_rejected(tmp_path):
+    client = _client(ca_file=str(tmp_path / "missing-ca.crt"))
+    with pytest.raises(SandboxUnavailable, match="not found"):
+        client.validate_config()
+
+
+def test_unconfigured_client_is_allowed():
+    client = SandboxClient(base_url="", token="")
+    client.validate_config()  # 未启用执行节点时不阻断启动，接口返回 503
+
+
+def test_invalid_json_response_is_bad_response():
+    request = httpx.Request("GET", BASE_HTTPS + "/v1/jobs/x")
+    resp = httpx.Response(200, content=b"<html>not json</html>", request=request)
+    with pytest.raises(SandboxBadResponse):
+        SandboxClient._parse_response(resp, "GET", "/v1/jobs/x")
+
+
+def test_non_object_json_is_bad_response():
+    request = httpx.Request("GET", BASE_HTTPS + "/v1/jobs/x")
+    resp = httpx.Response(200, json=["not", "an", "object"], request=request)
+    with pytest.raises(SandboxBadResponse):
+        SandboxClient._parse_response(resp, "GET", "/v1/jobs/x")
+
+
+def test_error_status_does_not_echo_body():
+    request = httpx.Request("GET", BASE_HTTPS + "/v1/jobs/x")
+    resp = httpx.Response(
+        500, content=b'{"error": "/srv/zd/secrets"}', request=request
+    )
+    with pytest.raises(SandboxUnavailable) as exc:
+        SandboxClient._parse_response(resp, "GET", "/v1/jobs/x")
+    assert "/srv/zd" not in str(exc.value)
+
+
+def test_startup_validation_rejects_insecure_manager(monkeypatch):
+    bad = _client(base_url="http://10.0.0.5:8443")
+    monkeypatch.setattr(sandbox_client, "_client", bad)
+    with pytest.raises(SandboxUnavailable):
+        ensure_sandbox_configuration()
+
+
+def test_startup_validation_accepts_secure_manager(monkeypatch):
+    good = _client()
+    monkeypatch.setattr(sandbox_client, "_client", good)
+    ensure_sandbox_configuration()
