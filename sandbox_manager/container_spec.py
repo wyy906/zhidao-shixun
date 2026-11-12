@@ -29,14 +29,32 @@ class SandboxLimits:
     timeout_seconds: int = 10
     pids_limit: int = 32
     disk_mb: int = 16
+    # 标准输出 + 标准错误返回总量上限；两路各自再平分
     output_bytes: int = 65536
     input_bytes: int = 65536
     max_concurrent: int = 2
+
+    @property
+    def stdout_limit(self) -> int:
+        return self.output_bytes // 2
+
+    @property
+    def stderr_limit(self) -> int:
+        return self.output_bytes - self.stdout_limit
 
 
 def _log_max_size(output_bytes: int) -> str:
     # Docker 日志轮转上限：容器输出超过上限时由 Docker 截断，避免写满宿主机磁盘
     return f"{max(1, output_bytes // 1024)}k"
+
+
+def _labels(instance_id: str, job_id: str) -> dict:
+    labels = {"zd.sandbox": "1"}
+    if instance_id:
+        labels["zd.sandbox.instance"] = instance_id
+    if job_id:
+        labels["zd.sandbox.job"] = job_id
+    return labels
 
 
 def _tmpfs_sizes(disk_mb: int) -> tuple[int, int]:
@@ -53,6 +71,8 @@ def build_container_kwargs(
     runtime: str = "",
     seccomp_profile: str = "",
     apparmor_profile: str = "",
+    instance_id: str = "",
+    job_id: str = "",
 ) -> dict:
     """构造 docker-py `containers.create(**kwargs)` 的参数"""
     tmp_mb, work_mb = _tmpfs_sizes(limits.disk_mb)
@@ -103,7 +123,8 @@ def build_container_kwargs(
         # ===== 生命周期：由管理器显式回收 =====
         "detach": True,
         "auto_remove": False,
-        "labels": {"zd.sandbox": "1"},
+        # 标签用于精确识别“本管理器实例”的遗留容器，避免误删其他实例/服务
+        "labels": _labels(instance_id, job_id),
     }
     if runtime:
         kwargs["runtime"] = runtime

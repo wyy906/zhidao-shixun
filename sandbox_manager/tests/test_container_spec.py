@@ -95,6 +95,25 @@ def test_seccomp_apparmor_and_runtime_are_opt_in():
     assert kw["runtime"] == "runsc"
 
 
+def test_output_limits_split_between_stdout_and_stderr():
+    limits = SandboxLimits()
+    assert limits.stdout_limit > 0
+    assert limits.stderr_limit > 0
+    assert limits.stdout_limit + limits.stderr_limit == limits.output_bytes
+
+
+def test_labels_identify_instance_and_job():
+    kw = build_container_kwargs(
+        IMAGE, "print(1)", SandboxLimits(),
+        instance_id="node-a", job_id="job-1",
+    )
+    assert kw["labels"] == {
+        "zd.sandbox": "1",
+        "zd.sandbox.instance": "node-a",
+        "zd.sandbox.job": "job-1",
+    }
+
+
 def test_no_auto_remove_so_exit_code_can_be_read():
     kw = _kwargs()
     assert kw["auto_remove"] is False

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
 
     # 数据库
     database_url: str = "sqlite:///./zd_shixun.db"
+    # 启动时是否自动建表：
+    #   None  → 仅 development 自动建表（默认，保持现有开发体验）
+    #   true  → 显式允许自动建表（仅建议本地开发）
+    #   false → 生产模式，必须先用 `alembic upgrade head` 完成迁移
+    db_auto_create: bool | None = None
 
     # 首次启动引导（数据库为空时创建的唯一管理员账号，不是演示数据）
     admin_username: str = "admin"

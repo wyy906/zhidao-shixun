@@ -25,14 +25,6 @@ class SandboxError(RuntimeError):
         self.code = code
 
 
-def _truncate(data: bytes, limit: int) -> str:
-    text = (data or b"").decode("utf-8", "replace")
-    raw = text.encode("utf-8")
-    if len(raw) <= limit:
-        return text
-    return raw[:limit].decode("utf-8", "ignore") + "\n…（输出过长，已截断）"
-
-
 class DockerRunner:
     def __init__(self, config: ManagerConfig):
         self.config = config
@@ -108,6 +100,7 @@ class DockerRunner:
             "image": image_ref,
             "image_id": image.id,
             "image_verification": verification,
+            "instance_id": self.config.instance_id,
             "runtime": runtime,
             "cpu_cores": self.config.cpu_cores,
             "memory_mb": self.config.memory_mb,
@@ -134,14 +127,22 @@ class DockerRunner:
     # 残留容器清理（管理器重启 / 异常退出后）
     # ------------------------------------------------------------------
     def cleanup_stale_containers(self) -> int:
-        """删除所有带 zd.sandbox=1 标签的容器
+        """删除**本管理器实例**遗留的容器
 
-        管理器启动时调用：内存中的 JobStore 为空，因此这些容器一定是上次进程
-        异常退出后遗留的，直接强制删除（含运行中的容器及其子进程）。
+        只匹配 `zd.sandbox=1` + `zd.sandbox.instance=<本实例>` 两个标签，
+        因此同一节点上其他实例或其他服务的容器不会被误删。
+        单节点推荐单实例运行；多实例部署必须为每个实例配置不同的
+        `ZD_SANDBOX_INSTANCE_ID`。
         """
         client = self._docker()
+        filters = {
+            "label": [
+                "zd.sandbox=1",
+                f"zd.sandbox.instance={self.config.instance_id}",
+            ]
+        }
         try:
-            containers = client.containers.list(all=True, filters={"label": "zd.sandbox=1"})
+            containers = client.containers.list(all=True, filters=filters)
         except Exception as exc:
             raise SandboxError("cleanup_failed", str(exc)) from exc
 
@@ -167,14 +168,50 @@ class DockerRunner:
         except Exception:  # 容器可能已自然退出
             pass
 
-    def _logs(self, container, stdout: bool) -> str:
+    def _logs(self, container, stdout: bool, limit: int) -> str:
+        """按字节上限流式读取日志
+
+        Docker json-file 日志本身有轮转上限；这里再以流式方式读取，
+        达到上限立即停止并关闭流，避免先把无限量日志读进内存再截断。
+        """
+        chunks: list[bytes] = []
+        total = 0
+        truncated = False
+        stream = None
         try:
-            data = container.logs(stdout=stdout, stderr=not stdout, timestamps=False)
+            stream = container.logs(stream=True, stdout=stdout, stderr=not stdout)
+            for chunk in stream:
+                if not chunk:
+                    continue
+                remaining = limit - total
+                if len(chunk) >= remaining:
+                    chunks.append(chunk[:remaining])
+                    total = limit
+                    truncated = True
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
         except Exception:
             return ""
-        return _truncate(data, self.config.output_bytes)
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        text = b"".join(chunks).decode("utf-8", "replace")
+        if truncated:
+            return text + "\n…（输出过长，已截断）"
+        return text
 
-    def run_job(self, code: str, timeout: int, cancel_event: threading.Event | None = None) -> dict:
+    def run_job(
+        self,
+        code: str,
+        timeout: int,
+        cancel_event: threading.Event | None = None,
+        job_id: str = "",
+    ) -> dict:
         """运行一次任务并返回状态字典；任务结束后容器必定被回收"""
         self.check_ready()
         client = self._docker()
@@ -185,6 +222,8 @@ class DockerRunner:
             runtime=self.config.runtime,
             seccomp_profile=self.config.seccomp_profile,
             apparmor_profile=self.config.apparmor_profile,
+            instance_id=self.config.instance_id,
+            job_id=job_id,
         )
         container = client.containers.create(**kwargs)
 
@@ -233,8 +272,8 @@ class DockerRunner:
             state = container.attrs.get("State", {})
             exit_code = state.get("ExitCode")
             oom_killed = bool(state.get("OOMKilled"))
-            stdout = self._logs(container, stdout=True)
-            stderr = self._logs(container, stdout=False)
+            stdout = self._logs(container, stdout=True, limit=self.limits().stdout_limit)
+            stderr = self._logs(container, stdout=False, limit=self.limits().stderr_limit)
             duration_ms = int((time.monotonic() - started) * 1000)
         except SandboxError:
             raise

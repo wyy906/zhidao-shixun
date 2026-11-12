@@ -123,6 +123,9 @@ ZD_SANDBOX_IMAGE=zd-sandbox-python@sha256:<64位digest>
 # 监听：同机反代可保持 127.0.0.1；跨机调用需 0.0.0.0 + TLS
 ZD_SANDBOX_HOST=127.0.0.1
 ZD_SANDBOX_PORT=8443
+# 实例标识：用于容器标签与重启清理。单节点推荐单实例；
+# 多实例必须显式设置且互不相同（默认取主机名）。
+ZD_SANDBOX_INSTANCE_ID=zd-sandbox-01
 
 # 资源限制（管理员配置，学生不可修改）
 ZD_SANDBOX_CPU=0.5
@@ -239,7 +242,7 @@ curl -s -H "X-Sandbox-Token: $ZD_SANDBOX_TOKEN" https://127.0.0.1:8443/health | 
 | 内存 | `mem_limit=128m`，`memswap_limit=128m`（禁用 swap） |
 | 进程数 | `pids_limit=32`（限制 fork bomb） |
 | 初始化 | `init=true`（回收僵尸进程） |
-| 输出 | Docker json-file 日志轮转 `max-size=64k, max-file=1` + 应用层截断 |
+| 输出 | Docker json-file 日志轮转 `max-size=64k, max-file=1`（总存储 64KB）；返回时流式读取，stdout / stderr 各 32KB 上限，达到上限立即停止读取 |
 | 生命周期 | 任务结束（成功/超时/取消/异常）一律 `remove(force=True)`，含全部子进程 |
 | 启动自检 | 创建后回查 `Config` / `HostConfig`：运行用户、tmpfs 容量与 `noexec/nosuid/nodev`、日志驱动与轮转上限、端口映射、设备与挂载、CPU/内存/进程数、运行时、镜像；任一不符立即删除容器并拒绝执行 |
 | 残留清理 | 管理器启动时删除所有带 `zd.sandbox=1` 标签的容器（上次异常退出遗留） |
@@ -293,9 +296,13 @@ journalctl -u zd-sandbox -f
 ## 12. 容器与临时文件清理
 
 - 正常路径：管理器在任务结束后强制删除容器与 tmpfs。
-- 管理器重启 / 异常退出：启动时自动扫描并删除所有 `zd.sandbox=1` 标签容器
-  （失败只记录日志，`/health` 会暴露 Docker 不可用）。
-- 手动兜底：
+- 管理器重启 / 异常退出：启动时扫描并删除**本实例**遗留容器，过滤条件为
+  `zd.sandbox=1` + `zd.sandbox.instance=<ZD_SANDBOX_INSTANCE_ID>`；
+  其他实例、无实例标签的旧容器、其他服务的容器不会被误删。
+- **清理失败会阻断启动**：Docker 不可用或容器删除失败时，管理器进程启动失败
+  （`sandbox startup cleanup failed: <error_code>`），不会带着未知残留容器继续服务。
+- 单节点推荐单实例运行；多实例部署必须为每个实例配置不同 `ZD_SANDBOX_INSTANCE_ID`。
+- 旧版本（仅 `zd.sandbox=1` 标签）的残留容器需手动清理：
 
 ```bash
 docker ps -a --filter label=zd.sandbox=1 -q | xargs -r docker rm -f
@@ -336,16 +343,21 @@ docker ps -a --filter label=zd.sandbox=1 -q | xargs -r docker rm -f
 - Docker 默认 seccomp profile 由 Docker 提供；自定义 profile 需自行维护。
 - 首版镜像只含标准库，第三方库需管理员重新构建镜像。
 
-## 16. 数据库迁移（`code_tasks`）
+## 16. 数据库初始化（开发 / 生产）
 
-`code_tasks` 已有正式 Alembic 迁移：
+| 环境 | 策略 |
+|---|---|
+| 开发（`APP_ENV=development`，`DB_AUTO_CREATE` 未设置） | 启动时 `create_all` 自动建表 |
+| 生产（`APP_ENV=production` 或 `DB_AUTO_CREATE=false`） | **不自动建表**；缺表则拒绝启动并提示 `alembic upgrade head` |
+| 显式 `DB_AUTO_CREATE=true` | 允许自动建表（仅建议本地开发） |
+
+生产部署顺序：
 
 ```bash
 cd backend
-alembic upgrade head      # 建表（若 create_all 已建则幂等跳过）
-alembic downgrade -1      # 回滚
+alembic upgrade head      # 必须成功
+uvicorn app.main:app ...  # 缺表会直接启动失败
 ```
 
-- 迁移文件：`backend/alembic/versions/20261112_0001_add_code_tasks.py`。
-- 应用启动仍使用 `create_all`；迁移用于纳入正式迁移链，两者并存期间以幂等判断避免冲突。
-- 后续应补首个基线 revision，逐步结束 `create_all` 与迁移双轨。
+`code_tasks` 迁移文件：`backend/alembic/versions/20261112_0001_add_code_tasks.py`
+（幂等：`create_all` 已建表时跳过；`downgrade` 可回滚）。

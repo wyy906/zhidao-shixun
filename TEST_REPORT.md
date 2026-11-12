@@ -12,8 +12,8 @@
 | 日期 | 2026-11-12 |
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
-| 后端测试 | **70 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **71 项，全部通过**（`sandbox_manager/tests/`） |
+| 后端测试 | **75 项，全部通过**（`backend/tests/`） |
+| 沙箱管理器测试 | **80 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -22,9 +22,9 @@
 
 ## 2. 结论摘要
 
-1. 后端 70 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、`code_tasks` 迁移。
-2. 沙箱管理器 71 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
-   生产 HTTPS / 双向 TLS 启动约束、管理接口认证、输入校验、超时上限、取消与重启语义。
+1. 后端 75 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移。
+2. 沙箱管理器 80 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+   生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额与生命周期。
 3. 学生代码**已不在业务后端进程内执行**，也不再作为本机 subprocess 运行；沙箱不可用时一律 503，不存在降级路径。
 4. 测试在**无网络、无真实 AI Key、无真实数据库、无真实 `.env`、无 Docker** 的条件下可重复运行。
 5. 测试过程中发现 8 个问题：**2 个已修复**，**6 个待负责人决策**；1 项（桌面端 GUI）**尚未验证**。
@@ -47,7 +47,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（70 项 + 71 项）
+## 4. 后端自动化测试（75 项 + 80 项）
 
 ### 4.1 用例分布
 
@@ -60,24 +60,25 @@
 | `tests/test_config_isolation.py` | 4 | 4 | 0 |
 | `tests/test_code_sandbox.py` | 16 | 16 | 0 |
 | `tests/test_migration_code_tasks.py` | 1 | 1 | 0 |
-| **backend 合计** | **70** | **70** | **0** |
-| `sandbox_manager/tests/test_container_spec.py` | 30 | 30 | 0 |
-| `sandbox_manager/tests/test_server.py` | 14 | 14 | 0 |
+| `tests/test_db_init.py` | 5 | 5 | 0 |
+| **backend 合计** | **75** | **75** | **0** |
+| `sandbox_manager/tests/test_container_spec.py` | 32 | 32 | 0 |
+| `sandbox_manager/tests/test_server.py` | 17 | 17 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
-| `sandbox_manager/tests/test_runner.py` | 13 | 13 | 0 |
-| **管理器合计** | **71** | **71** | **0** |
+| `sandbox_manager/tests/test_runner.py` | 17 | 17 | 0 |
+| **管理器合计** | **80** | **80** | **0** |
 
 ### 4.2 实际执行结果
 
 ```
 # backend
 python -m pytest -q
-70 passed, 297 warnings in 47.53s
+75 passed, 297 warnings in 47.26s
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-71 passed, 1 warning in 0.99s
+80 passed, 1 warning in 1.00s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -121,6 +122,15 @@ python -m pytest -q sandbox_manager/tests
   回环地址，不存在失败后自动降级。
 - **容器生命周期**（FakeDocker）：成功 / 超时 / 取消 / 启动失败 / 安全参数不符 / 清理失败，
   都会删除容器；管理器启动时清理带 `zd.sandbox=1` 标签的残留容器。
+- **启动清理阻断**：清理时 Docker 不可用或容器删除失败 → 启动直接失败（抛 `RuntimeError`），
+  不会进入可服务状态；清理成功才允许 `/health` 与任务接口可用。
+- **清理范围隔离**：容器打 `zd.sandbox.instance=<实例>` 与 `zd.sandbox.job=<job>` 标签；
+  启动清理只删除本实例遗留容器，其他实例 / 无实例标签 / 其他服务的容器不会被删除。
+- **输出限制**：Docker json-file 日志总存储上限 64KB（`max-size=64k`、`max-file=1`）；
+  返回时按流读取，stdout / stderr 各自上限 32KB，达到上限立即停止读取并关闭流，
+  不做“先读完无限日志再截断”。
+- **数据库初始化**：开发环境默认 `create_all`；生产环境（或 `DB_AUTO_CREATE=false`）
+  缺少表时拒绝启动并提示 `alembic upgrade head`；迁移补齐 `code_tasks` 后可通过检查。
 
 ## 5. 数据库与配置隔离验证（实测输出）
 
@@ -187,6 +197,9 @@ python -m pytest -q sandbox_manager/tests
 | S-04 | 生产 TLS / 双向 TLS 真实握手 | 仅验证配置校验与 uvicorn 参数，未在真实证书链下握手 |
 | S-05 | 管理器重启后残留容器的真实清理 | FakeDocker 已覆盖逻辑，未在真实 Docker 节点验证 |
 | S-06 | 创建后回查 HostConfig 在真实运行时的结果 | 单元测试覆盖判定逻辑，未在真实 Docker 上确认字段取值 |
+| S-07 | 启动清理失败在真实 Docker 下的阻断效果 | FakeDocker 验证抛错，未在真实节点停止 Docker 验证 |
+| S-08 | 多实例清理隔离 | 标签过滤逻辑已测，未在真实多实例节点验证 |
+| S-09 | 日志轮转与流式读取的真实字节上限 | 单元测试使用假日志流，未在真实 Docker json-file 驱动下验证 |
 
 ### 7.4 阶段 3-A 的用户可见行为变化（已记录，非缺陷）
 
@@ -210,6 +223,10 @@ python -m pytest -q sandbox_manager/tests
 | CPU/内存/进程/磁盘/输出限制 | 是 | 参数级 | **未验证** |
 | 超时终止整个容器 | 是 | 状态映射 | **未验证** |
 | 任务结束清理容器 | 是 | 是（FakeDocker） | **未验证** |
+| 启动清理失败阻断服务 | 是 | 是（FakeDocker） | **未验证** |
+| 清理只作用于本实例 | 是 | 是（标签过滤） | **未验证** |
+| 输出流式限额 | 是 | 是（假日志流） | **未验证** |
+| 生产库必须迁移而非 create_all | 是 | 是（临时 SQLite + Alembic） | **未验证**（真实库升级） |
 | 启动清理残留容器 | 是 | 是（FakeDocker） | **未验证** |
 | 镜像 digest 校验 | 是 | 是 | **未验证**（真实 daemon 字段） |
 | 生产强制 HTTPS / mTLS | 是 | 是（配置与启动参数） | **未验证**（真实握手） |
@@ -228,6 +245,15 @@ python -m pytest -q sandbox_manager/tests
 | F-06 | 学生可传额外字段（被静默忽略） | 业务端与管理器请求模型 `extra="forbid"`，返回 422 | 后端 + 管理器各 1 项 |
 | F-07 | 取消/超时/启动失败清理未被测试覆盖 | FakeDocker 覆盖全部路径与启动清理 | `test_runner.py` 13 项 |
 | F-08 | 错误响应可能泄露内部信息 | 管理器错误仅返回错误码；断言响应不含令牌/路径 | `test_server.py` |
+
+#### 第二轮审查补充修复
+
+| 编号 | 问题 | 修复 | 回归测试 |
+|---|---|---|---|
+| F-09 | 启动清理失败仅告警，仍继续服务 | 清理失败直接抛 `RuntimeError`，进程启动失败，绝不进入可服务状态 | `test_server.py` 3 项 |
+| F-10 | 清理仅按 `zd.sandbox=1`，可能误删其他实例容器 | 增加 `zd.sandbox.instance`（及 `zd.sandbox.job`）标签，清理只匹配本实例；明确单实例/多实例策略 | `test_runner.py` 2 项 + `test_container_spec.py` 1 项 |
+| F-11 | 日志整块读取后再截断，双通道未分别限额 | 日志按流读取，达到上限停止；stdout/stderr 各 32KB，日志存储总量 64KB | `test_runner.py` 2 项 + `test_container_spec.py` 1 项 |
+| F-12 | 生产环境仍依赖 `create_all` 自动建表 | `DB_AUTO_CREATE` 策略：开发默认建表，生产缺表拒绝启动并提示 Alembic；迁移测试补齐 | `test_db_init.py` 5 项 |
 
 ## 8. 历史记录（仅追溯，不代表当前状态）
 
@@ -278,7 +304,7 @@ python -m pytest -q sandbox_manager/tests
 - `POST /code/run` 保留原请求/响应字段，内部改为转发独立沙箱管理器。
 - 新增 `sandbox_manager/`（Linux 执行节点）：Docker 一次性容器、全量安全参数、
   管理令牌认证、并发上限、任务状态与取消、`verify_isolation.py` 实机验证脚本。
-- 新增 16 项后端沙箱接口测试 + 71 项管理器单元测试，总数由 53 增至 **70（后端）**。
+- 新增 16 项后端沙箱接口测试 + 80 项管理器单元测试，总数由 53 增至 **75（后端）**。
 - **本机没有 Linux 执行节点与 Docker，因此没有任何“真实隔离已验证”的结论。**
 
 ### 8.6 阶段 3-A 安全审查修复
@@ -290,6 +316,14 @@ python -m pytest -q sandbox_manager/tests
 - 增加启动时残留容器清理；取消/超时/启动失败清理均有测试。
 - 新增 `code_tasks` Alembic 迁移；请求模型禁止额外字段；错误响应不回显令牌或路径。
 - 后端测试 67 → **70**，管理器测试 35 → **71**。
+
+### 8.7 阶段 3-A 第二轮审查补充
+
+- 启动清理失败 → 服务拒绝启动（不再降级继续服务）。
+- 清理范围收紧到本实例标签（instance + job），避免误删其他实例容器。
+- 输出改为流式读取并分通道限额（stdout/stderr 各 32KB，日志存储 64KB）。
+- 数据库初始化区分开发 / 生产：生产缺表拒绝启动，必须先 `alembic upgrade head`。
+- 后端测试 70 → **75**，管理器测试 71 → **80**。
 
 ## 9. 本机环境限制（影响复现）
 

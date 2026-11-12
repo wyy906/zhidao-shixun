@@ -78,7 +78,9 @@ class JobStore:
             with self._lock:
                 job["status"] = "running"
             try:
-                result = self._runner.run_job(code, timeout, job["cancel_event"])
+                result = self._runner.run_job(
+                    code, timeout, job["cancel_event"], job["job_id"]
+                )
             except SandboxError as exc:
                 logger.warning("沙箱任务失败 %s: %s", job["job_id"], exc.code)
                 self._finish(job, {

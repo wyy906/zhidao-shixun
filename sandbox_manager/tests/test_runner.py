@@ -47,15 +47,22 @@ def _valid_attrs() -> dict:
 
 class FakeContainer:
     def __init__(self, attrs=None, start_error=None, never_stop=False,
-                 remove_error=None, exit_code=0, oom=False):
+                 remove_error=None, exit_code=0, oom=False,
+                 stdout_bytes=b"hello\n", stderr_bytes=b"", labels=None):
         self._attrs = attrs or _valid_attrs()
         self.start_error = start_error
         self.never_stop = never_stop
         self.remove_error = remove_error
         self._exit_code = exit_code
         self._oom = oom
+        self.stdout_bytes = stdout_bytes
+        self.stderr_bytes = stderr_bytes
+        self.labels = labels if labels is not None else {
+            "zd.sandbox": "1", "zd.sandbox.instance": "node-a",
+        }
         self.removed = False
         self.killed = False
+        self.streamed = False
 
     @property
     def attrs(self):
@@ -78,8 +85,12 @@ class FakeContainer:
         self.killed = True
         self._attrs["State"] = {"Running": False, "ExitCode": 137, "OOMKilled": False}
 
-    def logs(self, stdout=True, stderr=False, timestamps=False):
-        return b"hello\n" if stdout else b""
+    def logs(self, stdout=True, stderr=False, timestamps=False, stream=False, tail=None):
+        data = self.stdout_bytes if stdout else self.stderr_bytes
+        if stream:
+            self.streamed = True
+            return iter([data])
+        return data
 
     def remove(self, force=False):
         if self.remove_error:
@@ -99,6 +110,7 @@ class FakeDocker:
         self.image = image or FakeImage()
         self.listed = listed or []
         self.created_kwargs = None
+        self.last_filters = None
         self.containers = types.SimpleNamespace(
             create=self._create, list=self._list_containers,
         )
@@ -115,11 +127,25 @@ class FakeDocker:
         return self.container
 
     def _list_containers(self, all=True, filters=None):
-        return self.listed
+        """模拟 Docker 标签过滤，确保清理不会碰到其他实例的容器"""
+        import builtins
+
+        self.last_filters = filters
+        labels = (filters or {}).get("label") or []
+        if isinstance(labels, str):
+            labels = [labels]
+        expected = [str(item).split("=", 1) for item in labels]
+        return [
+            c for c in self.listed
+            if builtins.all(c.labels.get(k) == v for k, v in expected)
+        ]
 
 
 def _runner(fake: FakeDocker) -> DockerRunner:
-    cfg = ManagerConfig(token="test-token", image=IMAGE_REF, allow_insecure_http=True)
+    cfg = ManagerConfig(
+        token="test-token", image=IMAGE_REF, allow_insecure_http=True,
+        instance_id="node-a",
+    )
     runner = DockerRunner(cfg)
     runner._client = fake
     return runner
@@ -241,3 +267,61 @@ def test_check_ready_rejects_replaced_registry_image():
     with pytest.raises(SandboxError) as exc:
         runner.check_ready()
     assert exc.value.code == "image_digest_mismatch"
+
+
+# ===========================================================================
+# 输出限制：流式读取 + 双通道分别限额
+# ===========================================================================
+def test_stdout_and_stderr_are_collected_separately():
+    container = FakeContainer(stdout_bytes=b"out\n", stderr_bytes=b"err\n")
+    result = _runner(FakeDocker(container)).run_job("print(1)", timeout=1)
+    assert result["stdout"] == "out\n"
+    assert result["stderr"] == "err\n"
+
+
+def test_logs_streamed_and_capped_per_channel():
+    container = FakeContainer(
+        stdout_bytes=b"A" * 200_000,
+        stderr_bytes=b"B" * 200_000,
+    )
+    result = _runner(FakeDocker(container)).run_job("print(1)", timeout=1)
+    limits = SandboxLimits()
+
+    assert container.streamed is True  # 不是先整块读完再截断
+    stdout_bytes = len(result["stdout"].encode("utf-8"))
+    stderr_bytes = len(result["stderr"].encode("utf-8"))
+    assert stdout_bytes <= limits.stdout_limit + 100
+    assert stderr_bytes <= limits.stderr_limit + 100
+    assert stdout_bytes + stderr_bytes <= limits.output_bytes + 200
+    assert "已截断" in result["stdout"]
+    assert "已截断" in result["stderr"]
+
+
+# ===========================================================================
+# 清理范围：只删本实例的容器
+# ===========================================================================
+def test_cleanup_only_removes_same_instance():
+    own = FakeContainer(labels={"zd.sandbox": "1", "zd.sandbox.instance": "node-a"})
+    other = FakeContainer(labels={"zd.sandbox": "1", "zd.sandbox.instance": "node-b"})
+    legacy = FakeContainer(labels={"zd.sandbox": "1"})
+    foreign = FakeContainer(labels={"other.service": "1"})
+    fake = FakeDocker(listed=[own, other, legacy, foreign])
+    runner = _runner(fake)
+
+    assert runner.cleanup_stale_containers() == 1
+    assert own.removed is True
+    assert other.removed is False
+    assert legacy.removed is False
+    assert foreign.removed is False
+    assert fake.last_filters == {
+        "label": ["zd.sandbox=1", "zd.sandbox.instance=node-a"],
+    }
+
+
+def test_container_labels_include_instance_and_job():
+    fake = FakeDocker()
+    _runner(fake).run_job("print(1)", timeout=1, job_id="job-123")
+    labels = fake.created_kwargs["labels"]
+    assert labels["zd.sandbox"] == "1"
+    assert labels["zd.sandbox.instance"] == "node-a"
+    assert labels["zd.sandbox.job"] == "job-123"

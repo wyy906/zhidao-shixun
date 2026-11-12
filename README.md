@@ -163,6 +163,7 @@ python src\main.py
 | `JWT_SECRET_KEY` | JWT 签名密钥，**生产必须替换** | 占位值 |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | token 有效期（分钟） | 1440 |
 | `ALLOW_PUBLIC_REGISTER` | 是否开放公开注册 | false |
+| `DB_AUTO_CREATE` | 启动建表策略；未设置时仅 development 自动建表，生产需先 `alembic upgrade head` | 未设置 |
 | `AI_API_BASE_URL` / `AI_API_KEY` / `AI_VISION_MODEL` | OpenAI 兼容多模态接口；三项留空则只用关键词快路径 | 空 |
 | `CODE_EXECUTION_ENABLED` | 代码执行总开关；false 时 `/code/run` 一律 503 | true |
 | `SANDBOX_MANAGER_URL` / `SANDBOX_MANAGER_TOKEN` | 独立执行节点地址与管理令牌；留空则拒绝执行 | 空 |
@@ -247,8 +248,8 @@ npm run type-check  # 等价命令
 
 ### 9.3 测试现状
 
-- 后端：**70 项用例，全部通过**。
-- 沙箱管理器：**71 项单元测试，全部通过**（容器参数、镜像校验、TLS 配置、生命周期，无 Docker 依赖）。
+- 后端：**75 项用例，全部通过**。
+- 沙箱管理器：**80 项单元测试，全部通过**（容器参数、镜像校验、TLS、启动清理、输出限额、生命周期，无 Docker 依赖）。
 - 前端：`npm test`（vue-tsc）通过。
 - 代码执行的**真实容器隔离与 TLS 握手尚未在 Linux 节点验证**。
 - 详见 [TEST_REPORT.md](TEST_REPORT.md)。

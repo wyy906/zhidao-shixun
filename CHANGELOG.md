@@ -1,5 +1,29 @@
 # 更新记录
 
+## 2026-11-12 — 阶段 3-A 第二轮审查补充修复
+
+### 修复
+
+- **启动清理失败阻断服务**：`sandbox_manager/server.py` 的 lifespan 在
+  `cleanup_stale_containers()` 失败时抛 `RuntimeError`，进程拒绝启动，
+  不会带着未知残留容器继续接受任务。
+- **清理范围收紧**：容器增加 `zd.sandbox.instance` 与 `zd.sandbox.job` 标签；
+  启动清理只删除本实例遗留容器，其他实例 / 无实例标签 / 其他服务的容器不会被误删。
+  单节点推荐单实例；多实例必须配置不同 `ZD_SANDBOX_INSTANCE_ID`。
+- **输出限制完善**：日志改为流式读取，达到上限立即停止并关闭流；
+  stdout / stderr 各自上限 32KB，Docker 日志存储总量 64KB（`max-size=64k, max-file=1`），
+  不再先读取无限量日志再截断。
+- **数据库初始化方案**：新增 `DB_AUTO_CREATE` 策略。开发环境默认 `create_all`；
+  生产环境（或 `DB_AUTO_CREATE=false`）缺表时拒绝启动并提示 `alembic upgrade head`，
+  不再依赖 `create_all` 替代正式迁移。
+
+### 测试
+
+- 后端 pytest：70 → **75 项**（新增数据库初始化 5 项）。
+- 沙箱管理器：71 → **80 项**（新增启动阻断、清理范围、输出限额等）。
+- 前端 `npm test`：通过。
+- 真实 Linux 节点验证（Docker 清理、日志轮转、TLS、隔离）**仍未执行**，不得视为已验收。
+
 ## 2026-11-12 — 阶段 3-A 安全审查问题修复
 
 ### 修复

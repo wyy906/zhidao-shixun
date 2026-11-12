@@ -36,7 +36,7 @@ class FakeRunner:
     def limits(self):
         return SandboxLimits(max_concurrent=2)
 
-    def run_job(self, code, timeout, cancel_event=None):
+    def run_job(self, code, timeout, cancel_event=None, job_id=""):
         self.calls.append((code, timeout))
         if self.block:
             while not cancel_event.is_set():
@@ -187,3 +187,42 @@ def test_configuration_rejects_unpinned_image():
         ManagerConfig(token=TOKEN, image="python:3.12-slim").validate()
     with pytest.raises(ValueError):
         ManagerConfig(token="", image=IMAGE).validate()
+
+
+# ===========================================================================
+# 启动清理失败必须阻断服务
+# ===========================================================================
+class _CleanupRunner(FakeRunner):
+    def __init__(self, error: SandboxError | None = None):
+        super().__init__()
+        self.error = error
+        self.cleaned = 0
+
+    def cleanup_stale_containers(self):
+        if self.error:
+            raise self.error
+        self.cleaned += 1
+        return 0
+
+
+def test_startup_cleanup_failure_blocks_service():
+    runner = _CleanupRunner(SandboxError("docker_unavailable"))
+    app = create_app(runner=runner, config=_config())
+    with pytest.raises(RuntimeError, match="cleanup"):
+        with TestClient(app):
+            pass
+
+
+def test_startup_cleanup_delete_failure_blocks_service():
+    runner = _CleanupRunner(SandboxError("cleanup_failed"))
+    app = create_app(runner=runner, config=_config())
+    with pytest.raises(RuntimeError, match="cleanup"):
+        with TestClient(app):
+            pass
+
+
+def test_startup_cleanup_success_enters_service():
+    runner = _CleanupRunner()
+    with TestClient(create_app(runner=runner, config=_config())) as client:
+        assert runner.cleaned == 1
+        assert client.get("/health", headers=HEADERS).status_code == 200

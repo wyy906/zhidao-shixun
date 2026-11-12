@@ -50,11 +50,58 @@ def _fail_interrupted_tasks(db) -> int:
     return len(interrupted)
 
 
+# 启动时必须存在的表（迁移后应全部就绪）
+REQUIRED_TABLES = frozenset({
+    "users",
+    "experiments",
+    "experiment_steps",
+    "experiment_progress",
+    "operation_records",
+    "experiment_reports",
+    "code_tasks",
+})
+
+
+def _auto_create_enabled() -> bool:
+    """解析建表策略：未显式配置时，仅 development 自动建表"""
+    if settings.db_auto_create is None:
+        return settings.app_env == "development"
+    return bool(settings.db_auto_create)
+
+
+def initialize_database(bind=None, auto_create: bool | None = None) -> None:
+    """初始化数据库结构
+
+    - 开发环境（默认）：`create_all` 自动建表，保持原有体验；
+    - 生产环境：**不**自动建表，缺少表时拒绝启动并提示执行 `alembic upgrade head`。
+      这样避免 create_all 长期替代正式迁移。
+    """
+    bind = engine if bind is None else bind
+    if auto_create is None:
+        auto_create = _auto_create_enabled()
+
+    # 确保所有 ORM 模型已注册到 Base.metadata（create_all 与迁移检查都依赖它）
+    from app import models  # noqa: F401
+
+    if auto_create:
+        Base.metadata.create_all(bind=bind)
+        return
+
+    from sqlalchemy import inspect
+
+    missing = sorted(REQUIRED_TABLES - set(inspect(bind).get_table_names()))
+    if missing:
+        raise RuntimeError(
+            "数据库结构不完整，拒绝启动（当前环境不允许 create_all 自动建表）。"
+            f"缺少表: {', '.join(missing)}。请先执行 `alembic upgrade head`，"
+            "或在开发环境显式设置 DB_AUTO_CREATE=true。"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时建表，关闭时清理"""
-    # 开发环境自动建表（生产建议用 alembic migrate）
-    Base.metadata.create_all(bind=engine)
+    """应用生命周期：启动时初始化数据库，关闭时清理"""
+    initialize_database()
     _ensure_admin()
     db = SessionLocal()
     try:

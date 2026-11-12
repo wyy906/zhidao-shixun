@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 from dataclasses import dataclass
 
 _DIGEST_REF_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
@@ -40,6 +41,9 @@ class ManagerConfig:
     runtime: str = ""
     seccomp_profile: str = ""
     apparmor_profile: str = ""
+    # 管理器实例标识：用于给容器打标签，重启清理时只删除本实例遗留的容器。
+    # 未配置时使用主机名；多实例部署必须显式设置且互不相同。
+    instance_id: str = socket.gethostname()
     # 空表示使用默认 unix:///var/run/docker.sock
     docker_host: str = ""
     # 内网 TLS / 双向 TLS（生产必须；不能只依赖“IP 在局域网内”）
@@ -64,6 +68,10 @@ class ManagerConfig:
             raise ValueError("ZD_SANDBOX_TOKEN 必须设置（管理接口认证）")
         if not self.image:
             raise ValueError("ZD_SANDBOX_IMAGE 必须设置")
+        if not (self.instance_id or "").strip():
+            raise ValueError("实例标识不能为空（ZD_SANDBOX_INSTANCE_ID 或主机名）")
+        if len(self.instance_id) > 128:
+            raise ValueError("实例标识过长（上限 128 字符）")
         if not is_pinned_reference(self.image):
             raise ValueError(
                 "ZD_SANDBOX_IMAGE 必须固定到 digest（repo@sha256:... 或 sha256:<image-id>），"
@@ -125,6 +133,9 @@ class ManagerConfig:
             runtime=os.environ.get("ZD_SANDBOX_RUNTIME", ""),
             seccomp_profile=os.environ.get("ZD_SANDBOX_SECCOMP", ""),
             apparmor_profile=os.environ.get("ZD_SANDBOX_APPARMOR", ""),
+            instance_id=(
+                os.environ.get("ZD_SANDBOX_INSTANCE_ID") or socket.gethostname()
+            ).strip(),
             docker_host=os.environ.get("ZD_SANDBOX_DOCKER_HOST", ""),
             tls_cert_file=os.environ.get("ZD_SANDBOX_TLS_CERT", ""),
             tls_key_file=os.environ.get("ZD_SANDBOX_TLS_KEY", ""),

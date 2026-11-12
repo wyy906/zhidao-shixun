@@ -55,13 +55,18 @@ def create_app(runner=None, config: ManagerConfig | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        # 重启/异常退出后，清理上次进程遗留的容器（失败不阻断启动，/health 会暴露问题）
+        # 启动清理失败（Docker 不可用 / 容器删除失败）时拒绝进入可服务状态：
+        # 抛出异常让进程启动失败，绝不会带着未知残留容器继续接受任务。
         cleanup = getattr(exec_runner, "cleanup_stale_containers", None)
         if callable(cleanup):
             try:
                 cleanup()
-            except SandboxError as exc:
-                logger.warning("启动时清理残留容器失败: %s", exc.code)
+            except Exception as exc:
+                code = getattr(exc, "code", "cleanup_failed")
+                logger.error("启动清理残留容器失败，拒绝提供服务: %s", code)
+                raise RuntimeError(
+                    f"sandbox startup cleanup failed: {code}"
+                ) from exc
         yield
 
     app = FastAPI(title="zd-sandbox-manager", version="0.1.0", lifespan=lifespan)
