@@ -394,7 +394,7 @@ TOKEN='<与 manager.env 中 ZD_SANDBOX_TOKEN 一致>'
 ./venv/bin/python sandbox_manager/scripts/verify_isolation.py \
   --url https://10.0.0.20:8443 --token "$TOKEN" \
   --ca /etc/zd-sandbox/tls/ca.crt \
-  --on-execution-node --docker-check local \
+  --on-execution-node --confirm-manager-docker-same-host --docker-check local \
   --client-cert /etc/zd-sandbox/tls/client.crt \
   --client-key /etc/zd-sandbox/tls/client.key \
   --expect-mtls \
@@ -412,7 +412,8 @@ TOKEN='<与 manager.env 中 ZD_SANDBOX_TOKEN 一致>'
 
 | 参数 | 作用 |
 |---|---|
-| `--on-execution-node` | **操作人员的人工声明**，不是密码学身份认证。声明脚本直接运行在 Docker 执行节点；只有声明后才会创建宿主机标记文件、检查残留容器。请先通过 SSH 登录执行节点再运行脚本；无法确认管理器与 Docker 同节点时相关项 SKIP |
+| `--on-execution-node` | **操作人员的人工声明**，不是密码学身份认证，也不能单独让身份检查通过。声明脚本直接运行在 Docker 执行节点 |
+| `--confirm-manager-docker-same-host` | **人工核验声明**：已确认“管理器实际使用的 Docker Engine 就是本机执行节点”。只有它 + `--on-execution-node` + 本机 Docker 可用三者同时成立，节点身份/标记文件/残留容器检查才执行，否则一律 SKIP（结论 INCOMPLETE） |
 | `--docker-check local\|skip` | `local` 表示本机 Docker CLI 就是执行节点，检查 `label=zd.sandbox=1` 残留容器；否则 SKIP |
 | `--client-cert` / `--client-key` | 双向 TLS 客户端证书，必须成对；私钥不会输出 |
 | `--expect-mtls` | 声明服务端强制 mTLS，执行四项验证：合法证书成功、无证书拒绝、错误证书拒绝、不受信服务端证书失败 |
@@ -429,17 +430,22 @@ TOKEN='<与 manager.env 中 ZD_SANDBOX_TOKEN 一致>'
 **执行节点身份确认（人工前置）**：
 
 本架构中管理器与 Docker Engine 位于**同一执行节点**（见 §2 拓扑）；Docker Socket
-只对本机管理器可见（§3）。`--on-execution-node` 只是操作人员的声明，脚本无法自动
-证明“打标记文件的机器就是管理器使用的 Docker 宿主机”。因此在执行验收前必须：
+只对本机管理器可见（§3）。但 `--on-execution-node` 只是操作人员的声明，本机
+`docker info` 成功也**不能**证明管理器使用的就是本机 Docker Engine。因此必须：
 
 1. 通过 SSH 登录到该执行节点（即运行管理器、持有 `/var/run/docker.sock` 的机器）；
-2. 在该机器上确认管理器进程、Docker Engine、Docker Socket 三者同节点
-   （例如 `systemctl status zd-sandbox-manager`、`docker info`、`ls -l /var/run/docker.sock`）；
-3. 再在该机器本机运行本脚本。
+2. 在该机器上逐项核对：
+   - 沙箱管理器实际运行位置（进程 / systemd 单元所在主机）；
+   - 管理器的 Docker 连接配置（`ZD_SANDBOX_DOCKER_HOST` 或等价配置）；
+   - Docker Engine 的实际地址（`docker info`、`/var/run/docker.sock` 指向）；
+   - Docker Socket 是否就是**该节点本机** Socket；
+   - 若设置了 `DOCKER_HOST`、`DOCKER_CONTEXT`、远程 TCP 端点或自定义 Socket，
+     必须确认管理器使用的是同一个 Engine，否则不得视为同节点；
+3. 确认无误后，在命令中显式加上 `--confirm-manager-docker-same-host` 再运行脚本。
 
-若无法确认三者处于同一节点，`--on-execution-node` 相关项（标记文件、残留容器、
-节点身份）必须记为 SKIP，结论为 INCOMPLETE，**不得视为通过**。该参数不提供任何
-密码学身份认证。
+若未进行上述人工确认（或本机 Docker 不可用），节点身份、宿主机标记文件、容器
+残留检查一律 SKIP，结论为 INCOMPLETE（退出码 2），**不得视为通过**。该确认是
+**人工核验声明**，不提供任何密码学身份认证。
 
 判定与输出：
 
@@ -459,23 +465,27 @@ TOKEN='<与 manager.env 中 ZD_SANDBOX_TOKEN 一致>'
   - `ConnectionRefusedError(111)` → **FAIL**（主机可达、仅端口无服务，不能证明隔离）
   - `timeout(110)`、`gaierror`（DNS 解析失败）、未知异常 → **FAIL**
   - 连接成功、缺少 `NET_RESULT`、任务失败 → FAIL；输出记录异常类型与 errno 作为判定依据
-- 执行节点身份：`--on-execution-node` 仅为人工声明 + 本机 Docker Engine 可用性检查，
-  **不提供密码学身份认证**；未声明或本机 Docker 不可用时该项 SKIP
-- 宿主机标记文件、业务项目文件 / `.env` 不可读（必须在执行节点确认文件存在）
+- 执行节点身份：必须 `--on-execution-node` + `--confirm-manager-docker-same-host` +
+  本机 Docker 可用三者齐备才记“人工核验通过”；缺失任一条件该项 SKIP，
+  **不提供密码学身份认证**
+- 宿主机标记文件、业务项目文件 / `.env` 不可读：仅在人工确认节点身份后才创建标记
+  文件并执行；未确认时为必检 SKIP，不进行宿主机文件隔离测试
 - 任务工作目录独立且为空、非 root（`UID: 65534`）、根文件系统只读、仅回环网卡
 - cgroup v2 实际限额：CPU quota/period 比例、内存字节数、`memory.swap.max`（期望 0）、
   PID 数；文件不可读时该项 SKIP，不得当作通过
 - 无限循环超时、内存超限、fork 受限、磁盘受限
-- 输出截断：分别提交大量 stdout 与大量 stderr 任务，校验各自的返回字节数、任务终态、
-  非空输出，并校验 stdout+stderr 合计不超过 `--output-total-limit`
-  （异常终止或输出为空均不算通过）
-- 任务结束后无残留容器（需 `--docker-check local` 且在执行节点）
+- 输出截断：分别提交大量 stdout、大量 stderr 两个独立任务，校验各自字节数、任务终态、
+  非空输出；**另提交第三个独立任务在同一 Python 进程内同时产生 5MB stdout 与 5MB
+  stderr**，用该单任务的 `stdout_bytes + stderr_bytes` 校验 `--output-total-limit`
+  （不得把两个不同任务的输出相加冒充合计；任一通道为空、任务异常终止均不算通过）
+- 任务结束后无残留容器（需 `--docker-check local` 且已人工确认节点身份）
 
 > ⚠️ 该脚本包含破坏性测试，只能在**专用、可销毁的测试节点**运行。
 
 ## 10. 文件隔离验证
 
-脚本会自动在宿主机 `/tmp/zd_sandbox_host_marker` 写入标记文件，要求容器内不可读取；
+脚本会在**人工确认执行节点身份后**于宿主机 `/tmp/zd_verify_marker_<pid>` 写入临时标记文件，
+要求容器内不可读取，测试结束自动删除；未确认节点身份时不创建标记文件，该项为 SKIP。
 还可用 `--host-file /opt/zhidao/backend/.env` 验证业务文件不可读。判定标准：
 
 - 容器内 `/workspace` 为空（不与其他任务共享目录）；
@@ -615,8 +625,8 @@ echo "job=$JOB container=$CID"
 | S-09 | PID 数量限制 32 | `docker inspect $CID --format '{{.HostConfig.PidsLimit}}'`；`verify_isolation.py` | `32`；`PIDS_MAX: 32`；fork 测试 PASS | 未执行 | `S-09.txt` | 未执行 |
 | S-10 | 临时磁盘限制（tmpfs 合计 24MB，业务 16MB） | `docker inspect $CID --format '{{json .HostConfig.Tmpfs}}'`；`verify_isolation.py` | 含 `/workspace`、`/tmp`、`/dev/shm` 与容量/`noexec,nosuid,nodev`；磁盘测试 PASS | 未执行 | `S-10.txt` | 未执行 |
 | S-11 | 执行超时与进程终止 | `verify_isolation.py`（无限循环用例） | `无限循环被超时终止` 为 PASS | 未执行 | `S-11.txt` | 未执行 |
-| S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 32768 --output-total-limit 65536` | `stdout 输出被截断` 与 `stderr 输出被截断` 均为 PASS，各自 `bytes ≤ 32868`；`stdout+stderr 合计输出限制` 为 PASS，合计 `≤ 65636` | 未执行 | `S-12.txt` | 未执行 |
-| S-13 | 任务完成后容器清理 | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --docker-check local`；`docker ps -aq --filter label=zd.sandbox=1` | 输出为空；`任务结束后无残留容器` 为 PASS；无法确认 Docker CLI 属于执行节点时为 SKIP（结论 INCOMPLETE） | 未执行 | `S-13.txt` | 未执行 |
+| S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 32768 --output-total-limit 65536` | `stdout 输出被截断` 与 `stderr 输出被截断` 均为 PASS，各自 `bytes ≤ 32868`；`stdout+stderr 合计输出限制（同一任务）` 为 PASS（同一任务两通道合计 `≤ 65636`） | 未执行 | `S-12.txt` | 未执行 |
+| S-13 | 任务完成后容器清理 | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --confirm-manager-docker-same-host --docker-check local`；`docker ps -aq --filter label=zd.sandbox=1` | 输出为空；`任务结束后无残留容器` 为 PASS；未人工确认节点身份或 Docker CLI 不属于执行节点时为 SKIP（结论 INCOMPLETE） | 未执行 | `S-13.txt` | 未执行 |
 | S-14 | 并发与队列限制（2 并发 / 8 排队） | 并行提交 16 个 `time.sleep(5)` 任务：`seq 16 \| xargs -P16 -I{} curl ... /v1/jobs`；随后 `docker ps` | 至少 1 个 HTTP 429 `queue_full`；接受数 ≤ 10；无残留容器 | 未执行 | `S-14.txt` | 未执行 |
 | S-15 | HTTPS / mTLS 身份认证与证书错误处理 | 见 §5.1；或 `verify_isolation.py ... --client-cert ... --client-key ... --expect-mtls --invalid-client-cert ... --invalid-client-key ...` | 合法证书 200；无客户端证书 / 错误证书 / 不受信服务端证书均被拒绝；错误令牌 401；整体退出码 0 或 2（含 SKIP 时不得视为通过）。本地临时 TLS 单元测试（含“证书与私钥不匹配初始化失败”）仅证明客户端逻辑，**不能替代本节实机结论** | 未执行 | `S-15.txt` | 未执行 |
 
@@ -640,7 +650,7 @@ sudo mkdir -p "$EVID"
 # 示例：保存 S-01 的脚本输出（其余项同理，改文件名）
 ./venv/bin/python sandbox_manager/scripts/verify_isolation.py \
   --url "$BASE" --token "$TOKEN" --ca "$CA" \
-  --on-execution-node --docker-check local \
+  --on-execution-node --confirm-manager-docker-same-host --docker-check local \
   --lan-host 10.0.0.5 --lan-port 3306 \
   --backend-host 10.0.0.10 --backend-port 8000 \
   --host-file /tmp/zd_host_probe.txt \

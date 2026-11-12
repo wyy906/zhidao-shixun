@@ -13,7 +13,7 @@
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
 | 后端测试 | **113 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **141 项，全部通过**（`sandbox_manager/tests/`） |
+| 沙箱管理器测试 | **147 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -23,7 +23,7 @@
 ## 2. 结论摘要
 
 1. 后端 113 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
-2. 沙箱管理器 141 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+2. 沙箱管理器 147 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
    生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、
    结果字段校验、生命周期，以及验收工具 `verify_isolation.py` 的 PASS/FAIL/SKIP 判定可靠性
    （网络 errno 分类、stdout/stderr 分别与合计截断、`memory.swap.max`、本地临时 mTLS 握手、执行节点身份声明）。
@@ -49,7 +49,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（113 项 + 141 项）
+## 4. 后端自动化测试（113 项 + 147 项）
 
 ### 4.1 用例分布
 
@@ -68,11 +68,11 @@
 | `sandbox_manager/tests/test_container_spec.py` | 41 | 41 | 0 |
 | `sandbox_manager/tests/test_server.py` | 19 | 19 | 0 |
 | `sandbox_manager/tests/test_jobs.py` | 21 | 21 | 0 |
-| `sandbox_manager/tests/test_verify_isolation.py` | 29 | 29 | 0 |
+| `sandbox_manager/tests/test_verify_isolation.py` | 35 | 35 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_runner.py` | 17 | 17 | 0 |
-| **管理器合计** | **141** | **141** | **0** |
+| **管理器合计** | **147** | **147** | **0** |
 
 ### 4.2 实际执行结果
 
@@ -83,7 +83,7 @@ python -m pytest -q
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-141 passed, 1 warning in 2.64s
+147 passed, 1 warning in 2.67s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -366,6 +366,14 @@ python -m pytest -q sandbox_manager/tests
 | F-30 | mTLS 只覆盖证书加载，未验证真实握手 | 本地临时 TLS 服务覆盖合法握手、无证书、不受信客户端证书、不受信服务端证书、错误令牌 401、证书与私钥不匹配；证书临时生成自动清理，不输出私钥 | `test_verify_isolation.py` 6 项 |
 | F-31 | `--on-execution-node` 布尔开关被当作身份证明 | 明确为人工声明；仅在本机 Docker 可用时记“非密码学证明”，未声明/不可用则 SKIP；文档要求先 SSH 登录执行节点并核对管理器/Docker/Socket 同节点 | `test_verify_isolation.py` 1 项 |
 
+#### 第九轮验收工具最后三项
+
+| 编号 | 问题 | 修复 | 回归测试 |
+|---|---|---|---|
+| F-32 | stdout+stderr 合计用两个不同任务的字节数相加冒充 | 新增第三个独立任务，在同一 Python 进程内同时输出 5MB stdout 与 5MB stderr；用该**单任务**的 `stdout_bytes+stderr_bytes` 校验合计上限；任一通道为空或任务异常终止均 FAIL；截断标记容差固定为 `TRUNCATION_TOLERANCE=100` | `test_total_output_limit`、`test_cross_task_sum_is_not_accepted` |
+| F-33 | 仅 `--on-execution-node` + 本机 `docker info` 就判定身份通过 | 新增 `--confirm-manager-docker-same-host` 人工确认；三者齐备才通过，否则 SKIP；检测 `DOCKER_HOST`/`DOCKER_CONTEXT` 并在输出记录；宿主机标记文件与容器残留检查绑定该确认，未确认时必检 SKIP；明确为人工核验非密码学证明 | 节点身份/残留/标记 6 项 |
+| F-34 | 不受信客户端证书测试实际用的是第二套 CA 证书而非叶子证书；令牌测试服务端无条件返回 401 | 第二套 CA 签发含 CLIENT_AUTH 的正常客户端叶子证书用于握手失败测试；令牌测试服务端真实解析 `X-Sandbox-Token`，正确令牌 200、错误令牌 401，用真实 `Manager` 经 TLS 请求 | 不受信客户端证书、错误令牌 401、正确令牌 200 |
+
 ## 8. 历史记录（仅追溯，不代表当前状态）
 
 ### 8.1 阶段 0：项目接入与现状盘点
@@ -498,6 +506,22 @@ python -m pytest -q sandbox_manager/tests
 - 管理器测试 129 → **141**（`test_verify_isolation.py` 17 → 29 项），后端仍为 113。
 - 全部为自动化/本地临时环境测试，**不代表真实 Linux / Docker 实机验收**；
   S-01 ~ S-15 仍全部未执行。
+
+### 8.13 阶段 3-A 第九轮验收工具最后三项
+
+- **合计输出**：新增第三个独立任务在同一进程同时输出 5MB stdout 与 5MB stderr，
+  用该单任务的 `stdout_bytes+stderr_bytes` 校验 `--output-total-limit`；不再把两个
+  不同任务的字节数相加。任一通道为空或任务异常终止均 FAIL；容差固定为 100 字节。
+- **节点身份**：新增 `--confirm-manager-docker-same-host` 人工确认；只有
+  `--on-execution-node` + 人工确认 + 本机 Docker 可用三者齐备才通过，否则 SKIP；
+  记录 `DOCKER_HOST`/`DOCKER_CONTEXT`；宿主机标记文件与容器残留检查绑定该确认，
+  未确认时必检 SKIP，结论 INCOMPLETE（退出码 2）。
+- **mTLS/令牌**：不受信客户端证书改为第二套 CA 签发的正常叶子证书（含 CLIENT_AUTH）
+  做真实握手失败测试；令牌服务端真实解析 `X-Sandbox-Token`，正确 200、错误 401，
+  用真实 `Manager` 经 TLS 请求，不再固定返回 401。
+- 管理器测试 141 → **147**（`test_verify_isolation.py` 29 → 35 项），后端仍为 113。
+- 仍为自动化/本地临时环境测试，**真实 Linux / Docker 实机验收未完成**；
+  S-01 ~ S-15 仍全部未执行；人工节点确认不等于密码学证明。
 
 ## 9. 本机环境限制（影响复现）
 

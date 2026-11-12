@@ -8,7 +8,7 @@
     python3 verify_isolation.py \
         --url https://10.0.0.20:8443 --token "$ZD_SANDBOX_TOKEN" \
         --ca /etc/zd-sandbox/tls/ca.crt \
-        --on-execution-node --docker-check local \
+        --on-execution-node --confirm-manager-docker-same-host --docker-check local \
         [--client-cert client.crt --client-key client.key] \
         [--expect-mtls --invalid-client-cert bad.crt --invalid-client-key bad.key] \
         [--lan-host 10.0.0.5 --lan-port 3306] \
@@ -28,8 +28,11 @@
 
 注意：
   - `--on-execution-node` 只是操作人员的人工声明，**不是密码学身份认证**。
-    请先通过 SSH 登录到 Docker 执行节点本机，再运行本脚本；无法确认
-    管理器与 Docker 处于同一节点时，相关项目会 SKIP，不得当作通过。
+  - 还必须额外提供 `--confirm-manager-docker-same-host`，人工确认“管理器实际
+    使用的 Docker Engine 就是本机执行节点”。请先通过 SSH 登录到 Docker 执行
+    节点本机，核对管理器运行位置、管理器 Docker 连接配置、Docker Engine 地址、
+    Docker Socket 是否为本机 Socket，再运行本脚本。任一条件未确认时，节点身份、
+    宿主机标记文件、容器残留检查一律 SKIP（结论 INCOMPLETE），不得当作通过。
   - 网络判定只接受明确“连接未建立”的证据（ENETUNREACH/EHOSTUNREACH/
     EACCES/EPERM）；DNS 解析失败、ConnectionRefused、超时、未知异常一律
     不能证明网络隔离。
@@ -50,6 +53,10 @@ import urllib.error
 import urllib.request
 
 TERMINAL = {"succeeded", "failed", "timeout", "resource_exceeded", "cancelled"}
+
+# 截断标记 “\n…（输出过长，已截断）” 的 UTF-8 字节容差（约 37 字节）。
+# 只用于容纳标记本身，不得据此放宽实际上限。
+TRUNCATION_TOLERANCE = 100
 
 REQUIRED = True
 OPTIONAL = False
@@ -276,56 +283,79 @@ def judge_output(status: str, stdout_size: int, limit: int) -> tuple[bool, str]:
         return False, f"status={status}，不能判定为截断成功"
     if stdout_size <= 0:
         return False, "stdout 为空，缺少截断证据"
-    ok = stdout_size <= limit + 100
+    ok = stdout_size <= limit + TRUNCATION_TOLERANCE
     return ok, f"stdout_bytes={stdout_size} 上限≈{limit}"
 
 
 def judge_total_output(status: str, stdout_size: int, stderr_size: int,
                        total_limit: int) -> tuple[bool, str]:
+    """同一个任务的 stdout + stderr 合计上限判定
+
+    要求任务成功且两个通道都实际产生非空输出；两个不同任务的结果不得相加。
+    """
     if status != "succeeded":
         return False, f"status={status}，不能判定总输出限制"
-    if stdout_size + stderr_size <= 0:
-        return False, "stdout/stderr 均为空，缺少证据"
+    if stdout_size <= 0 or stderr_size <= 0:
+        return False, (
+            f"stdout/stderr 存在空通道（stdout={stdout_size} stderr={stderr_size}），"
+            "缺少双通道证据"
+        )
     total = stdout_size + stderr_size
-    return total <= total_limit + 100, (
-        f"stdout_bytes={stdout_size} stderr_bytes={stderr_size} 合计={total} 上限≈{total_limit}"
+    return total <= total_limit + TRUNCATION_TOLERANCE, (
+        f"stdout_bytes={stdout_size} stderr_bytes={stderr_size} 合计={total} "
+        f"上限≈{total_limit}"
     )
 
 
-def judge_node_identity(on_execution_node: bool, docker_available: bool) -> tuple[bool | None, str]:
-    """--on-execution-node 是人工声明，不是密码学证明
+def judge_node_identity(on_execution_node: bool, confirm_same_host: bool,
+                        docker_available: bool,
+                        docker_env_hint: str = "") -> tuple[bool | None, str]:
+    """执行节点身份（人工核验，不是密码学证明）
 
-    脚本只能确认本机 Docker Engine 可用；无法证明管理器使用的就是本机 Docker。
-    未声明或本机 Docker 不可用时必须 SKIP。
+    `--on-execution-node` 只是声明，不能单独作为身份通过依据。必须同时提供
+    `--confirm-manager-docker-same-host`（人工确认管理器使用的 Docker Engine
+    就是本机执行节点），且本机 Docker Engine 可用，才允许判定为通过；任一条件
+    缺失都返回 SKIP。
     """
     if not on_execution_node:
         return None, "未声明 --on-execution-node，无法确认执行节点身份"
+    if not confirm_same_host:
+        extra = f"（检测到 {docker_env_hint}）" if docker_env_hint else ""
+        return None, (
+            "未提供 --confirm-manager-docker-same-host，未人工确认管理器与 "
+            f"Docker Engine 同节点{extra}"
+        )
     if not docker_available:
         return None, "本机 Docker Engine 不可用，无法确认与管理器同节点"
-    return True, "人工声明 + 本机 Docker Engine 可用（非密码学证明，需人工复核）"
+    detail = "人工确认管理器与 Docker Engine 同节点（人工核验，非密码学证明）"
+    if docker_env_hint:
+        detail += (
+            f"；注意 Docker 客户端使用 {docker_env_hint}，需人工确认与管理器配置一致"
+        )
+    return True, detail
 
 
-def judge_container_residue(docker_check: str, on_execution_node: bool,
+def judge_container_residue(docker_check: str, node_confirmed: bool,
                             output: str | None = None,
                             error: BaseException | None = None
                             ) -> tuple[bool | None, str]:
-    """无法确认 Docker CLI 在执行节点时返回 SKIP（None）"""
-    if docker_check != "local" or not on_execution_node:
+    """无法确认节点身份时返回 SKIP（None）"""
+    if docker_check != "local" or not node_confirmed:
         return None, (
-            "无法确认本机 Docker CLI 属于执行节点；请在执行节点运行 "
-            "`docker ps -aq --filter label=zd.sandbox=1` 并单独记录"
+            "无法确认本机 Docker CLI 属于执行节点；请先人工确认节点身份，"
+            "并在执行节点运行 `docker ps -aq --filter label=zd.sandbox=1` 单独记录"
         )
     if error is not None:
         return None, f"Docker CLI 不可用: {type(error).__name__}"
     return output == "", f"residual={output or 'none'}"
 
 
-def judge_host_marker_scope(on_execution_node: bool) -> tuple[bool | None, str]:
-    """标记文件必须在 Docker 宿主机上创建；否则不能判定"""
-    if not on_execution_node:
+def judge_host_marker_scope(node_confirmed: bool) -> tuple[bool | None, str]:
+    """标记文件必须在 Docker 宿主机上创建；未人工确认节点身份时 SKIP"""
+    if not node_confirmed:
         return None, (
-            "未声明 --on-execution-node，无法确认标记文件位于 Docker 宿主机；"
-            "请直接在执行节点运行本脚本"
+            "未确认执行节点身份（需要 --on-execution-node 且 "
+            "--confirm-manager-docker-same-host），不创建/不测试宿主机标记文件"
         )
     return True, ""
 
@@ -425,7 +455,10 @@ def main() -> int:
     parser.add_argument("--invalid-client-cert", help="错误的客户端证书（用于负向测试）")
     parser.add_argument("--invalid-client-key", help="错误客户端证书对应的私钥")
     parser.add_argument("--on-execution-node", action="store_true",
-                        help="声明本脚本直接运行在 Docker 执行节点上")
+                        help="声明本脚本直接运行在 Docker 执行节点上（仅为声明）")
+    parser.add_argument("--confirm-manager-docker-same-host", action="store_true",
+                        help="人工确认管理器使用的 Docker Engine 就是本机执行节点"
+                             "（人工核验，非密码学证明）")
     parser.add_argument("--docker-check", choices=["local", "skip"], default="skip",
                         help="local=本机就是执行节点并检查残留容器；skip=不检查")
     parser.add_argument("--lan-host")
@@ -477,9 +510,16 @@ def main() -> int:
         add("双向 TLS 客户端证书认证", None,
             "未启用 --expect-mtls（仅校验服务端证书）", OPTIONAL)
 
-    # 0.2 执行节点身份（人工声明 + 本机 Docker 可用性）
+    # 0.2 执行节点身份（人工声明 + 人工确认管理器与 Docker 同节点 + 本机 Docker 可用）
+    # 仅凭 --on-execution-node 或本机 docker info 成功都不能证明与管理器同 Engine。
+    docker_env_hint = ""
+    for key in ("DOCKER_HOST", "DOCKER_CONTEXT"):
+        val = os.environ.get(key)
+        if val:
+            docker_env_hint = f"{key}={val}"
+            break
     docker_available = False
-    if args.on_execution_node:
+    if args.on_execution_node and args.confirm_manager_docker_same_host:
         try:
             subprocess.check_output(
                 ["docker", "info", "--format", "{{.ID}}"],
@@ -489,8 +529,11 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             docker_available = False
     identity_ok, identity_detail = judge_node_identity(
-        args.on_execution_node, docker_available)
+        args.on_execution_node, args.confirm_manager_docker_same_host,
+        docker_available, docker_env_hint)
     add("执行节点身份（管理器与 Docker 同节点）", identity_ok, identity_detail)
+    # 后续节点侧检查（宿主机标记文件、容器残留）一律以人工确认结果为前提
+    node_confirmed = identity_ok is True
 
     # 1. 公网隔离
     case("公网不可达", network_probe_code("1.1.1.1", 443), judge_network)
@@ -505,10 +548,10 @@ def main() -> int:
             continue
         case(label, network_probe_code(host, port), judge_network)
 
-    # 3. 宿主机标记文件：只能在执行节点本机创建
-    scope_ok, scope_detail = judge_host_marker_scope(args.on_execution_node)
+    # 3. 宿主机标记文件：只能在人工确认执行节点身份后，在本机创建
+    scope_ok, scope_detail = judge_host_marker_scope(node_confirmed)
     marker_path = f"/tmp/zd_verify_marker_{os.getpid()}"
-    if args.on_execution_node:
+    if node_confirmed:
         try:
             with open(marker_path, "w", encoding="utf-8") as f:
                 f.write("zd-host-only-marker")
@@ -531,12 +574,12 @@ def main() -> int:
     else:
         add("无法读取宿主机标记文件", scope_ok, scope_detail)
 
-    # 4. 业务项目文件 / .env（可选；也必须位于执行节点）
+    # 4. 业务项目文件 / .env（可选；也必须位于已确认的执行节点）
     if not args.host_file:
         add("无法读取业务项目文件 / .env", None, "未提供 --host-file，跳过（可选）", OPTIONAL)
-    elif not args.on_execution_node:
+    elif not node_confirmed:
         add("无法读取业务项目文件 / .env", None,
-            "未声明 --on-execution-node，无法确认文件位于 Docker 宿主机", OPTIONAL)
+            "未确认执行节点身份，无法确认文件位于 Docker 宿主机", OPTIONAL)
     elif not os.path.isfile(args.host_file):
         add("无法读取业务项目文件 / .env", None,
             f"执行节点上不存在该文件: {args.host_file}")
@@ -649,9 +692,7 @@ def main() -> int:
     case("磁盘超限被限制", disk_code,
          lambda status, out, err: judge_disk(status, out), timeout=8)
 
-    # 10. 输出截断（stdout / stderr / 合计）
-    out_bytes = err_bytes = 0
-    out_status = err_status = "failed"
+    # 10. 输出截断（stdout 独立 / stderr 独立 / 同一任务合计）
     try:
         r_out = run_case(m, "print('A' * (5 * 1024 * 1024))\n", timeout=8)
         out_status = r_out["status"]
@@ -669,27 +710,41 @@ def main() -> int:
         add("stderr 输出被截断", ok, detail)
     except Exception as exc:  # noqa: BLE001
         add("stderr 输出被截断", False, f"任务异常: {type(exc).__name__}")
-    total_ok, total_detail = judge_total_output(
-        "succeeded" if out_status == err_status == "succeeded" else "failed",
-        out_bytes, err_bytes, args.output_total_limit,
-    )
-    add("stdout+stderr 合计输出限制", total_ok, total_detail)
 
-    # 11. 容器残留
-    if args.docker_check == "local" and args.on_execution_node:
+    # 10.1 合计限制：必须在**同一个任务**中同时产生 stdout 与 stderr，
+    # 不能用两个不同任务的字节数相加冒充合计证据。
+    combined_code = (
+        "import sys\n"
+        "sys.stdout.write('A' * (5 * 1024 * 1024) + '\\n')\n"
+        "sys.stderr.write('B' * (5 * 1024 * 1024) + '\\n')\n"
+    )
+    try:
+        r_comb = run_case(m, combined_code, timeout=8)
+        comb_status = r_comb["status"]
+        comb_stdout = len(r_comb.get("stdout", "").encode("utf-8"))
+        comb_stderr = len(r_comb.get("stderr", "").encode("utf-8"))
+        ok, detail = judge_total_output(
+            comb_status, comb_stdout, comb_stderr, args.output_total_limit)
+        add("stdout+stderr 合计输出限制（同一任务）", ok, detail)
+    except Exception as exc:  # noqa: BLE001
+        add("stdout+stderr 合计输出限制（同一任务）", False,
+            f"任务异常: {type(exc).__name__}")
+
+    # 11. 容器残留（必须在人工确认节点身份后才检查）
+    if args.docker_check == "local" and node_confirmed:
         try:
             output = subprocess.check_output(
                 ["docker", "ps", "-aq", "--filter", "label=zd.sandbox=1"],
                 text=True, stderr=subprocess.DEVNULL,
             ).strip()
             ok, detail = judge_container_residue(
-                args.docker_check, args.on_execution_node, output=output)
+                args.docker_check, node_confirmed, output=output)
         except Exception as exc:  # noqa: BLE001
             ok, detail = judge_container_residue(
-                args.docker_check, args.on_execution_node, error=exc)
+                args.docker_check, node_confirmed, error=exc)
     else:
         ok, detail = judge_container_residue(
-            args.docker_check, args.on_execution_node)
+            args.docker_check, node_confirmed)
     add("任务结束后无残留容器", ok, detail)
 
     # 汇总

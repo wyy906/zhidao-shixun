@@ -144,10 +144,24 @@ def test_stderr_truncation_uses_same_rule():
 
 
 def test_total_output_limit():
+    # 同一个任务的两个通道合计未超限 → 通过
     assert vi.judge_total_output("succeeded", 32768, 32768, 65536)[0] is True
+    # 同一任务合计超限 → 失败
     assert vi.judge_total_output("succeeded", 40000, 40000, 65536)[0] is False
+    # 任一通道为空 → 失败（不能把单通道结果当合计证据）
+    assert vi.judge_total_output("succeeded", 32768, 0, 65536)[0] is False
+    assert vi.judge_total_output("succeeded", 0, 32768, 65536)[0] is False
     assert vi.judge_total_output("succeeded", 0, 0, 65536)[0] is False
+    # 任务异常终止 → 失败
     assert vi.judge_total_output("failed", 32768, 32768, 65536)[0] is False
+    assert vi.judge_total_output("timeout", 32768, 32768, 65536)[0] is False
+
+
+def test_cross_task_sum_is_not_accepted():
+    """两个不同任务分别产生 stdout / stderr，不能相加冒充同一任务合计"""
+    # 任务 A 只有 stdout、任务 B 只有 stderr：单独判定都不是合法合计证据
+    assert vi.judge_total_output("succeeded", 32768, 0, 65536)[0] is False
+    assert vi.judge_total_output("succeeded", 0, 24000, 65536)[0] is False
 
 
 def test_cpu_quota_and_period_must_both_be_correct():
@@ -179,24 +193,57 @@ def test_swap_limit_parsing():
 # 节点身份 / Docker 可见性
 # ---------------------------------------------------------------------------
 def test_remote_marker_cannot_pass():
-    ok, detail = vi.judge_host_marker_scope(on_execution_node=False)
+    ok, detail = vi.judge_host_marker_scope(False)
     assert ok is None
-    assert "无法确认" in detail
+    assert "未确认" in detail
+    # 人工确认后才允许在节点侧创建标记文件
+    assert vi.judge_host_marker_scope(True)[0] is True
 
 
 def test_docker_cli_not_on_execution_node_is_skip():
-    ok, _ = vi.judge_container_residue("local", on_execution_node=False)
+    ok, _ = vi.judge_container_residue("local", False)
     assert ok is None
-    ok, _ = vi.judge_container_residue("skip", on_execution_node=True)
+    ok, _ = vi.judge_container_residue("skip", True)
     assert ok is None
     ok, _ = vi.judge_container_residue("local", True, output="")
     assert ok is True
 
 
 def test_node_identity_cannot_be_proven_by_flag_alone():
-    assert vi.judge_node_identity(False, True)[0] is None
-    assert vi.judge_node_identity(True, False)[0] is None
-    assert vi.judge_node_identity(True, True)[0] is True
+    # 只有声明，没有人工确认 → SKIP
+    assert vi.judge_node_identity(True, False, True)[0] is None
+    # 没有声明 → SKIP
+    assert vi.judge_node_identity(False, True, True)[0] is None
+    # 已声明并确认，但本机 Docker 不可用 → SKIP
+    assert vi.judge_node_identity(True, True, False)[0] is None
+    # 三个条件齐备 → 人工核验通过
+    assert vi.judge_node_identity(True, True, True)[0] is True
+
+
+def test_node_identity_requires_manual_confirmation_not_just_docker():
+    # 本机 docker info 可用也不能单独证明与管理器同 Engine
+    ok, detail = vi.judge_node_identity(True, False, True)
+    assert ok is None
+    assert "confirm-manager-docker-same-host" in detail
+
+
+def test_node_identity_records_docker_env_hint():
+    ok, detail = vi.judge_node_identity(True, True, True, "DOCKER_HOST=tcp://10.0.0.9:2375")
+    assert ok is True
+    assert "DOCKER_HOST=tcp://10.0.0.9:2375" in detail
+    assert "非密码学证明" in detail
+
+
+def test_node_identity_skip_when_docker_unavailable():
+    ok, detail = vi.judge_node_identity(True, True, False)
+    assert ok is None
+    assert "Docker Engine 不可用" in detail
+
+
+def test_residue_and_marker_skipped_without_confirmation():
+    # 未人工确认时，容器残留与宿主机标记都不得 PASS
+    assert vi.judge_container_residue("local", False)[0] is None
+    assert vi.judge_host_marker_scope(False)[0] is None
 
 
 # ---------------------------------------------------------------------------
@@ -263,10 +310,12 @@ def _write_cert_bundle(tmp_path: Path) -> dict[str, str]:
         .sign(ca_key, hashes.SHA256())
     )
 
-    def _signed(key, cn, *, ca, is_server=False, client_auth=False):
+    def _signed(key, cn, *, signer_key, signer_cert, is_server=False,
+                client_auth=False):
         extra = [
             x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
-            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                signer_key.public_key()),
             x509.KeyUsage(
                 digital_signature=True, content_commitment=False,
                 key_encipherment=is_server, data_encipherment=False,
@@ -282,7 +331,7 @@ def _write_cert_bundle(tmp_path: Path) -> dict[str, str]:
             extra.append(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]))
         builder = (
             x509.CertificateBuilder()
-            .subject_name(_name(cn)).issuer_name(ca.subject)
+            .subject_name(_name(cn)).issuer_name(signer_cert.subject)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - timedelta(days=1))
@@ -290,14 +339,14 @@ def _write_cert_bundle(tmp_path: Path) -> dict[str, str]:
         )
         for ext in extra:
             builder = builder.add_extension(ext, critical=False)
-        return builder.sign(ca_key, hashes.SHA256())
+        return builder.sign(signer_key, hashes.SHA256())
 
     server_key = _key()
-    server_cert = _signed(server_key, "127.0.0.1", ca=ca_cert, is_server=True)
+    server_cert = _signed(server_key, "127.0.0.1",
+                          signer_key=ca_key, signer_cert=ca_cert, is_server=True)
     client_key = _key()
-    client_cert = _signed(client_key, "zd-test-client", ca=ca_cert, client_auth=True)
-    rogue_key = _key()
-    rogue_cert = _signed(rogue_key, "rogue-client", ca=ca_cert, client_auth=True)
+    client_cert = _signed(client_key, "zd-test-client",
+                          signer_key=ca_key, signer_cert=ca_cert, client_auth=True)
     # 错误“不受信”证书：同样由本 CA 签发，但仅在服务端不信任该 CA 时使用
     other_key = _key()
     other_ca_name = _name("Other-CA")
@@ -321,12 +370,20 @@ def _write_cert_bundle(tmp_path: Path) -> dict[str, str]:
         .sign(other_key, hashes.SHA256())
     )
 
+    # 第二套 CA 签发的**正常客户端叶子证书**（含 CLIENT_AUTH、匹配私钥）；
+    # 服务端只信任第一套 CA，因此这张合法结构但不受信的证书必须握手失败。
+    other_client_key = _key()
+    other_client_cert = _signed(
+        other_client_key, "untrusted-client",
+        signer_key=other_key, signer_cert=other_ca, client_auth=True)
+
     paths = {
         "ca": tmp_path / "ca.crt",
         "server_cert": tmp_path / "server.crt",
         "server_key": tmp_path / "server.key",
         "client_cert": tmp_path / "client.crt",
         "client_key": tmp_path / "client.key",
+        "other_ca": tmp_path / "other-ca.crt",
         "other_cert": tmp_path / "other-client.crt",
         "other_key": tmp_path / "other-client.key",
     }
@@ -335,8 +392,10 @@ def _write_cert_bundle(tmp_path: Path) -> dict[str, str]:
     _write_key(paths["server_key"], server_key)
     paths["client_cert"].write_bytes(client_cert.public_bytes(serialization.Encoding.PEM))
     _write_key(paths["client_key"], client_key)
-    paths["other_cert"].write_bytes(other_ca.public_bytes(serialization.Encoding.PEM))
-    _write_key(paths["other_key"], other_key)
+    paths["other_ca"].write_bytes(other_ca.public_bytes(serialization.Encoding.PEM))
+    paths["other_cert"].write_bytes(
+        other_client_cert.public_bytes(serialization.Encoding.PEM))
+    _write_key(paths["other_key"], other_client_key)
     return {k: str(v) for k, v in paths.items()}
 
 
@@ -418,23 +477,41 @@ def test_untrusted_server_certificate_fails(tmp_path):
     assert _handshake(server, client) is False
 
 
-def test_mtls_valid_cert_wrong_token_gets_401(tmp_path):
-    bundle = _write_cert_bundle(tmp_path)
-    server_ctx = _server_context(bundle, require_client=True)
+def _token_server(server_ctx: ssl.SSLContext, expected_token: str):
+    """启动一个真正校验 X-Sandbox-Token 的本地 HTTPS 服务（单次请求）
+
+    请求头令牌与 expected_token 相同返回 200，否则返回 401。
+    返回 (port, thread, received_headers) 便于断言。
+    """
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
     port = listener.getsockname()[1]
+    received: dict[str, str] = {}
 
     def serve():
         conn, _ = listener.accept()
         try:
             tls = server_ctx.wrap_socket(conn, server_side=True)
-            tls.recv(4096)
-            tls.sendall(
-                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n"
-                b"Connection: close\r\n\r\n"
-            )
+            data = tls.recv(4096).decode("latin-1")
+            headers = {}
+            for line in data.split("\r\n")[1:]:
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    headers[k.strip().lower()] = v.strip()
+            received.update(headers)
+            if headers.get("x-sandbox-token") == expected_token:
+                body = b"{}"
+                tls.sendall(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                    b"Content-Length: " + str(len(body)).encode()
+                    + b"\r\nConnection: close\r\n\r\n" + body
+                )
+            else:
+                tls.sendall(
+                    b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n"
+                    b"Connection: close\r\n\r\n"
+                )
         except BaseException:  # noqa: BLE001
             pass
         finally:
@@ -443,14 +520,37 @@ def test_mtls_valid_cert_wrong_token_gets_401(tmp_path):
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
+    return port, thread, received
+
+
+def test_mtls_valid_cert_wrong_token_gets_401(tmp_path):
+    bundle = _write_cert_bundle(tmp_path)
+    server_ctx = _server_context(bundle, require_client=True)
+    port, thread, received = _token_server(server_ctx, "correct-token")
     manager = vi.Manager(
-        f"https://127.0.0.1:{port}", "wrong", bundle["ca"],
+        f"https://127.0.0.1:{port}", "wrong-token", bundle["ca"],
         bundle["client_cert"], bundle["client_key"],
     )
     ok, detail = manager.probe_wrong_token()
     thread.join(timeout=5)
+    # 服务端确实读到了客户端发来的错误令牌（不是无条件固定 401）
+    assert received.get("x-sandbox-token") == "wrong-token"
     assert ok is True
     assert "401" in detail
+
+
+def test_mtls_valid_cert_correct_token_gets_200(tmp_path):
+    bundle = _write_cert_bundle(tmp_path)
+    server_ctx = _server_context(bundle, require_client=True)
+    port, thread, received = _token_server(server_ctx, "correct-token")
+    manager = vi.Manager(
+        f"https://127.0.0.1:{port}", "correct-token", bundle["ca"],
+        bundle["client_cert"], bundle["client_key"],
+    )
+    status, _ = manager._request("GET", "/health")
+    thread.join(timeout=5)
+    assert received.get("x-sandbox-token") == "correct-token"
+    assert status == 200
 
 
 def test_certificate_and_key_mismatch_fails(tmp_path):

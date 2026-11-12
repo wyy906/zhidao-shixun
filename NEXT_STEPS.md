@@ -2,7 +2,7 @@
 
 ## 现状一句话
 
-后端 113 项 pytest、沙箱管理器 141 项单元测试、前端 `npm test` 全部通过；
+后端 113 项 pytest、沙箱管理器 147 项单元测试、前端 `npm test` 全部通过；
 学生代码已改为「独立 Linux 执行节点 + 一次性 Docker 容器」执行，业务后端不再持有本机执行路径。
 已完成三轮安全审查修复（镜像 digest、HTTPS/mTLS、容器配置回查、启动清理阻断、清理范围、
 输出限额、数据库初始化、队列上限、错误脱敏、异步轮询与异常收口）。
@@ -125,6 +125,18 @@
 - `--on-execution-node` 明确为人工声明而非密码学证明；文档要求先 SSH 登录执行节点、
   核对管理器/Docker/Socket 同节点，无法确认则 SKIP。
 - 管理器测试 129 → **141**（`test_verify_isolation.py` 17 → 29 项）；仍无 Linux 实机验证，
+  **S-01 ~ S-15 全部未执行**。
+
+#### 验收工具最后三项（第九轮已完成）
+
+- **合计输出**：改为同一 Python 任务内同时产生 5MB stdout + 5MB stderr，用该单任务
+  两通道字节数之和校验 `--output-total-limit`；不再跨任务相加。
+- **节点身份**：新增 `--confirm-manager-docker-same-host` 人工确认；`--on-execution-node`
+  + 人工确认 + 本机 Docker 可用三者齐备才通过，否则 SKIP；宿主机标记文件与残留容器
+  检查绑定该确认；人工核验不等于密码学证明。
+- **mTLS/令牌**：不受信客户端证书改为第二套 CA 签发的正常叶子证书；令牌测试服务端
+  真实解析 `X-Sandbox-Token`（正确 200 / 错误 401），用真实 Manager 经 TLS 请求。
+- 管理器测试 141 → **147**（`test_verify_isolation.py` 29 → 35 项）；仍无 Linux 实机验证，
   **S-01 ~ S-15 全部未执行**。
 
 ---
