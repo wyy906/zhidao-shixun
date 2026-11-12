@@ -7,6 +7,8 @@
   - 畸形响应按安全失败处理；
   - 启动配置校验。
 """
+import asyncio
+
 import httpx
 import pytest
 
@@ -136,3 +138,48 @@ def test_startup_validation_accepts_secure_manager(monkeypatch):
     good = _client()
     monkeypatch.setattr(sandbox_client, "_client", good)
     ensure_sandbox_configuration()
+
+
+def test_async_submit_get_cancel_flow():
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        assert request.headers["X-Sandbox-Token"] == "test-token"
+        if request.method == "POST":
+            return httpx.Response(202, json={"job_id": "j1", "status": "queued"})
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"job_id": "j1", "status": "cancelled"})
+        return httpx.Response(200, json={"job_id": "j1", "status": "succeeded"})
+
+    client = _client(transport=httpx.MockTransport(handler))
+
+    async def flow():
+        submitted = await client.asubmit("print(1)", 1)
+        job = await client.aget_job("j1")
+        cancelled = await client.acancel("j1")
+        await client._get_async_client().aclose()
+        return submitted, job, cancelled
+
+    submitted, job, cancelled = asyncio.run(flow())
+    assert submitted["job_id"] == "j1"
+    assert job["status"] == "succeeded"
+    assert cancelled["status"] == "cancelled"
+    assert seen == [
+        ("POST", "/v1/jobs"),
+        ("GET", "/v1/jobs/j1"),
+        ("DELETE", "/v1/jobs/j1"),
+    ]
+
+
+def test_async_transport_error_is_unavailable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom", request=request)
+
+    client = _client(transport=httpx.MockTransport(handler))
+
+    async def flow():
+        await client.asubmit("print(1)", 1)
+
+    with pytest.raises(SandboxUnavailable):
+        asyncio.run(flow())

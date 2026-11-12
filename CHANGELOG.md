@@ -22,7 +22,7 @@
 
 ### 测试
 
-- 后端 pytest：75 → **97 项**。
+- 后端 pytest：75 → **99 项**。
 - 沙箱管理器：80 → **93 项**（新增队列上限、shm、seccomp/AppArmor 回查、脱敏测试）。
 - 前端 `npm test`：通过。
 - 真实 Linux / Docker 实机验证（队列压测、shm 挂载、seccomp/AppArmor 内核生效、

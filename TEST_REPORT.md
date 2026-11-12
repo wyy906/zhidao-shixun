@@ -12,7 +12,7 @@
 | 日期 | 2026-11-12 |
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
-| 后端测试 | **97 项，全部通过**（`backend/tests/`） |
+| 后端测试 | **99 项，全部通过**（`backend/tests/`） |
 | 沙箱管理器测试 | **93 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
@@ -22,7 +22,7 @@
 
 ## 2. 结论摘要
 
-1. 后端 97 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全。
+1. 后端 99 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全。
 2. 沙箱管理器 93 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
    生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与生命周期。
 3. 学生代码**已不在业务后端进程内执行**，也不再作为本机 subprocess 运行；沙箱不可用时一律 503，不存在降级路径。
@@ -47,7 +47,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（97 项 + 93 项）
+## 4. 后端自动化测试（99 项 + 93 项）
 
 ### 4.1 用例分布
 
@@ -59,10 +59,10 @@
 | `tests/test_report.py` | 10 | 10 | 0 |
 | `tests/test_config_isolation.py` | 4 | 4 | 0 |
 | `tests/test_code_sandbox.py` | 25 | 25 | 0 |
-| `tests/test_sandbox_client.py` | 13 | 13 | 0 |
+| `tests/test_sandbox_client.py` | 15 | 15 | 0 |
 | `tests/test_migration_code_tasks.py` | 1 | 1 | 0 |
 | `tests/test_db_init.py` | 5 | 5 | 0 |
-| **backend 合计** | **97** | **97** | **0** |
+| **backend 合计** | **99** | **99** | **0** |
 | `sandbox_manager/tests/test_container_spec.py` | 39 | 39 | 0 |
 | `sandbox_manager/tests/test_server.py` | 19 | 19 | 0 |
 | `sandbox_manager/tests/test_jobs.py` | 4 | 4 | 0 |
@@ -76,7 +76,7 @@
 ```
 # backend
 python -m pytest -q
-97 passed, 334 warnings in 53.95s
+99 passed, 334 warnings in 55.17s
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
@@ -281,7 +281,7 @@ python -m pytest -q sandbox_manager/tests
 | 编号 | 问题 | 修复 | 回归测试 |
 |---|---|---|---|
 | F-13 | 管理器任务队列无上限，可被大量阻塞线程打满 | 固定线程池 + `max_pending`（默认 4×并发），超限 `queue_full`；拒绝请求不建任务/容器 | `test_jobs.py` 4 项、`test_server.py` 1 项 |
-| F-14 | 后端允许明文 HTTP 访问管理器，mTLS 配置可缺失 | 非回环强制 HTTPS；回环 HTTP 需显式开发开关；证书/私钥必须成对；启动校验 | `test_sandbox_client.py` 13 项 |
+| F-14 | 后端允许明文 HTTP 访问管理器，mTLS 配置可缺失 | 非回环强制 HTTPS；回环 HTTP 需显式开发开关；证书/私钥必须成对；启动校验 | `test_sandbox_client.py` 15 项 |
 | F-15 | 内部错误信息会返回给学生 | 管理器固定安全文案 + 内部日志；学生接口固定文案，教师经权限检查看详情 | `test_server.py` 1 项、`test_code_sandbox.py` 1 项 |
 | F-16 | `/dev/shm` 默认 64MB 绕过磁盘预算 | 显式 8MB 并在 `HostConfig.ShmSize` 回查 | `test_container_spec.py` 3 项 |
 | F-17 | seccomp/AppArmor/CapAdd/Init 未回查实际配置 | 逐项比对 `SecurityOpt`、`CapAdd`、`Init`、`ShmSize`，不匹配删容器 | `test_container_spec.py` 4 项 |
@@ -366,7 +366,7 @@ python -m pytest -q sandbox_manager/tests
 - `/dev/shm` 固定 8MB；seccomp/AppArmor/CapAdd/Init 实际配置回查。
 - 代码执行接口改异步，增加连接池与并发保护，避免阻塞事件循环 / 请求堆积。
 - 异常路径统一收口，任务不会静默永久停在 `running`。
-- 后端测试 75 → **97**，管理器测试 80 → **93**；真实 Linux 实机验证仍未完成。
+- 后端测试 75 → **99**，管理器测试 80 → **93**；真实 Linux 实机验证仍未完成。
 
 ## 9. 本机环境限制（影响复现）
 
