@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第四轮架构修订已提交，待 ChatGPT 第四轮架构复审；复审通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第四轮复审仍有两项阻塞：旧实例清扫须拒绝缺失/无效 instance 标签或 FinishedAt；.env 须精确构造并核验 DACL、所有者及父目录权限/重解析点；第五轮复审通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1612,3 +1612,41 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 - 上述四项是架构文档/配置边界阻塞项；Trae 修订并独立提交后，再进行第四轮复审。
 - 本轮未修改业务代码、未执行 Docker、未批准任何镜像 digest、未启动 V2-04B、未合并分支。
 - `main` 与 `trae-dev` 保持不动；项目负责人明确授权合并前，V2 分支绝不与 `main` 合并。
+
+
+### 2026-11-12｜角色：ChatGPT｜V2-04A 第四轮架构复审：仍需修订两项安全边界
+
+**审查基准：**
+- 已先读取 `CHATGPT_PROJECT_REASONING_BASIS.md`，再读取当前 V2 分支 `AI_COLLABORATION.md`、`README.md`、分支 HEAD 与第四轮提交差异。
+- 分支：`feat/zhidao-shixun-v2-rebuild`
+- Trae 第四轮提交：`43ab547788a8f788eca2076691b362b9223398ca`，父提交为 `d8c9acb05df11fb3510057b4d4e28faefc6f2074`。
+- 本次差异仅涉及 `AI_COLLABORATION.md`、`README.md` 和新增纯配置文件 `server/services/executor_service/executor_image_lock.json`；未混入容器执行代码。
+- 本次为静态架构/文档审查；未运行 Docker、Windows ACL、Docker attach 或真实容器测试。
+
+**已确认有效的修订：**
+1. 镜像锁定 JSON 已真实存在；`approval_status=pending`，审批人、时间及两个 digest 均为 null；tag 仅作参考，不作为信任依据。
+2. 清扫拆分为当前实例查询 A 与旧实例查询 B；查询 B 的 Docker API 过滤仍限定 `zhidao-exec-managed=true`，再核验实例标签和容器状态；禁止全局 prune，删除前二次确认。
+3. 不再把 `icacls /grant:r` 误称为清除其他主体显式 ACE；已明确 DACL 枚举、启动 fail-closed、父目录检查和正负向测试设计。
+4. 顶层 manifest digest 与 linux/amd64 平台子 digest 已分开定义；RepoDigests 映射、平台子 digest 获取和最终引用方式列为未验证探针；镜像保持 pending/null。
+5. docker-py 版本、attach_socket 对象、npipe/TCP、写半关闭和 EOF 均明确标为未验证假设，要求探针通过后才实现执行器。
+6. 本轮提交未实现 Docker 执行、未新增宿主机 subprocess、未把 Docker SDK 放入 FastAPI 业务进程、未批准镜像 digest、未启动 V2-05/06/07，未修改 main/trae-dev，未合并。
+
+**仍需修订的两项阻塞问题：**
+
+1. **旧实例孤儿清扫必须拒绝缺失或无效的实例标签/结束时间。**
+   - 当前 Query B 描述为检查 `instance ≠ self`、非 running、FinishedAt 超过 5 分钟宽限期。
+   - 对缺失 `zhidao-exec-instance` 标签的容器，不能把 null/空值隐式解释为旧实例；对空字符串、格式错误或无法读取的 FinishedAt，也不能推断为已超期。
+   - 请明确：必须存在且格式有效的 instance 标签，并且其值明确不等于当前实例；容器状态必须明确为非 running；FinishedAt 必须成功解析为带时区时间并确认超过宽限期。任一字段缺失、无效或读取异常，均跳过且记录审计，不进入删除候选集。
+   - 保留 managed=true 的 API 层过滤、删除前重新读取标签与状态、无 prune/全局清理等不变量。
+
+2. **.env 必须明确构造精确 DACL，并完整检查可改变权限/替换文件的路径。**
+   - 当前“枚举并移除白名单外 ACE，再授予白名单主体”的描述，没有明确清除白名单主体可能残留的过宽 ACE，也没有明确最终 DACL 必须与批准模板精确匹配。
+   - 请改为按明确 SID（文件所有者、SYSTEM、Administrators）构造完整 DACL，明确文件 owner 的设置/核验，关闭继承，并在设置后重新读取实际安全描述符；最终 DACL 只允许预期主体和预期权限，遇到额外/未知 ACE（包括 deny、继承、对象/回调 ACE 等无法安全解释的条目）时 fail-closed。
+   - 父目录检查不能只写笼统的“修改/删除/重命名”：明确检查非白名单主体是否拥有可创建替换文件、删除子项、修改 DACL 或更改所有者的权限，至少覆盖 `FILE_ADD_FILE`、`FILE_DELETE_CHILD`、`WRITE_DAC`、`WRITE_OWNER` 等相关权限；同时拒绝 .env 为符号链接/重解析点或其他可绕过预期路径的对象。检查失败或无法解析均拒绝启动。
+   - 补充对应负向测试：白名单主体残留过宽 ACE、未知 ACE、父目录 WRITE_DAC/WRITE_OWNER/DELETE_CHILD/FILE_ADD_FILE、.env 重解析点/符号链接等。
+
+**复审结论：**
+- **V2-04A 第四轮仍暂不批准 V2-04B。**
+- 以上两项是安全边界阻塞项。Trae 完成第五轮文档修订并独立提交后，再进行第五轮复审。
+- 本轮未修改业务代码、未运行 Docker/ACL/attach 实测、未批准任何镜像 digest、未启动容器执行、未合并分支。
+- 项目负责人明确授权合并前，V2 分支绝不与 `main` 合并；`main` 与 `trae-dev` 保持不动。
