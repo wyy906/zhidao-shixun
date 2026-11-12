@@ -36,6 +36,7 @@ from app.models import CodeTask, User
 from app.services.sandbox_client import (
     SAFE_UNAVAILABLE_MESSAGE,
     SandboxBadResponse,
+    SandboxBusy,
     SandboxClient,
     SandboxUnavailable,
     get_sandbox_client,
@@ -52,6 +53,17 @@ PENDING_STATUSES = {"queued", "running"}
 
 SAFE_BUSY_MESSAGE = "当前代码运行请求过多，请稍后重试。"
 SAFE_FAILED_MESSAGE = "代码执行失败，请检查代码后重试。"
+
+# 可查看任意用户任务与内部诊断的角色（统一权限入口）
+STAFF_ROLES = {"teacher", "admin"}
+
+
+def _is_staff(user: User) -> bool:
+    return user.role in STAFF_ROLES
+
+
+def _can_view_task(user: User, task: CodeTask) -> bool:
+    return task.user_id == user.id or _is_staff(user)
 
 
 class ConcurrencyGuard:
@@ -242,7 +254,7 @@ async def _poll_job(sandbox: SandboxClient, job_id: str) -> dict:
 
 async def _safe_fail(
     db: Session,
-    task: CodeTask,
+    task: CodeTask | None,
     sandbox: SandboxClient,
     job_id: str,
     error_code: str,
@@ -256,6 +268,8 @@ async def _safe_fail(
             await sandbox.acancel(job_id)
         except SandboxUnavailable:
             logger.warning("异常收口时取消沙箱任务失败: %s", job_id)
+    if task is None:
+        return
     try:
         db.rollback()
     except Exception:
@@ -264,6 +278,19 @@ async def _safe_fail(
         _fail_task(db, task, error_code, f"task aborted: {error_code}")
     except Exception:
         logger.exception("异常收口时任务状态落库失败: %s", task.id)
+
+
+def _extract_job_id(submitted: dict) -> str:
+    """校验管理器提交响应，畸形数据按不可用安全失败"""
+    if not isinstance(submitted, dict):
+        raise SandboxBadResponse("submit response must be an object")
+    job_id = submitted.get("job_id")
+    if not isinstance(job_id, str) or not job_id:
+        raise SandboxBadResponse("submit response missing job_id")
+    status = submitted.get("status")
+    if status is not None and not isinstance(status, str):
+        raise SandboxBadResponse("submit response has invalid status")
+    return job_id
 
 
 @router.post("/run", response_model=CodeRunOut)
@@ -299,6 +326,8 @@ async def run_code(
     ):
         raise HTTPException(429, SAFE_BUSY_MESSAGE)
 
+    task: CodeTask | None = None
+    job_id = ""
     try:
         task = CodeTask(
             id=uuid.uuid4().hex,
@@ -311,40 +340,38 @@ async def run_code(
         db.add(task)
         db.commit()
 
-        try:
-            submitted = await sandbox.asubmit(code, timeout)
-        except SandboxUnavailable:
-            _fail_task(db, task, "sandbox_unavailable", "sandbox manager unavailable")
-            _raise_unavailable()
-
-        job_id = str(submitted.get("job_id") or "") if isinstance(submitted, dict) else ""
-        if not job_id:
-            _fail_task(db, task, "sandbox_bad_response", "missing job id")
-            _raise_unavailable()
+        # 提交成功后，任何异常都必须尽力取消远端任务并收口本地状态
+        submitted = await sandbox.asubmit(code, timeout)
+        job_id = _extract_job_id(submitted)
 
         task.status = submitted.get("status") if submitted.get("status") in {
             "queued", "running",
         } else "running"
         db.commit()
 
-        try:
-            result = await _poll_job(sandbox, job_id)
-            _save_result(db, task, result)
-        except SandboxUnavailable as exc:
-            error_code = (
-                "sandbox_bad_response" if isinstance(exc, SandboxBadResponse)
-                else "sandbox_unavailable"
-            )
-            logger.warning("沙箱任务异常收口（%s）: %s", error_code, job_id)
-            await _safe_fail(db, task, sandbox, job_id, error_code)
-            _raise_unavailable()
-        except HTTPException:
-            raise
-        except Exception:
-            logger.exception("代码任务处理异常，任务将落到安全终态: %s", task.id)
-            await _safe_fail(db, task, sandbox, job_id, "internal_error")
-            _raise_unavailable()
-
+        result = await _poll_job(sandbox, job_id)
+        _save_result(db, task, result)
+    except SandboxBusy:
+        # 管理器排队已满：映射为 429，而不是“环境不可用”的 503
+        logger.warning("沙箱队列已满，任务已拒绝: %s", job_id or "-")
+        await _safe_fail(db, task, sandbox, job_id, "queue_full")
+        raise HTTPException(429, SAFE_BUSY_MESSAGE)
+    except HTTPException:
+        raise
+    except SandboxUnavailable as exc:
+        error_code = (
+            "sandbox_bad_response" if isinstance(exc, SandboxBadResponse)
+            else "sandbox_unavailable"
+        )
+        logger.warning("沙箱任务异常收口（%s）: %s", error_code, job_id or "-")
+        await _safe_fail(db, task, sandbox, job_id, error_code)
+        _raise_unavailable()
+    except Exception:
+        logger.exception("代码任务处理异常，任务将落到安全终态: %s",
+                         task.id if task else "-")
+        await _safe_fail(db, task, sandbox, job_id, "internal_error")
+        _raise_unavailable()
+    else:
         return _result_to_response(task, result)
     finally:
         guard.release(current_user.id)
@@ -373,10 +400,9 @@ def get_task(
     task = db.get(CodeTask, task_id)
     if task is None:
         raise HTTPException(404, "任务不存在")
-    if task.user_id != current_user.id and current_user.role != "teacher":
+    if not _can_view_task(current_user, task):
         raise HTTPException(404, "任务不存在")
 
-    is_staff = current_user.role in {"teacher", "admin"}
     return CodeTaskOut(
         task_id=task.id,
         status=task.status,
@@ -385,7 +411,7 @@ def get_task(
         exit_code=task.exit_code,
         duration_ms=task.duration_ms,
         error_code=task.error_code,
-        error_message=(task.error_message if is_staff
+        error_message=(task.error_message if _is_staff(current_user)
                        else _student_error_message(task.status)),
         timeout_seconds=task.timeout_seconds,
         created_at=task.created_at,

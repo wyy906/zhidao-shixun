@@ -9,10 +9,12 @@ import uuid
 
 from app.api.v1.routers import code as code_router
 from app.core.config import settings
+from app.core.security import hash_password
 from app.main import _fail_interrupted_tasks, app
-from app.models import CodeTask
+from app.models import CodeTask, User
 from app.services.sandbox_client import (
     SAFE_UNAVAILABLE_MESSAGE,
+    SandboxBusy,
     SandboxUnavailable,
     get_sandbox_client,
 )
@@ -30,18 +32,22 @@ class FakeSandbox:
     """可控的假沙箱管理器"""
 
     def __init__(self, result=None, submit_error=False, poll_error=False,
-                 poll_exception=None, cancel_error=False, missing_job_id=False):
+                 poll_exception=None, cancel_error=False, missing_job_id=False,
+                 submit_busy=False):
         self.result = dict(result or SUCCESS_RESULT)
         self.submit_error = submit_error
         self.poll_error = poll_error
         self.poll_exception = poll_exception
         self.cancel_error = cancel_error
         self.missing_job_id = missing_job_id
+        self.submit_busy = submit_busy
         self.submitted: list[tuple[str, int]] = []
         self.cancelled: list[str] = []
 
     def submit(self, code, timeout):
         self.submitted.append((code, timeout))
+        if self.submit_busy:
+            raise SandboxBusy("queue full")
         if self.submit_error:
             raise SandboxUnavailable("manager down")
         job_id = "" if self.missing_job_id else "job-" + uuid.uuid4().hex
@@ -340,10 +346,13 @@ def test_malformed_job_status_fails_task(client, student_headers, db_session):
 
 
 def test_poll_unexpected_exception_fails_task(client, student_headers, db_session):
-    _use_sandbox(FakeSandbox(poll_exception=RuntimeError("boom")))
+    fake = FakeSandbox(poll_exception=RuntimeError("boom"))
+    _use_sandbox(fake)
     resp = _run(client, student_headers)
     assert resp.status_code == 503
     assert resp.json()["detail"] == SAFE_UNAVAILABLE_MESSAGE
+    # 提交成功后发生异常，必须尽力取消远端任务
+    assert fake.cancelled
 
     task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
     assert task.status == "failed"
@@ -425,3 +434,80 @@ def test_concurrent_request_rejected_before_submit(
     finally:
         code_router.guard.release(student_id)
         code_router.guard.reset()
+
+
+# ===========================================================================
+# 管理器队列满：429 不能被错误映射为 503
+# ===========================================================================
+def test_manager_queue_full_maps_to_429(client, student_headers, db_session):
+    _use_sandbox(FakeSandbox(submit_busy=True))
+    resp = _run(client, student_headers)
+    assert resp.status_code == 429
+    assert resp.json()["detail"] == code_router.SAFE_BUSY_MESSAGE
+
+    task = db_session.query(CodeTask).order_by(CodeTask.created_at.desc()).first()
+    assert task.status == "failed"
+    assert task.error_code == "queue_full"
+    # 学生接口只返回固定安全文案
+    detail = client.get(f"/api/v1/code/tasks/{task.id}", headers=student_headers)
+    assert detail.status_code == 200
+    assert detail.json()["error_message"] == code_router.SAFE_FAILED_MESSAGE
+
+
+# ===========================================================================
+# 教师 / 管理员权限统一
+# ===========================================================================
+def _make_staff(db_session, username: str, role: str, password: str) -> None:
+    db_session.add(User(
+        username=username,
+        hashed_password=hash_password(password),
+        real_name=username,
+        role=role,
+    ))
+    db_session.commit()
+
+
+def _staff_headers(client, username: str, password: str) -> dict:
+    resp = client.post("/api/v1/auth/login",
+                       json={"username": username, "password": password})
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['token']}"}
+
+
+def test_admin_and_teacher_share_task_visibility_rules(
+    client, db_session, users
+):
+    secret = "docker error /srv/zd/secrets.json sha256:" + "a" * 64
+    task = CodeTask(
+        id=uuid.uuid4().hex,
+        user_id=users["student"]["id"],
+        status="failed",
+        timeout_seconds=10,
+        error_code="container_error",
+        error_message=secret,
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    _make_staff(db_session, "teacher02", "teacher", "teacher-pass-123")
+    _make_staff(db_session, "admin01", "admin", "admin-pass-123")
+
+    for username, password in (
+        ("teacher02", "teacher-pass-123"),
+        ("admin01", "admin-pass-123"),
+    ):
+        headers = _staff_headers(client, username, password)
+        resp = client.get(f"/api/v1/code/tasks/{task.id}", headers=headers)
+        assert resp.status_code == 200
+        assert secret in resp.json()["error_message"]
+
+    # 普通学生仍看不到内部细节，且不能查看他人任务
+    student_headers = _staff_headers(client, "student01", "student-pass-123")
+    resp = client.get(f"/api/v1/code/tasks/{task.id}", headers=student_headers)
+    assert resp.status_code == 200
+    assert secret not in str(resp.json())
+
+    other = _staff_headers(client, "student02", "student-pass-123")
+    assert client.get(
+        f"/api/v1/code/tasks/{task.id}", headers=other
+    ).status_code == 404

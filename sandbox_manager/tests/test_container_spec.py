@@ -173,6 +173,8 @@ def test_verify_accepts_expected_container_attrs():
     {"ShmSize": 64 * 1024 * 1024},
     {"ShmSize": 0},
     {"SecurityOpt": []},
+    {"SecurityOpt": ["no-new-privileges:false"]},
+    {"SecurityOpt": ["no-new-privileges"]},
     {"Binds": ["/:/host"]},
     {"Devices": [{"PathOnHost": "/dev/sda"}]},
     {"PortBindings": {"8080/tcp": [{"HostPort": "8080"}]}},

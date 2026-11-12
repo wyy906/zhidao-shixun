@@ -189,8 +189,9 @@ def verify_container_security(
 
     security_opt = host_config.get("SecurityOpt") or []
     security_values = [str(opt) for opt in security_opt]
-    if not any("no-new-privileges" in opt for opt in security_values):
-        problems.append("SecurityOpt 未包含 no-new-privileges")
+    # 必须是启用的 true；no-new-privileges:false / 裸选项都不能视为生效
+    if "no-new-privileges:true" not in security_values:
+        problems.append("SecurityOpt 未包含 no-new-privileges:true")
     # 注意：Docker inspect 只能确认 profile 选项被记录，无法确认内核真正加载；
     # 后者需要在执行节点用部署检查（verify_isolation.py）确认。
     if seccomp_profile and f"seccomp={seccomp_profile}" not in security_values:

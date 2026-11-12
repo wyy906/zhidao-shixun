@@ -7,7 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1.api import api_router
 from app.db.session import engine, Base, SessionLocal
-from app.services.sandbox_client import SandboxUnavailable, ensure_sandbox_configuration
+from app.services.sandbox_client import (
+    SandboxUnavailable,
+    ensure_sandbox_configuration,
+    get_sandbox_client,
+)
 
 
 def _ensure_admin() -> None:
@@ -115,7 +119,11 @@ async def lifespan(app: FastAPI):
         _fail_interrupted_tasks(db)
     finally:
         db.close()
-    yield
+    try:
+        yield
+    finally:
+        # 应用关闭时释放沙箱客户端的异步连接池
+        await get_sandbox_client().aclose()
 
 
 app = FastAPI(

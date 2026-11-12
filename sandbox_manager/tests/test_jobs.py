@@ -94,11 +94,67 @@ def test_cancel_queued_job_releases_capacity():
 
     cancelled = store.cancel(queued["job_id"])
     assert cancelled["status"] == "cancelled"
+    # 取消会从内部队列移除，不留下占位项
+    assert len(store._queue) == 0
 
     accepted = store.submit("print(3)", 1)
     assert accepted["status"] in {"queued", "running"}
     runner.release.set()
     _wait_status(store, first["job_id"])
+
+
+def test_repeated_submit_cancel_does_not_grow_internal_queue():
+    runner = BlockingRunner()
+    store = _store(runner, max_pending=1)
+    first = store.submit("print(1)", 1)
+    assert runner.started.wait(2)
+
+    for index in range(50):
+        job = store.submit(f"print({index})", 1)
+        store.cancel(job["job_id"])
+        assert len(store._queue) == 0
+    # 队列始终有界，没有积累已取消任务的占位项；仍可正常提交
+    last = store.submit("print(99)", 1)
+    assert last["status"] in {"queued", "running"}
+    runner.release.set()
+    _wait_status(store, first["job_id"])
+    _wait_status(store, last["job_id"])
+
+
+class _BadResultRunner:
+    def __init__(self, result):
+        self.result = result
+
+    def run_job(self, code, timeout, cancel_event=None, job_id=""):
+        return self.result
+
+
+@pytest.mark.parametrize("result", [
+    {"status": "definitely-not-a-status", "stdout": "", "stderr": ""},
+    {"status": "succeeded", "stdout": 123, "stderr": ""},
+    {"status": "succeeded", "stdout": "", "stderr": "", "exit_code": "0"},
+    {"status": "succeeded", "stdout": "", "stderr": "", "duration_ms": -5},
+    ["not", "an", "object"],
+])
+def test_malformed_runner_result_is_rejected(result):
+    store = JobStore(_BadResultRunner(result), SandboxLimits(max_concurrent=1, max_pending=2))
+    job = store.submit("print(1)", 1)
+    finished = _wait_status(store, job["job_id"])
+    assert finished["status"] == "failed"
+    assert finished["error_code"] == "internal_error"
+    assert "123" not in finished["stderr"]
+
+
+def test_malformed_runner_result_does_not_leak_content():
+    secret = "/srv/zd-sandbox/secrets.json"
+    store = JobStore(
+        _BadResultRunner({"status": "weird", "stdout": secret, "stderr": secret}),
+        SandboxLimits(max_concurrent=1, max_pending=2),
+    )
+    job = store.submit("print(1)", 1)
+    finished = _wait_status(store, job["job_id"])
+    assert finished["status"] == "failed"
+    assert secret not in str(finished)
 
 
 def test_concurrent_submissions_do_not_exceed_limit():

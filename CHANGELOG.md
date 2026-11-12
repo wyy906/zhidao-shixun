@@ -1,5 +1,32 @@
 # 更新记录
 
+## 2026-11-12 — 阶段 3-A 第四轮 F-20 ~ F-24 修复
+
+### 修复
+
+- **F-20 内部队列有界**：`sandbox_manager/jobs.py` 改为固定 daemon 工作线程 + 有界 deque；
+  取消排队任务会从内部队列直接移除，重复提交/取消不会累积占位项。
+- **F-21 异常收口扩大**：沙箱提交成功后，状态更新、轮询、保存、响应构建之外的任何异常
+  都会尽力取消远端任务，并把本地任务落为 `failed/timeout`，不会永久 `queued/running`。
+- **F-22 `no-new-privileges` 严格校验**：`SecurityOpt` 必须精确包含
+  `no-new-privileges:true`；`no-new-privileges:false` 与裸选项一律拒绝。
+- **F-23 连接池生命周期**：`SandboxClient.aclose()` 由 FastAPI lifespan 在应用关闭时调用，
+  支持幂等关闭；不再依赖进程退出时被动释放。
+- **F-24 权限统一**：教师 / 管理员统一使用 `STAFF_ROLES`、`_is_staff`、`_can_view_task`；
+  学生越权仍统一 404。
+- **结果字段校验**：管理器对执行器返回的状态、输出类型、退出码、耗时做结构校验，
+  畸形结果落为 `failed/internal_error`，不向调用方泄露内部内容。
+- **429 映射修正**：管理器队列满（429）识别为 `SandboxBusy`，业务后端返回 429
+  （"当前代码运行请求过多"），任务记录 `queue_full`，不再误报 503。
+
+### 测试
+
+- 后端 pytest：99 → **104 项**。
+- 沙箱管理器：93 → **102 项**。
+- 前端 `npm test`：通过。
+- 真实 Linux / Docker 实机验证（队列压力、429 端到端联调、连接池真实释放、
+  seccomp/AppArmor 内核生效）**仍未执行**。
+
 ## 2026-11-12 — 阶段 3-A 第三轮 P1 修复
 
 ### 修复

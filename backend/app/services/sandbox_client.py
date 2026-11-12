@@ -40,6 +40,10 @@ class SandboxBadResponse(SandboxUnavailable):
     """管理器返回了无法解析 / 不符合约定的数据"""
 
 
+class SandboxBusy(SandboxUnavailable):
+    """管理器队列已满（HTTP 429）；业务后端应映射为 429 而不是 503"""
+
+
 class SandboxClient:
     """调用独立执行节点的沙箱管理器"""
 
@@ -138,23 +142,30 @@ class SandboxClient:
                     self._async_client = httpx.AsyncClient(**self._client_kwargs())
         return self._async_client
 
-    def close(self) -> None:
-        """关闭复用的异步连接池（进程退出或测试清理时调用）"""
+    async def aclose(self) -> None:
+        """关闭复用的异步连接池（由 FastAPI lifespan 在应用关闭时调用）"""
         client, self._async_client = self._async_client, None
         if client is not None:
-            try:
-                import asyncio
+            await client.aclose()
 
-                asyncio.get_running_loop().create_task(client.aclose())
-            except RuntimeError:
-                # 没有运行中的事件循环时尽力关闭
-                pass
+    def close(self) -> None:
+        """同步兼容入口：尽力释放连接池（优先使用 `await aclose()`）"""
+        import asyncio
+
+        try:
+            asyncio.run(self.aclose())
+        except RuntimeError:
+            # 已有运行中的事件循环时不能在此处同步关闭，交由 aclose 处理
+            pass
 
     # ------------------------------------------------------------------
     # 响应解析
     # ------------------------------------------------------------------
     @staticmethod
     def _parse_response(resp: httpx.Response, method: str, path: str) -> dict:
+        if resp.status_code == 429:
+            logger.warning("沙箱管理器队列已满（%s %s）", method, path)
+            raise SandboxBusy("sandbox manager queue is full")
         if resp.status_code >= 400:
             # 只记录状态码，不回显管理器响应体，避免把内部细节带给前端
             logger.warning("沙箱管理器返回异常状态（%s %s）: %s", method, path, resp.status_code)

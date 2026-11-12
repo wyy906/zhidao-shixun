@@ -12,8 +12,8 @@
 | 日期 | 2026-11-12 |
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
-| 后端测试 | **99 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **93 项，全部通过**（`sandbox_manager/tests/`） |
+| 后端测试 | **104 项，全部通过**（`backend/tests/`） |
+| 沙箱管理器测试 | **102 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -22,9 +22,9 @@
 
 ## 2. 结论摘要
 
-1. 后端 99 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全。
-2. 沙箱管理器 93 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
-   生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与生命周期。
+1. 后端 104 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
+2. 沙箱管理器 102 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+   生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、结果字段校验与生命周期。
 3. 学生代码**已不在业务后端进程内执行**，也不再作为本机 subprocess 运行；沙箱不可用时一律 503，不存在降级路径。
 4. 测试在**无网络、无真实 AI Key、无真实数据库、无真实 `.env`、无 Docker** 的条件下可重复运行。
 5. 测试过程中发现 8 个问题：**2 个已修复**，**6 个待负责人决策**；1 项（桌面端 GUI）**尚未验证**。
@@ -47,7 +47,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（99 项 + 93 项）
+## 4. 后端自动化测试（104 项 + 102 项）
 
 ### 4.1 用例分布
 
@@ -58,29 +58,29 @@
 | `tests/test_progress.py` | 11 | 11 | 0 |
 | `tests/test_report.py` | 10 | 10 | 0 |
 | `tests/test_config_isolation.py` | 4 | 4 | 0 |
-| `tests/test_code_sandbox.py` | 25 | 25 | 0 |
-| `tests/test_sandbox_client.py` | 15 | 15 | 0 |
+| `tests/test_code_sandbox.py` | 27 | 27 | 0 |
+| `tests/test_sandbox_client.py` | 18 | 18 | 0 |
 | `tests/test_migration_code_tasks.py` | 1 | 1 | 0 |
 | `tests/test_db_init.py` | 5 | 5 | 0 |
-| **backend 合计** | **99** | **99** | **0** |
-| `sandbox_manager/tests/test_container_spec.py` | 39 | 39 | 0 |
+| **backend 合计** | **104** | **104** | **0** |
+| `sandbox_manager/tests/test_container_spec.py` | 41 | 41 | 0 |
 | `sandbox_manager/tests/test_server.py` | 19 | 19 | 0 |
-| `sandbox_manager/tests/test_jobs.py` | 4 | 4 | 0 |
+| `sandbox_manager/tests/test_jobs.py` | 11 | 11 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_runner.py` | 17 | 17 | 0 |
-| **管理器合计** | **93** | **93** | **0** |
+| **管理器合计** | **102** | **102** | **0** |
 
 ### 4.2 实际执行结果
 
 ```
 # backend
 python -m pytest -q
-99 passed, 334 warnings in 55.17s
+104 passed, 346 warnings in 54.93s
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-93 passed, 1 warning in 1.17s
+102 passed, 1 warning in 1.37s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -144,6 +144,20 @@ python -m pytest -q sandbox_manager/tests
   等逐项与实际 `HostConfig` 比对，不匹配即删除容器拒绝执行。
 - **异步轮询与异常收口**：路由改为 `async` + `httpx.AsyncClient`，不阻塞事件循环；
   畸形响应 / 异常 / 保存失败都会把任务落到安全终态，并尽力取消沙箱任务。
+- **内部队列有界**：管理器使用固定 daemon 工作线程 + 有界 deque；取消排队任务会从内部队列
+  移除，不会留下占位项；重复提交/取消不会累积内部任务。
+- **异常收口扩大**：沙箱提交成功后任何异常（含状态更新、轮询、保存）都会尽力取消远端任务，
+  本地任务不会永久停留在 `queued/running`。
+- **`no-new-privileges` 严格校验**：必须精确包含 `no-new-privileges:true`；
+  `no-new-privileges:false` 或裸选项一律拒绝。
+- **连接池生命周期**：异步 `SandboxClient` 由 FastAPI lifespan 在应用关闭时 `aclose()`；
+  可幂等重复关闭。
+- **权限统一**：教师与管理员共用同一套“可查看其他用户任务 / 内部错误”的判断入口；
+  学生仍只能查看自己的任务，越权统一 404。
+- **管理器结果校验**：执行器返回的状态、输出类型、退出码、耗时先做结构校验，
+  畸形结果落为 `failed/internal_error`，不把异常对象或内部内容返回给调用方。
+- **队列满映射**：管理器 429 被识别为 `SandboxBusy`，业务后端返回 429 而不是 503，
+  并记录任务 `error_code=queue_full`。
 
 ## 5. 数据库与配置隔离验证（实测输出）
 
@@ -217,6 +231,8 @@ python -m pytest -q sandbox_manager/tests
 | S-11 | `/dev/shm` 8MB 在真实容器中的实际挂载 | 仅验证 inspect 字段与创建参数 |
 | S-12 | seccomp / AppArmor 是否被内核真正加载并生效 | 只能验证 Docker 记录了配置，无法从 inspect 证明内核强制 |
 | S-13 | 异步接口在真实并发下的连接池与线程行为 | 仅接口级测试，未做真实压测 |
+| S-14 | 取消 / 重复提交下的内部队列在真实压力下保持有界 | 线程级单元测试通过，未做真实压测 |
+| S-15 | 管理器 429 与业务后端 429 的端到端联调 | 仅 FakeSandbox / MockTransport 验证，未在真实节点联调 |
 
 ### 7.4 阶段 3-A 的用户可见行为变化（已记录，非缺陷）
 
@@ -248,6 +264,9 @@ python -m pytest -q sandbox_manager/tests
 | `/dev/shm` 8MB | 是 | 是（inspect 字段） | **未验证**（真实挂载） |
 | seccomp / AppArmor 记录回查 | 是 | 是（模拟 attrs） | **未验证**（内核实际加载） |
 | 异步轮询不阻塞事件循环 | 是 | 接口测试 + 静态检查 | **未验证**（真实压测） |
+| 取消后内部队列有界 | 是 | 线程模拟测试 | **未验证**（真实压力） |
+| 管理器 429 → 后端 429 | 是 | MockTransport + FakeSandbox | **未验证**（端到端联调） |
+| 连接池随 lifespan 释放 | 是 | lifespan 单元测试 | **未验证**（真实进程退出） |
 | 启动清理残留容器 | 是 | 是（FakeDocker） | **未验证** |
 | 镜像 digest 校验 | 是 | 是 | **未验证**（真实 daemon 字段） |
 | 生产强制 HTTPS / mTLS | 是 | 是（配置与启动参数） | **未验证**（真实握手） |
@@ -287,6 +306,18 @@ python -m pytest -q sandbox_manager/tests
 | F-17 | seccomp/AppArmor/CapAdd/Init 未回查实际配置 | 逐项比对 `SecurityOpt`、`CapAdd`、`Init`、`ShmSize`，不匹配删容器 | `test_container_spec.py` 4 项 |
 | F-18 | 同步轮询占用线程池 | `async def` + `httpx.AsyncClient` + 连接/读取超时与连接池上限；后端并发保护 429 | `test_code_sandbox.py` 4 项 |
 | F-19 | 异常路径可能留下永久 running 任务 | 畸形响应 / 异常 / 保存失败统一收口为安全终态并尽力取消 | `test_code_sandbox.py` 4 项 |
+
+#### 第四轮审查（F-20 ~ F-24）修复
+
+| 编号 | 问题 | 修复 | 回归测试 |
+|---|---|---|---|
+| F-20 | 取消后执行器内部队列仍可能积累 | 固定 daemon 工作线程 + 有界 deque；取消排队任务直接移出队列 | `test_jobs.py` 2 项 |
+| F-21 | 提交成功后部分异常未取消远端任务 | 任务创建后全流程统一 try/except；任何异常取消远端并落终态 | `test_code_sandbox.py` 2 项（取消断言、队列满） |
+| F-22 | `no-new-privileges` 校验过宽 | 必须精确包含 `no-new-privileges:true` | `test_container_spec.py` 2 项 |
+| F-23 | 异步连接池未随应用关闭释放 | `aclose()` + FastAPI lifespan 关闭；幂等 | `test_sandbox_client.py` 2 项 |
+| F-24 | 教师/管理员权限判断分散 | 统一 `STAFF_ROLES` / `_is_staff` / `_can_view_task` | `test_code_sandbox.py` 1 项 |
+| — | 管理器结果字段未校验 | 状态、输出类型、退出码、耗时结构校验，畸形落 `internal_error` | `test_jobs.py` 6 项 |
+| — | 管理器 429 被误映射为 503 | `SandboxBusy` → 业务后端 429；任务 `queue_full` | `test_sandbox_client.py` 1 项、`test_code_sandbox.py` 1 项 |
 
 ## 8. 历史记录（仅追溯，不代表当前状态）
 
@@ -367,6 +398,17 @@ python -m pytest -q sandbox_manager/tests
 - 代码执行接口改异步，增加连接池与并发保护，避免阻塞事件循环 / 请求堆积。
 - 异常路径统一收口，任务不会静默永久停在 `running`。
 - 后端测试 75 → **99**，管理器测试 80 → **93**；真实 Linux 实机验证仍未完成。
+
+### 8.9 阶段 3-A 第四轮 F-20 ~ F-24 修复
+
+- 管理器内部队列改为有界 deque + 固定 daemon 工作线程；取消排队任务立即移出队列。
+- 沙箱提交成功后任何异常都会尽力取消远端任务，本地任务落到安全终态。
+- `no-new-privileges` 必须精确为 `no-new-privileges:true`。
+- 异步连接池随 FastAPI lifespan 关闭，可幂等释放。
+- 教师 / 管理员共用统一权限入口；学生越权仍返回 404。
+- 管理器执行器结果增加结构校验，畸形结果统一 `failed/internal_error`。
+- 管理器 429 正确映射为业务后端 429（任务 `queue_full`），不再误报 503。
+- 后端测试 99 → **104**，管理器测试 93 → **102**；真实 Linux 实机验证仍未完成。
 
 ## 9. 本机环境限制（影响复现）
 

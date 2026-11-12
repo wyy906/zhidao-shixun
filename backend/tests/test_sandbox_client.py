@@ -15,6 +15,7 @@ import pytest
 from app.services import sandbox_client
 from app.services.sandbox_client import (
     SandboxBadResponse,
+    SandboxBusy,
     SandboxClient,
     SandboxUnavailable,
     ensure_sandbox_configuration,
@@ -125,6 +126,57 @@ def test_error_status_does_not_echo_body():
     with pytest.raises(SandboxUnavailable) as exc:
         SandboxClient._parse_response(resp, "GET", "/v1/jobs/x")
     assert "/srv/zd" not in str(exc.value)
+
+
+def test_queue_full_status_maps_to_busy():
+    request = httpx.Request("POST", BASE_HTTPS + "/v1/jobs")
+    resp = httpx.Response(
+        429,
+        json={"detail": {"status": "busy", "error": "queue_full"}},
+        request=request,
+    )
+    with pytest.raises(SandboxBusy):
+        SandboxClient._parse_response(resp, "POST", "/v1/jobs")
+
+
+def test_async_client_pool_is_closed_idempotently():
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+    client = _client(transport=transport)
+
+    async def flow():
+        client._get_async_client()
+        assert client._async_client is not None
+        await client.aclose()
+        assert client._async_client is None
+        await client.aclose()  # 重复关闭不报错
+
+    asyncio.run(flow())
+
+
+def test_app_lifespan_closes_sandbox_pool(monkeypatch):
+    import app.main as main_module
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+    client = _client(transport=transport)
+    monkeypatch.setattr(sandbox_client, "_client", client)
+
+    class _DB:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(main_module, "initialize_database", lambda: None)
+    monkeypatch.setattr(main_module, "_ensure_admin", lambda: None)
+    monkeypatch.setattr(main_module, "_fail_interrupted_tasks", lambda db: None)
+    monkeypatch.setattr(main_module, "SessionLocal", lambda: _DB())
+    monkeypatch.setattr(main_module, "ensure_sandbox_configuration", lambda: None)
+
+    async def scenario():
+        async with main_module.lifespan(main_module.app):
+            client._get_async_client()
+            assert client._async_client is not None
+        assert client._async_client is None
+
+    asyncio.run(scenario())
 
 
 def test_startup_validation_rejects_insecure_manager(monkeypatch):

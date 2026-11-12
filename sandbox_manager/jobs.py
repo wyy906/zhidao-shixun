@@ -4,9 +4,11 @@
 按“沙箱不可用”安全失败，绝不会把未完成任务当成成功。
 
 队列策略：
-  - ThreadPoolExecutor 固定 max_concurrent 个执行线程，不再为每个排队任务创建线程；
-  - 排队任务数（尚未开始执行）不得超过 max_pending，超限立即返回 queue_full；
-  - 被拒绝的请求不创建任务记录、不启动线程、不创建容器。
+  - 固定 `max_concurrent` 个 daemon 工作线程，排队任务只进内部 deque；
+  - 内部排队长度（尚未开始执行）不得超过 `max_pending`，超限立即 queue_full；
+  - 取消排队任务会**从内部队列移除**，不会在队列中留下占位项；
+  - 被拒绝的请求不创建任务记录、不启动线程、不创建容器；
+  - 执行器返回的结果会先做结构校验，畸形结果一律落为 failed/internal_error。
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ import logging
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
 from typing import Any
 
 from .container_spec import SandboxLimits
@@ -27,6 +29,10 @@ JOB_MAX_KEPT = 1000
 
 SAFE_JOB_FAILED_MESSAGE = "任务执行环境内部错误，任务已安全终止。"
 
+TERMINAL_STATUSES = {
+    "succeeded", "failed", "timeout", "resource_exceeded", "cancelled",
+}
+
 
 class QueueFullError(RuntimeError):
     """排队任务已达到上限"""
@@ -34,27 +40,59 @@ class QueueFullError(RuntimeError):
     code = "queue_full"
 
 
+def _validate_result(result: Any) -> dict:
+    """校验执行器返回的任务结果，拒绝畸形结构"""
+    if not isinstance(result, dict):
+        raise ValueError("job result must be an object")
+    status = result.get("status")
+    if status not in TERMINAL_STATUSES:
+        raise ValueError(f"unexpected job status: {status!r}")
+
+    normalized = dict(result)
+    for field in ("stdout", "stderr"):
+        value = normalized.get(field, "")
+        if value is None:
+            value = ""
+        if not isinstance(value, str):
+            raise ValueError(f"{field} must be a string")
+        normalized[field] = value
+
+    exit_code = normalized.get("exit_code")
+    if exit_code is not None and not isinstance(exit_code, int):
+        raise ValueError("exit_code must be an integer or null")
+
+    duration = normalized.get("duration_ms")
+    if duration is not None and (not isinstance(duration, int) or duration < 0):
+        raise ValueError("duration_ms must be a non-negative integer or null")
+
+    if status != "succeeded" and not normalized.get("stderr"):
+        normalized["stderr"] = SAFE_JOB_FAILED_MESSAGE
+    return normalized
+
+
 class JobStore:
     def __init__(self, runner: Any, limits: SandboxLimits):
         self._runner = runner
         self._limits = limits
         self._jobs: dict[str, dict] = {}
+        # 内部待执行队列：长度即排队任务数，取消时直接移除，不会累积占位项
+        self._queue: deque[tuple[dict, str, int]] = deque()
         self._lock = threading.Lock()
-        # 正在执行的线程数固定；排队任务只占队列，不占线程
-        self._executor = ThreadPoolExecutor(
-            max_workers=limits.max_concurrent,
-            thread_name_prefix="zd-sandbox",
-        )
-        # 仅统计“已提交但尚未开始执行”的任务
-        self._pending = 0
+        self._cv = threading.Condition(self._lock)
+        self._closed = False
+        self._workers = [
+            threading.Thread(target=self._worker, name=f"zd-sandbox-{i}", daemon=True)
+            for i in range(limits.max_concurrent)
+        ]
+        for worker in self._workers:
+            worker.start()
 
     # ------------------------------------------------------------------
     def submit(self, code: str, timeout: int) -> dict:
-        with self._lock:
+        with self._cv:
             self._prune_locked()
-            if self._pending >= self._limits.max_pending:
+            if len(self._queue) >= self._limits.max_pending:
                 raise QueueFullError("sandbox queue is full")
-            self._pending += 1
             job_id = uuid.uuid4().hex
             job = {
                 "job_id": job_id,
@@ -67,20 +105,10 @@ class JobStore:
                 "error_message": None,
                 "created_at": time.time(),
                 "cancel_event": threading.Event(),
-                "capacity_released": False,
             }
             self._jobs[job_id] = job
-
-        try:
-            self._executor.submit(self._execute, job, code, timeout)
-        except RuntimeError:
-            # 执行器已关闭等极端情况：撤回任务与容量占用
-            with self._lock:
-                self._jobs.pop(job_id, None)
-                if not job["capacity_released"]:
-                    job["capacity_released"] = True
-                    self._pending -= 1
-            raise
+            self._queue.append((job, code, timeout))
+            self._cv.notify()
         return self._public(job)
 
     def get(self, job_id: str) -> dict | None:
@@ -89,36 +117,46 @@ class JobStore:
             return self._public(job) if job else None
 
     def cancel(self, job_id: str) -> dict | None:
-        with self._lock:
+        with self._cv:
             job = self._jobs.get(job_id)
             if job is None:
                 return None
             job["cancel_event"].set()
             if job["status"] == "queued":
+                # 真正从内部队列移除，释放排队容量
+                self._queue = deque(item for item in self._queue if item[0] is not job)
                 job["status"] = "cancelled"
                 job["exit_code"] = -1
                 job["duration_ms"] = 0
                 job["stderr"] = "任务已取消。"
-                self._release_capacity_locked(job)
             return self._public(job)
 
-    # ------------------------------------------------------------------
-    def _release_capacity_locked(self, job: dict) -> None:
-        """释放排队容量（幂等），确保取消 / 开始执行 / 拒绝都只释放一次"""
-        if not job.get("capacity_released", False):
-            job["capacity_released"] = True
-            self._pending = max(0, self._pending - 1)
+    def close(self) -> None:
+        """停止工作线程（测试/进程退出时使用）"""
+        with self._cv:
+            self._closed = True
+            self._cv.notify_all()
 
-    def _execute(self, job: dict, code: str, timeout: int) -> None:
-        with self._lock:
-            self._release_capacity_locked(job)
-            if job["cancel_event"].is_set() or job["status"] == "cancelled":
-                return
-            job["status"] = "running"
+    # ------------------------------------------------------------------
+    def _worker(self) -> None:
+        while True:
+            with self._cv:
+                while not self._queue and not self._closed:
+                    self._cv.wait()
+                if self._closed:
+                    return
+                job, code, timeout = self._queue.popleft()
+                if job["cancel_event"].is_set():
+                    continue
+                job["status"] = "running"
+            self._run(job, code, timeout)
+
+    def _run(self, job: dict, code: str, timeout: int) -> None:
         try:
             result = self._runner.run_job(
                 code, timeout, job["cancel_event"], job["job_id"]
             )
+            self._finish(job, _validate_result(result))
         except SandboxError as exc:
             # 内部细节只写服务端日志，不通过接口返回
             logger.warning("沙箱任务失败 %s: %s: %s", job["job_id"], exc.code, exc)
@@ -131,7 +169,17 @@ class JobStore:
                 "error_code": exc.code,
                 "error_message": SAFE_JOB_FAILED_MESSAGE,
             })
-            return
+        except ValueError as exc:
+            logger.error("执行器返回畸形结果 %s: %s", job["job_id"], exc)
+            self._finish(job, {
+                "status": "failed",
+                "stdout": "",
+                "stderr": SAFE_JOB_FAILED_MESSAGE,
+                "exit_code": -1,
+                "duration_ms": None,
+                "error_code": "internal_error",
+                "error_message": SAFE_JOB_FAILED_MESSAGE,
+            })
         except Exception:  # 防御性兜底
             logger.exception("沙箱任务异常 %s", job["job_id"])
             self._finish(job, {
@@ -143,14 +191,12 @@ class JobStore:
                 "error_code": "internal_error",
                 "error_message": SAFE_JOB_FAILED_MESSAGE,
             })
-            return
-        self._finish(job, result)
 
     def _finish(self, job: dict, result: dict) -> None:
         with self._lock:
-            job["status"] = result.get("status", "failed")
-            job["stdout"] = result.get("stdout", "")
-            job["stderr"] = result.get("stderr", "")
+            job["status"] = result["status"]
+            job["stdout"] = result["stdout"]
+            job["stderr"] = result["stderr"]
             job["exit_code"] = result.get("exit_code")
             job["duration_ms"] = result.get("duration_ms")
             job["error_code"] = result.get("error_code")
@@ -159,10 +205,7 @@ class JobStore:
     # ------------------------------------------------------------------
     @staticmethod
     def _public(job: dict) -> dict:
-        return {
-            k: v for k, v in job.items()
-            if k not in {"cancel_event", "capacity_released"}
-        }
+        return {k: v for k, v in job.items() if k != "cancel_event"}
 
     def _prune_locked(self) -> None:
         now = time.time()
