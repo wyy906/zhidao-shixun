@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第一轮架构复审：方向认可，需补齐访问控制/请求授权/镜像固定/输入校验/清理边界；修订通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第二轮架构修订已提交，待 ChatGPT 第二轮架构复审；复审通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -318,6 +318,94 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜Trae：V2-04A 架构第二轮修订（逐项响应第一轮复审七项要求，仅文档）
+
+**修订 1：localhost 执行服务的完整访问控制（响应复审项 1）**
+
+原方案"127.0.0.1 绑定 + 共享令牌"扩展为五层防护，并如实声明信任边界：
+
+1. **Host 校验**：Host 头必须 ∈ {127.0.0.1:8101, localhost:8101}（配置白名单），否则 403——直接阻断 DNS rebinding（rebinding 场景 Host 是攻击者域名）。
+2. **Origin / 跨站防护**：执行端点仅接受无 Origin 的服务端到服务端请求；携带跨站 Origin（含 file:// 产生的 null）→ 403；`Sec-Fetch-Site: cross-site` → 403；执行服务**不配置任何 CORS 允许**（预检直接拒绝）。
+3. **方法与类型白名单**：`POST /api/v1/execute` 仅接受 `Content-Type: application/json`（精确匹配）；GET/其他方法 → 405；类型不符 → 415。
+4. **令牌**：`secrets.token_urlsafe(48)`（≈288bit 熵，≥32 字节要求）由 `scripts/generate-exec-token.ps1` 生成，写入本地 .env（Windows 默认 ACL 限当前用户可读）；不进前端 bundle、URL、普通日志、错误响应、进程命令行（从环境变量读取，不作为 argv 传递）。**信任边界如实声明：同机同用户的其他进程不在该防线内；这是单机同用户信任边界，不是强隔离。**
+5. **健康端点最小化**：`GET /health` 仅返回 `{"status":"ok","docker_available":bool}`；不返回 Docker 版本、容器数量/列表、镜像、路径、配置；健康端点同样做 Host 校验（防跨站探测），不要求令牌（供部署脚本检查，信息量仅为布尔值）。
+
+**修订 2：授权边界与部署模式（响应复审项 2）**
+
+- **Web 浏览器永不持有执行服务令牌**：令牌仅存于服务端 .env（FastAPI 与执行服务同值）；浏览器（含 XSS 场景）直连 8101 被 Host/Origin/令牌三层拒绝，负向测试覆盖。
+- **执行请求只能经 FastAPI 服务端代理**：前端 → `POST /api/v1/experiments/{id}/steps/{sid}/execute`（业务 API，V2-04B）→ FastAPI 校验（语言/代码大小/超时上限/实验会话归属/并发/速率）→ 服务端携令牌调用执行服务。
+- **当前阶段定位（明确声明）**：受信任**单用户本地演示模式**——业务 API 与执行服务均绑定 127.0.0.1，不暴露局域网/公网；无用户登录体系（V2-07），令牌校验只证明"请求来自本机服务端进程"，**不构成学生身份或实验权限校验**（采纳复审原话要求）。
+- **学校服务器多用户部署前置条件（阻塞项，写入部署检查单）**：用户认证（V2-07）、实验会话授权、用户配额、租户隔离、服务间认证升级；未满足前禁止非 localhost 部署。
+
+**修订 3：镜像预拉取 + 强制 digest 锁定（响应复审项 3；采纳 C-2/C-3 并将 digest 升级为强制项）**
+
+- 部署阶段：`scripts/pull-executor-image.ps1` 执行 `docker pull python:3.12-slim` → `docker inspect --format {{index .RepoDigests 0}}` 解析 digest → 写入本地受信任配置 `ZD_EXEC_IMAGE_DIGEST`。
+- 执行时：**绝不自动 pull**；容器创建以 digest 引用镜像（`python@sha256:...`），本地校验；镜像缺失或 digest 不符 → 立即拒绝执行（fail-closed）。原 V2-04A 方案中 digest 是"可选配置"，按复审要求改为**必须配置**。
+- digest 来源为受信任配置，API 请求不可指定；镜像更新流程 = 负责人显式审批 → 重跑 T5–T12 安全测试 → 更新 digest 配置；记录镜像架构 linux/amd64（Docker Desktop WSL2 场景）。
+
+**修订 4：请求模型严格拒绝未知字段（响应复审项 4；撤销原"忽略并审计"方案）**
+
+- 执行服务请求模型 Pydantic `extra="forbid"`：只允许 `language`、`code`、`timeout_seconds`；携带 image、command、volumes、privileged、network、env、workdir 等任何额外字段 → **422 拒绝**（返回统一错误结构）。理由：静默忽略会让调用方误以为字段生效，严格拒绝使协议面最小、行为可预测。
+- 审计日志（采纳 C-5）：仅记录 request_id、实验会话 ID（非敏感标识）、时间戳、执行时长、退出码/超时/截断标志、资源限制结果、清理状态；**不记录学生代码、令牌、完整 stdout/stderr、宿主路径**；本地文件日志（logs/executor-audit.log），V2-04B 实现。
+
+**修订 5：stdin 优先传递代码（响应复审项 5；主备方案对调）**
+
+- **主方案改为 Docker attach stdin**：固定命令 `["python","-I","-"]`（从 stdin 读源码），执行服务经 Docker SDK low-level API（`container.attach_socket(params={"stdin": True, ...})`）写入代码后关闭写端触发执行；代码不经 argv、URL、日志、宿主文件系统。
+- 免除原文件方案的 Windows 复杂度：路径规范化、ACL、symlink/reparse point、并发文件隔离、崩溃残留清理整体不再需要。
+- 实现要点（V2-04B 实测）：Docker stream protocol 分帧（8 字节头 + payload）；写完 shutdown 写端令 python 读到 EOF。
+- 备选方案（默认不启用）：仅当 stdin 实测存在硬阻塞时，切换临时文件 bind mount，且**必须先补齐**复审列出的全部措施（Windows ACL、专用目录、随机名、拒绝 symlink/reparse、只读挂载、路径规范化、并发隔离、崩溃清理）并作为新复审项呈报。
+
+**修订 6：生命周期与拒绝服务边界（响应复审项 6）**
+
+- **超时**：服务端 watchdog 到点 `container.kill()`；SDK client timeout 双保险。
+- **输出超限**：流式读取（逐块累计计数），达上限即停止读取并标记 truncated，继续等进程退出或 kill；**绝不把无限日志整体读入内存**。
+- **客户端断连**（FastAPI→执行服务 HTTP 中断）：执行服务**继续完成执行并清理**（学生断网不留运行中容器），结果写审计日志；API 侧 503/504，步骤状态按 uncertain 处理（验证不推进）。
+- **执行服务退出/重启清扫**：每实例启动生成 instance_id，所建容器带 label `zhidao-exec-instance=<id>`；清扫仅删本实例残留 + 非运行且超过宽限期（5 分钟，按容器 FinishedAt）的全局孤儿；Windows 专用 lock 文件（O_EXCL）作生命周期锁，防两个实例互删；运行中容器绝不误删。
+- **Docker daemon 中断**：SDK 异常 → 当前请求 fail-closed；已运行容器由 daemon 恢复后按孤儿扫描回收。
+- **并发**：默认 2，**硬上限 4**（clamp [1,4]）；超限立即 503 不排队。**速率限制**：全局令牌桶默认 30 次/分钟（硬上限 120/min）。
+- **权限边界如实声明**：执行服务与 Docker daemon 具备高权限；独立进程只是缩小业务进程暴露面，执行服务/daemon 被攻破后容器隔离不构成边界；Docker Desktop/WSL2 VM 残余风险保留（R-4B-1）。
+
+**修订 7：安全负向测试（响应复审项 7；测试矩阵 12 项 → 12+18 项）**
+
+| # | 负向测试 | 预期 | 环境 |
+|---|---|---|---|
+| N1 | 跨站 POST（Origin: http://evil.example） | 403 | 无 Docker |
+| N2 | Origin: null（file://） | 403 | 无 Docker |
+| N3 | Sec-Fetch-Site: cross-site | 403 | 无 Docker |
+| N4 | 错误 Host（evil.example:8101，DNS rebinding 模拟） | 403 | 无 Docker |
+| N5 | GET /api/v1/execute（方法错误） | 405 | 无 Docker |
+| N6 | Content-Type 非 JSON | 415 | 无 Docker |
+| N7 | 无令牌 / 错误令牌 | 403 | 无 Docker |
+| N8 | 请求含 image/command/volumes/privileged/network/env 额外字段 | 422 拒绝（非忽略） | 无 Docker |
+| N9 | 未授权会话 / 错误实验 ID 的执行请求 | 403（FastAPI 会话校验） | 无 Docker（mock 会话） |
+| N10 | 镜像 digest 不符 | 拒绝执行 | mock |
+| N11 | 镜像缺失 | 拒绝执行，不自动 pull | mock |
+| N12 | Docker 不可用 | 503 fail-closed（既有 T1） | mock |
+| N13 | 超时后清理 | 无容器/临时残留 | mock 部分 / 需 Docker 完整 |
+| N14 | 输出洪泛（流式截断，内存不膨胀） | truncated=True | 需 Docker |
+| N15 | 客户端断连 | 执行继续完成并清理 | 需 Docker |
+| N16 | 服务重启清扫 | 仅删本实例/孤儿，不误删运行中 | 需 Docker |
+| N17 | 清理失败（remove 异常） | 记录清理失败 + 下次启动清扫兜底，请求仍返回 | mock |
+| N18 | 资源耗尽（fork bomb / 内存爆炸） | 被 pids/mem 限制终止，宿主无影响 | 需 Docker |
+
+区分声明：N1–N12 可在无 Docker 本机以协议层/mock 验证；N13–N18 需 Docker 环境；交付报告将如实标注每项实际运行环境，**mock 结果不冒充真实容器隔离验证**。
+
+**设计取值评估（对照第一轮建议：全部采纳，无异议、无降低）**
+
+- **C-1 并发默认 2、硬上限 4**：采纳。理由：单机 Docker Desktop 资源有限；硬上限防配置误开过大拖垮宿主。另补全局速率限制 30/min（硬上限 120/min）。
+- **C-2 预拉取、执行时不 pull**：采纳。
+- **C-3 digest 必须锁定校验**：采纳并升级为强制（原方案为可选，已修正）。
+- **C-4 单用户本地演示边界 + 多用户前置条件**：采纳，阻塞项写入部署检查单。
+- **C-5 审计最小化**：采纳，字段清单见修订 4。
+
+**修订前后差异摘要**：访问控制从"localhost+令牌"两层 → Host/Origin/方法/类型/令牌五层且 CORS 不开放；令牌补熵与存放要求并如实声明单机信任边界；镜像从 tag+可选 digest → 预拉取+强制 digest；请求模型从"忽略额外字段" → extra=forbid 严格 422；代码传递从文件挂载主方案 → stdin 主方案（文件降级为默认不启用的备选）；生命周期补齐断连/daemon 中断/清扫互斥/并发硬上限/速率限制；测试矩阵 12 → 30 项（+18 负向），强化 mock 与真实环境区分。
+
+**未解决/残余风险**：R-4B-1 容器逃逸依赖 Docker Desktop/WSL2 VM 边界（接受并记录）；R-4B-2 stdin attach 的 Docker stream 分帧实现复杂度（V2-04B 实测，硬阻塞则启用文件备选并按第一轮要求补全措施后重新呈报）；R-4B-3 本机无 Docker，N13–N18/T5–T12 真实容器验证依赖负责人环境。
+
+**禁止事项确认**：本轮零代码改动（仅本文档与 README 状态行）；未实现容器执行；未新增 subprocess 路径；未新增前端运行按钮；未把 Docker SDK 放入业务进程；未启动 V2-05/06/07；未修改 main / trae-dev。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-04A Docker 隔离执行架构第一轮复审：方向认可，需修订后再批准
 
@@ -1086,6 +1174,11 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-12 | preconditions 为可选字段，schema_version 1.0→1.1 | 按既有版本策略（新增可选字段升次版本）；与 depends_on 严格分离；是否改必填由 ChatGPT 复审决定 |
 | 2026-11-12 | VERIFIER_REGISTRY 使用 MappingProxyType 只读映射 | 落实"冻结注册表"承诺；测试注入改用模块属性替换，不修改只读映射 |
 | 2026-11-12 | V2-04A：执行服务独立进程架构 | 业务进程经本地 HTTP+共享令牌调用独立执行服务（127.0.0.1:8101），Docker SDK/管道只存在于执行服务；学生代码经受控临时文件只读挂载或 stdin 传递，固定镜像与 argv 命令，禁 shell 拼接；并发上限+全部基线不可关闭 |
+| 2026-11-12 | V2-04A 第二轮修订：五层访问控制（Host/Origin/方法类型/令牌/健康最小化）+ 浏览器永不持有令牌、执行仅经 FastAPI 代理 + 单用户本地演示边界 + 镜像预拉取且强制 digest 校验（不自动 pull）+ 请求模型 extra=forbid 严格 422 + stdin 主方案传递代码 + 生命周期规则（断连继续执行/清扫互斥/并发硬上限 4/速率限制 30/min）+ 18 项负向测试 | 采纳 ChatGPT 第一轮复审全部七项要求与 C-1~C-5 建议，无异议、无降低；原文件挂载方案降级为默认不启用的备选 |
+| 2026-11-12 | C-1 并发上限：默认 2，硬上限 4（clamp [1,4]）；全局速率限制默认 30/min、硬上限 120/min | 采纳 ChatGPT 建议 |
+| 2026-11-12 | C-2/C-3 镜像：部署预拉取，执行绝不自动 pull；digest 必须锁定校验（ZD_EXEC_IMAGE_DIGEST 受信任配置，API 不可指定） | 采纳并升级为强制项 |
+| 2026-11-12 | C-4 部署边界：V2-04B 为单用户 Windows 本地演示（仅 127.0.0.1）；多用户/局域网/公网部署前必须补认证、会话授权、配额、租户隔离（V2-07 前置） | 采纳 |
+| 2026-11-12 | C-5 审计日志：最小化本地文件日志，仅元数据（request_id/会话 ID/时长/退出状态/清理状态），不记录代码、令牌、完整输出 | 采纳 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -1106,6 +1199,9 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | Windows Smart App Control 拦截未签名原生模块 | rollup 原生 .node 加载失败 | web 构建改用 @rollup/wasm-node（V2-02 已解决并记录）；后续引入 C 扩展类依赖时需复检 | 已解决（持续注意） |
 | Docker 沙箱尚未实现 | 不可信代码执行可能影响宿主机 | V2-02 已定义执行器接口与安全基线（含测试），V2-04 实现容器隔离；Docker 不可用时拒绝执行 | 接口已定义 |
 | 实验定义 Schema 与 Pydantic 模型人工镜像可能漂移 | 两套约束不一致 | 同一数据必须同时过两道门的测试约束（76 测试含镜像校验） | V2-03 已建立约束 |
+| R-4B-1：容器逃逸残余风险依赖 Docker Desktop/WSL2 VM 边界 | 极端内核漏洞场景下隔离失效 | cap_drop ALL、no-new-privileges、非 root、无 socket/privileged 缩小攻击面；VM 边界残余风险接受并记录；镜像内无任何密钥 | 已记录（接受） |
+| R-4B-2：stdin attach 需实现 Docker stream 分帧，复杂度未知 | V2-04B 实现可能遇硬阻塞 | stdin 为主方案；硬阻塞则启用文件 bind mount 备选，且必须先补齐第一轮复审全部文件安全措施并重新呈报 | 待 V2-04B 实测 |
+| R-4B-3：Trae 本机未安装 Docker（已实测确认） | N13–N18/T5–T12 真实容器行为无法在本机验证 | mock/协议层测试本机可跑（N1–N12/T1–T4）；真实容器测试需负责人 Docker Desktop 环境，交付时如实标注运行环境 | 依赖负责人环境 |
 | 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
 
 ---
