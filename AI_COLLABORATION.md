@@ -194,7 +194,7 @@
 | 编号 | 工作项 | 状态 | 验收标准 | 负责人 |
 |---|---|---|---|---|
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
-| V2-01 | 旧项目盘点与重建方案 | 未开始 | 文件清单、复用/重建边界、V2目录结构 | Trae |
+| V2-01 | 旧项目盘点与重建方案 | 待审查 | 文件清单、复用/重建边界、V2目录结构 | Trae |
 | V2-02 | V2基础工程骨架 | 未开始 | 可安装、可启动、健康检查通过 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 未开始 | Python/MySQL任务可结构化表达 | Trae |
 | V2-04 | Python网页实验闭环 | 未开始 | 编辑、运行、验证、步骤推进 | Trae |
@@ -210,6 +210,40 @@
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜Trae：V2-01 旧项目盘点与重建方案
+
+**本次目标：**
+- 完成 AI_COLLABORATION §7 总任务第 1–3 项：盘点文件与旧技术栈、提出 V2 目录结构与模块边界、制定旧文件处理方案；只汇报方案，不写业务代码。
+
+**实际完成：**
+- 拉取并确认当前分支最新代码（bb8c4cf），工作树干净。
+- 盘点结论：**main 分支仅 Initial commit（只有 2 行 README），旧项目代码实际在 origin/trae-dev**（150 文件，主源码约 9,700 行）。
+- 产出完整盘点与重建方案：[docs/V2-01_inventory_and_rebuild_plan.md](./docs/V2-01_inventory_and_rebuild_plan.md)。
+- 复用/重建边界：全部业务代码参考重写、不复制；参考资产=适配器抽象、experiment_packs JSON 结构、sandbox_manager 安全设计；明确不迁移 scripts/ 调试脚本、demo_shots、旧顶层文档、内置弱凭据与硬编码教程数据。
+- V2 目录结构提案：单仓 `server/`（FastAPI + engine 独立引擎层）+ `web/`（Vue3）+ `desktop/`（PySide6）+ `experiments/`（用户后期导入）+ `scripts/` + `docs/`；统一跨端状态契约由 server/engine 定义；AI 密钥只在 server。
+- 提出 3 个待决策项 D-1（代码执行隔离方案）/ D-2（实验定义格式）/ D-3（sandbox_manager 去留），见报告 §6。
+
+**修改文件：**
+- 新增 docs/V2-01_inventory_and_rebuild_plan.md
+- 修改 AI_COLLABORATION.md（看板状态、本记录、决策表、未解决问题表）
+
+**验证命令与结果：**
+- 命令：`git status` / `git ls-tree -r origin/main --name-only` / `git ls-tree -r origin/trae-dev --name-only` / `git show origin/trae-dev:<file>`（只读盘点，未切换分支）
+- 结果：当前分支 2 文件；main 仅 README；trae-dev 150 文件。行数统计：主源码合计约 9,744 行。
+
+**未完成 / 已知问题：**
+- 本方案尚未经 ChatGPT / 项目负责人审查（V2-01 处于"待审查"）。
+- 本机 git 全局配置将 github.com 重写到不可达的 ghfast.top 镜像；本次全部使用命令级 `-c` 覆盖（http.proxy=127.0.0.1:10808 + http.sslBackend=openssl + url insteadOf 还原），未修改全局配置；后续 fetch/push 均需带同样参数。
+
+**需要对方处理或确认：**
+- 审查 V2-01 方案与目录结构提案，确认/调整 D-1、D-2、D-3 三个决策项。
+
+**下一步建议：**
+- 方案通过后进入 V2-02：按提案搭建 server/web/desktop 骨架，打通健康检查、前后端启动、配置读取与 pytest 基线。
+
+**关联提交：**
+- 见本文件同批次提交 SHA。
 
 ### 2026-11-12｜ChatGPT：建立 V2 协作基线
 - 创建分支：feat/zhidao-shixun-v2-rebuild。
@@ -231,6 +265,9 @@
 | 2026-11-12 | 首期 Python + MySQL 两种环境 | 先证明跨环境实训闭环 |
 | 2026-11-12 | 默认指导而非自动代操作 | 保证教学自主性和桌面操作安全 |
 | 2026-11-12 | 采用四级动态指导颗粒度 | 根据实际困难提供不同深度帮助 |
+| 2026-11-12 | 盘点确认：旧项目代码在 trae-dev，main 仅初始提交 | Trae 盘点发现；main 无需清理，trae-dev 只读参考不合并 |
+| 2026-11-12 | V2 目录结构提案：server/web/desktop/experiments 单仓结构，engine 独立引擎层 | Trae 提案（V2-01），待审查；AI 密钥只在 server，统一状态契约由 engine 定义 |
+| 2026-11-12 | 复用边界：业务代码全部参考重写；不迁移调试脚本/演示截图/旧文档/内置凭据 | Trae 提案（V2-01），待审查 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -245,6 +282,11 @@
 | Python不可信代码执行 | 可能影响运行环境安全 | 独立沙箱/受限子进程设计 | 待设计 |
 | 截图可能包含隐私 | 数据泄露风险 | 本地优先、最小采集、脱敏和告知 | 待实现 |
 | 多方同时修改协作文档 | 可能发生覆盖 | 先拉取、合并最新内容、再提交 | 持续遵守 |
+| 本机 git 将 github.com 重写到 ghfast.top 镜像且镜像不可达 | fetch/push 失败 | 命令级 `-c http.proxy=http://127.0.0.1:10808 -c http.sslBackend=openssl -c url...insteadOf` 覆盖；不改全局配置 | 已验证可用 |
+| Windows schannel 证书吊销检查失败（CRYPT_E_REVOCATION_OFFLINE） | git/curl 经代理访问 GitHub 报 TLS 错误 | git 切 openssl 后端（命令级 -c） | 已验证可用 |
+| D-1 代码执行隔离方案未定 | 影响 V2-04 设计 | 见 docs/V2-01 §6，Trae 建议首期受限子进程+预留 Docker | 待决策 |
+| D-2 实验定义格式未定 | 影响 V2-03 数据模型 | 建议：旧 experiment_packs JSON 规范化沿用 | 待决策 |
+| D-3 sandbox_manager 去留未定 | 影响仓库组件范围 | 依赖 D-1 结论 | 待决策 |
 
 ---
 
