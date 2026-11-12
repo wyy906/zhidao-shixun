@@ -17,7 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.experiments.loader import SCHEMA_FILE
-from app.experiments.models import ExperimentDefinition
+from app.experiments.models import ExperimentDefinition, VerifierDef
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from helpers_experiment import deep_copy, make_valid_experiment  # noqa: E402
@@ -225,3 +225,74 @@ def test_baseline_valid_data_accepted_by_both() -> None:
     data = deep_copy(make_valid_experiment())
     assert schema_accepts(data)
     assert model_accepts(data)
+
+
+# ---------- 第四轮复审：schema_version 与 verifier.type 的双通道镜像 ----------
+
+ALL_VERIFIER_TYPES = [
+    "python_exit_code_zero",
+    "python_stdout_contains",
+    "mysql_query_result",
+    "mysql_table_state",
+]
+
+
+@pytest.mark.parametrize("version", ["1.1"])
+def test_schema_version_1_1_accepted_by_both(version) -> None:
+    data = deep_copy(make_valid_experiment())
+    data["schema_version"] = version
+    assert schema_accepts(data)
+    assert model_accepts(data)
+
+
+@pytest.mark.parametrize("version", ["1.0", "9.9", "2.0", ""])
+@pytest.mark.parametrize("channel", ["schema", "model"], ids=str)
+def test_schema_version_illegal_rejected_by_both_channels(version, channel) -> None:
+    data = deep_copy(make_valid_experiment())
+    data["schema_version"] = version
+    if channel == "schema":
+        assert not schema_accepts(data), f"JSON Schema 应拒绝 schema_version={version!r}"
+    else:
+        with pytest.raises(ValidationError):
+            ExperimentDefinition.model_validate(data)
+
+
+@pytest.mark.parametrize("verifier_type", ALL_VERIFIER_TYPES)
+def test_all_whitelisted_verifier_types_accepted_by_both(verifier_type) -> None:
+    """四种白名单类型在结构层均通过（是否实现/环境匹配由 registry 与语义校验负责）。"""
+    data = deep_copy(make_valid_experiment())
+    data["steps"][0]["verifier"] = {"type": verifier_type, "params": {}}
+    # mysql_* 与 python_web 环境不匹配属语义层，不影响结构校验；结构层两通道都应接受
+    assert schema_accepts(data)
+    assert model_accepts(data)
+
+
+def test_whitelisted_verifier_types_accepted_by_verifier_model_alone() -> None:
+    """直接调用 VerifierDef.model_validate()：四种合法类型均通过。"""
+    for verifier_type in ALL_VERIFIER_TYPES:
+        verifier = VerifierDef.model_validate({"type": verifier_type, "params": {}})
+        assert verifier.type == verifier_type
+
+
+@pytest.mark.parametrize(
+    "bad_type",
+    ["eval_actual", "os_command", "Python_Exit_Code_Zero", "", "shell_exec"],
+    ids=str,
+)
+def test_unknown_verifier_type_rejected_by_both_channels(bad_type) -> None:
+    data = deep_copy(make_valid_experiment())
+    data["steps"][0]["verifier"] = {"type": bad_type, "params": {}}
+    assert not schema_accepts(data), f"JSON Schema 应拒绝未知验证器类型 {bad_type!r}"
+    with pytest.raises(ValidationError):
+        ExperimentDefinition.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "bad_type",
+    ["eval_actual", "os_command", "", "shell_exec"],
+    ids=str,
+)
+def test_unknown_verifier_type_rejected_by_verifier_model_alone(bad_type) -> None:
+    """直接调用 VerifierDef.model_validate()：未知类型必须拒绝。"""
+    with pytest.raises(ValidationError):
+        VerifierDef.model_validate({"type": bad_type, "params": {}})

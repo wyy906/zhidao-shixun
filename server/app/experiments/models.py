@@ -44,11 +44,16 @@ def _validate_step_id_list(value: list[str]) -> list[str]:
 
 
 class VerifierDef(BaseModel):
-    """验证器定义。type 只能取 registry 白名单中的值（Schema 层已限定枚举）。"""
+    """验证器定义。type 为白名单枚举（镜像 Schema enum）；是否已实现、是否适用当前环境由 registry/语义校验负责。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    type: str
+    type: Literal[
+        "python_exit_code_zero",
+        "python_stdout_contains",
+        "mysql_query_result",
+        "mysql_table_state",
+    ]
     params: dict[str, Any] = Field(default_factory=dict, max_length=16)
 
     @property
@@ -131,7 +136,7 @@ class ExperimentDefinition(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: str
+    schema_version: Literal["1.1"]
     experiment_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{2,63}$")
     title: str = Field(min_length=1, max_length=120)
     description: str = Field(min_length=1, max_length=2000)

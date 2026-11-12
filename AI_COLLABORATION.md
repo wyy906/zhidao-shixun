@@ -280,7 +280,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
-| V2-03 | 实验任务与步骤数据模型 | 待审查（第三轮四项已修复，等待第四轮复审） | Schema 1.1（preconditions 必填）、逐字段镜像 Pydantic（+镜像表驱动测试）、四道门加载校验、验证器白名单只读注册表、状态机私有化+四公开入口（+6×6 穷举测试）、215 项测试 | Trae |
+| V2-03 | 实验任务与步骤数据模型 | 待审查（第四轮两项镜像遗漏已修复，等待第五轮复审） | Schema 1.1（schema_version/verifier.type 均 Literal 镜像）、逐字段镜像 Pydantic（+镜像表驱动测试）、四道门加载校验、验证器白名单只读注册表、状态机私有化+四公开入口（+6×6 穷举测试）、238 项测试 | Trae |
 | V2-04 | Python网页实验闭环 | 未开始 | 编辑、Docker隔离运行、验证、步骤推进；禁止宿主机直接执行不可信代码 | Trae |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
@@ -907,6 +907,59 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 6. 不把未验证的计划描述为已完成。
 7. 所有阶段以可运行、可验证、可演示为验收目标。
 
+
+### 2026-11-12｜Trae：V2-03 第四轮复审两项镜像遗漏已修复，238 项测试通过
+
+**本次目标：**
+- 仅修复第四轮静态复审（1b4497c / 5616b05）指出的问题；不改业务规则、不启动 V2-04、不改 main / trae-dev。
+
+**修复 1：schema_version Literal 镜像（复审项 1）**
+- `ExperimentDefinition.schema_version: str` → `Literal["1.1"]`（镜像 Schema const）。
+- 直接 `ExperimentDefinition.model_validate()` 现在拒绝 "1.0"、"9.9"、"2.0"、"" 等；"1.1" 通过。
+
+**修复 2：verifier.type 白名单枚举镜像（复审项 2）**
+- `VerifierDef.type: str` → `Literal["python_exit_code_zero", "python_stdout_contains", "mysql_query_result", "mysql_table_state"]`（镜像 Schema enum）。
+- 直接 `VerifierDef.model_validate()` 与完整模型校验均拒绝未知类型（eval_actual / os_command / 大小写变体 / 空串 / shell_exec 均有测试）；四种合法类型结构校验全部通过。
+- 实现状态、环境匹配、参数合法性仍由 registry 与 loader 语义门负责（结构合法 ≠ 可执行），与复审要求一致。
+
+**修复 3：双通道镜像测试（复审项 3）**
+- test_schema_model_parity.py 新增 23 项，全部不经过 load_experiment_dict，直接分别调用 JSON Schema validator 与 Pydantic model_validate：
+  - schema_version："1.1" 两通道通过；"1.0" / "9.9" / "2.0" / "" 两通道拒绝（每版本×每通道独立用例，参数化 id 标明通道）；
+  - verifier.type：四种白名单类型两通道结构通过 + VerifierDef.model_validate 单独通过；五种未知类型两通道拒绝 + VerifierDef.model_validate 单独拒绝。
+
+**修复 4：过时注释（复审项 4）**
+- state_machine.py TRANSITIONS 上方注释"必须经 transition() 执行"→"必须经私有 _transition() 执行（或更高层的公开业务入口）"；业务规则零改动。
+
+**计划外必要修复（如实报告）：**
+- 前端构建（复审要求运行确认）暴露 `vite.config.ts` 使用 `process.env` 但 package.json 从未声明 `@types/node`——此前构建通过是依赖提升的偶然结果。已在 web/package.json devDependencies 显式加入 `@types/node@~22.10.0` 并重新构建通过。这是依赖声明缺口修复，非重构。
+
+**验证命令与结果（本机 Windows 实测）：**
+- `.venv\Scripts\python.exe -m pytest -q` → **238 passed，0 failed，0 skipped**（0.66s；215 → 238 新增 23 项：版本 1 + 版本非法 4×2 通道 + 类型合法 4 + VerifierDef 合法 1 + 未知类型完整模型 5 + VerifierDef 单独 4，计数吻合）。未删除、未跳过、未降低任何原有断言。
+- `cd web && npm run build` → vue-tsc + vite 构建通过（✓ built in 348ms）。
+
+**修改文件清单：**
+- server/app/experiments/models.py（两处 Literal）
+- server/app/experiments/state_machine.py（注释）
+- server/tests/test_schema_model_parity.py（+23 项）
+- web/package.json（@types/node 声明）
+- web/package-lock.json（npm install 同步）
+- README.md（状态与测试数）
+- AI_COLLABORATION.md（看板、本交接）
+
+**git diff 范围检查：** 上述 7 个文件均在修复范围内，无范围外文件，无密钥/个人数据/截图。
+
+**未解决问题：** 无新增。
+
+**需要对方处理或确认：**
+- ChatGPT 进行第五轮复审；通过前 V2-03 保持"待审查"，V2-04 不启动。
+
+**关联提交：**
+- 修复 commit SHA 见下方复审摘要（同批次推送）。
+
+**给 ChatGPT 的复审摘要：**
+- 修复 commit：`见 git log 顶部`（fix(v2-03) 第四轮：schema_version/verifier.type Literal 镜像 + 23 项双通道测试 + 注释修正 + @types/node 声明）。
+- 测试：238 passed / 0 failed / 0 skipped（Windows 本机实测）；前端构建通过。
+- 镜像覆盖清单：schema_version 1.1 通过 / 1.0、9.9、2.0、空串拒绝（双通道）；四种白名单 type 通过（完整模型 + VerifierDef 单独）/ 五种未知 type 拒绝（双通道 + 单独）。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-03 第四轮静态复审：两处 Schema/Pydantic 镜像遗漏，暂不通过
 

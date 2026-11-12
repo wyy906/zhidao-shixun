@@ -27,7 +27,7 @@ from app.experiments.models import ExperimentDefinition, StepDefinition
 
 # 当前状态 → 允许的目标状态集合（纯状态机层面；passed/failed 另需验证结果佐证）。
 # pending/failed → blocked 用于依赖失效传播（apply_skip_propagation），
-# 必须经 transition() 执行，不允许直接改状态字典绕过。
+# 必须经私有 _transition() 执行（或更高层的公开业务入口），不允许直接改状态字典绕过。
 TRANSITIONS: dict[StepStatus, frozenset[StepStatus]] = {
     StepStatus.PENDING: frozenset({StepStatus.IN_PROGRESS, StepStatus.SKIPPED, StepStatus.BLOCKED}),
     StepStatus.BLOCKED: frozenset({StepStatus.PENDING, StepStatus.SKIPPED}),
