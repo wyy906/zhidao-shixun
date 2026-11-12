@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第二轮架构修订已提交，待 ChatGPT 第二轮架构复审；复审通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第三轮架构修订已提交，待 ChatGPT 第三轮架构复审；复审通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1179,6 +1179,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-12 | C-2/C-3 镜像：部署预拉取，执行绝不自动 pull；digest 必须锁定校验（ZD_EXEC_IMAGE_DIGEST 受信任配置，API 不可指定） | 采纳并升级为强制项 |
 | 2026-11-12 | C-4 部署边界：V2-04B 为单用户 Windows 本地演示（仅 127.0.0.1）；多用户/局域网/公网部署前必须补认证、会话授权、配额、租户隔离（V2-07 前置） | 采纳 |
 | 2026-11-12 | C-5 审计日志：最小化本地文件日志，仅元数据（request_id/会话 ID/时长/退出状态/清理状态），不记录代码、令牌、完整输出 | 采纳 |
+| 2026-11-12 | V2-04A 第三轮修订：镜像信任锚改为版本化锁定清单（executor_image_lock.json，批准前 digest=null、fail-closed，按 digest 拉取并核对，tag 仅参考）；清扫改为 API 层双标签过滤（zhidao-exec-managed=true + instance），running 容器绝不清扫，禁 prune；生命周期锁改 Windows 命名 Mutex（WAIT_ABANDONED 语义），废弃 O_EXCL；attach 协议明确化（tty=False/open_stdin=True、stdin 原始无帧头、输出 8 字节帧解复用，V2-04B 先协议探针再实现）；令牌 .env 显式 icacls ACL + 启动自检 fail-closed | 采纳 ChatGPT 第二轮复审三项阻塞项与附带建议，无降低 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -1200,7 +1201,8 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | Docker 沙箱尚未实现 | 不可信代码执行可能影响宿主机 | V2-02 已定义执行器接口与安全基线（含测试），V2-04 实现容器隔离；Docker 不可用时拒绝执行 | 接口已定义 |
 | 实验定义 Schema 与 Pydantic 模型人工镜像可能漂移 | 两套约束不一致 | 同一数据必须同时过两道门的测试约束（76 测试含镜像校验） | V2-03 已建立约束 |
 | R-4B-1：容器逃逸残余风险依赖 Docker Desktop/WSL2 VM 边界 | 极端内核漏洞场景下隔离失效 | cap_drop ALL、no-new-privileges、非 root、无 socket/privileged 缩小攻击面；VM 边界残余风险接受并记录；镜像内无任何密钥 | 已记录（接受） |
-| R-4B-2：stdin attach 需实现 Docker stream 分帧，复杂度未知 | V2-04B 实现可能遇硬阻塞 | stdin 为主方案；硬阻塞则启用文件 bind mount 备选，且必须先补齐第一轮复审全部文件安全措施并重新呈报 | 待 V2-04B 实测 |
+| R-4B-2：attach 双向流协议已明确（stdin 原始/输出帧解复用），但 docker-py 实际行为需实测确认 | SDK 抽象与协议预期不符会导致实现偏差 | V2-04B 首项任务为协议探针测试（stdout/stderr 分流+EOF 验证），探针通过后才实现执行器；不符则验证低层协议再选实现，绝不静默退回宿主机执行 | 待 V2-04B 实测 |
+| R-4B-4：镜像锁定清单当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest）并填入 executor_image_lock.json；批准后重跑安全测试 | 待负责人审批 |
 | R-4B-3：Trae 本机未安装 Docker（已实测确认） | N13–N18/T5–T12 真实容器行为无法在本机验证 | mock/协议层测试本机可跑（N1–N12/T1–T4）；真实容器测试需负责人 Docker Desktop 环境，交付时如实标注运行环境 | 依赖负责人环境 |
 | 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
 
@@ -1352,6 +1354,92 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 - 第三轮修复主体有效，但字段级镜像检查仍有遗漏。V2-03 保持“待审查”，V2-04 不得启动。
 - 本轮未修改业务代码；Trae 修复后独立提交新 commit，提供 SHA、完整 pytest 结果和镜像测试覆盖清单，再由 ChatGPT 复审。
 
+
+### 2026-11-12｜Trae：V2-04A 架构第三轮修订（镜像信任锚 / 清扫范围与系统锁 / attach 协议明确化，仅文档）
+
+**修订 A：镜像 digest 预审批信任锚（响应第二轮阻塞项 1；废弃"先拉 tag 再自动接受 digest"流程）**
+
+- 新增版本化锁定清单 `server/services/executor_service/executor_image_lock.json`（纳入 Git 可审查），结构：
+
+```json
+{
+  "lock_version": 1,
+  "approval_status": "pending",
+  "approved_by": null,
+  "approved_at": null,
+  "repository": "docker.io/library/python",
+  "tag_for_reference_only": "3.12-slim",
+  "platform": "linux/amd64",
+  "manifest_digest": null,
+  "platform_manifest_digest": null
+}
+```
+
+- **当前状态如实标注**：approval_status=pending、两个 digest 均为 null——镜像尚未经负责人审核，**不编造、不自动生成任何信任值**；此状态下执行服务启动即拒绝一切执行请求（fail-closed）。
+- 规则（全部 fail-closed）：
+  1. 执行服务启动时加载清单：approval_status ≠ approved、manifest_digest/platform_manifest_digest 缺失或格式非法（非 `sha256:64hex`）→ 拒绝启动执行功能（健康端点如实反映 docker_available/executor_ready）。
+  2. 部署脚本 `pull-executor-image.ps1` **按批准 digest 拉取**：`docker pull --platform linux/amd64 python@sha256:<manifest_digest>`——绝不先拉可变 tag；tag 仅作参考展示，不作为拉取/校验依据。
+  3. 拉取后核对：`docker image inspect --format {{index .RepoDigests 0}}` 与批准值**完全一致**；不一致、镜像缺失或平台不匹配（inspect Architecture/Os ≠ linux/amd64）→ fail-closed 拒绝。
+  4. 多架构规则：manifest_digest 记录 manifest list 顶层 digest，platform_manifest_digest 记录 linux/amd64 平台子 digest；两值均需负责人批准。容器创建最终引用哪一个（list 或子 digest）由 V2-04B 在 Docker Desktop 实测确定后写入清单 notes，实测前不假设。
+  5. 更新流程：负责人明确审批 → 更新清单（新 digest + approved_by + approved_at + lock_version+1）→ **重跑 T5–T12 与协议探针** → 提交清单变更（Git 版本可追溯）。
+  6. API 请求绝不能指定镜像或 digest（既有约束不变）。
+
+**修订 B：清扫严格限定智导实训容器 + Windows 系统级锁（响应第二轮阻塞项 2；废弃 O_EXCL 锁文件方案）**
+
+- **标签体系**（执行服务创建每个容器时强制写入）：
+  - `zhidao-exec-managed=true`——应用归属（常量，不随实例变化）
+  - `zhidao-exec-instance=<instance_id>`——实例归属
+  - `zhidao-exec-created=<unix_ts>`——创建时间（仅参考）
+- **清扫过滤在 Docker API 层完成**：容器列表调用必须带 `filters={"label": ["zhidao-exec-managed=true", "zhidao-exec-instance=<目标实例>"]}`——从 API 层面限定候选集，而不是列出全部容器再在代码里过滤。
+- **可清扫对象判定顺序：先确认应用归属（managed 标签），再判断清扫条件**：
+  1. 本实例残留：instance=<self> 且 managed=true 且非 running → 可清理；
+  2. 旧实例孤儿：managed=true 且 instance≠self 且**非 running** 且容器 FinishedAt 距今 > 宽限期（5 分钟）→ 可清理；
+  3. **任何 running 状态的 managed 容器绝不清扫**——不因旧实例 ID、创建时间或锁状态异常而删除运行中容器；
+  4. **严禁**不带 label 过滤的全局容器列表/清理、`docker system prune`、`docker container prune` 等任何可能波及其他项目/其他用户容器的操作；无 managed 标签的容器永远不可触碰。
+- **生命周期锁改为 Windows 命名 Mutex**（`Global\zhidao-exec-service-lock`），废弃 O_EXCL 锁文件（其崩溃残留 + PID 重用 + 接管竞态问题不可靠）：
+  - 内核对象随进程终止自动释放，崩溃不留死锁文件；
+  - `WaitForSingleObject` 原子获取；持锁进程崩溃时下一个等待者得到 `WAIT_ABANDONED`，语义明确、可安全接管（与 PID 重用无关）；
+  - **行为矩阵**：
+
+| 场景 | 行为 |
+|---|---|
+| 第二实例并发启动 | Wait 返回 busy → 启动失败并退出（提示已运行）；不做任何清扫 |
+| 正常退出 | 完成请求级清理 → ReleaseMutex 释放 → 进程结束 |
+| 异常崩溃 | 内核自动释放锁；下一实例 Wait 得 WAIT_ABANDONED 接管；接管后仅按 managed/孤儿规则清扫，运行中容器不动 |
+| 崩溃后重启 | 同 Abandoned 接管路径；清扫范围受标签过滤与宽限期约束 |
+
+  - 若 V2-04B 实测 Mutex 存在硬阻塞（预期不会），任何备选方案必须重新呈报复审，不得退回裸 O_EXCL。
+
+**修订 C：Docker attach 双向流协议明确化（响应第二轮阻塞项 3）**
+
+- **容器创建参数**（docker-py `containers.create`）：`tty=False`（强制：False 才有 stdout/stderr 分离流协议，True 则合并且无帧头）、`attach_stdin=True`、`attach_stdout=True`、`attach_stderr=True`、`open_stdin=True`（保持 stdin 开启，写入后以 EOF 结束）；命令固定 `["python","-I","-"]`。
+- **输入方向（stdin）：原始字节流，不加帧头**。依据 Docker Engine API attach 协议：TTY=false 时**输出**流使用 8 字节帧头协议，而**写向容器的 stdin 是原始数据**——给源码输入加帧头会被 Python 当作源码一部分执行（正是复审警告的错误）。写入流程：attach_socket(stdin/stdout/stderr) → `sock.sendall(code_bytes)` → 关闭写半端（EOF）→ Python 读到 EOF 开始执行。
+- **输出方向（stdout/stderr）：多路复用流协议**（TTY=false）：帧 = 8 字节头 `[stream_type(1B：1=stdout，2=stderr), 0,0,0, size(4B 大端)] + payload`；读取循环逐帧解复用至 stdout/stderr 缓冲、累计计数，达 MAX_OUTPUT_BYTES 后丢弃后续帧并标记 truncated。
+- **结束条件**：帧流 EOF + `container.wait()` 得到退出码 → 汇总 ExecutionResult；socket 半关闭/异常、容器提前退出按异常路径清理并返回明确错误或 uncertain。
+- **不凭猜测设计**：以上协议表述以 Docker Engine API v1.44 文档与 V2-04B 实际使用的 docker-py 版本行为为准；V2-04B 的第一项实现任务是**协议探针测试**（最小程序分别向 stdout/stderr 输出，验证解复用与 EOF 行为与上述一致），探针通过后才实现执行器；若 SDK 抽象与协议预期不符，先验证低层协议再选实现，**不得静默退回宿主机执行**。
+- **V2-04B 真实 Docker 集成测试清单**（9 项，全部需 Docker 环境，交付时分栏统计）：
+
+| # | 测试 | 验证点 |
+|---|---|---|
+| I1 | 最小源码执行 | `print("ok")` → stdout 含 ok、exit_code=0 |
+| I2 | stdout/stderr 分流 | 两路输出各归其位，不混淆 |
+| I3 | 非 ASCII 源码 | 中文注释/字符串正确传输与输出 |
+| I4 | 较大输入 | 接近 64KB 上限源码完整写入 |
+| I5 | stdin EOF 语义 | `sys.stdin.read()` 后程序正常结束 |
+| I6 | 超时终止 | 死循环被 watchdog kill 且容器清理 |
+| I7 | 客户端断连 | 服务端继续完成执行并清理，无残留 |
+| I8 | 输出复用+截断 | >64KB 输出 truncated=True、内存不膨胀 |
+| I9 | 版本记录 | Docker Desktop / Engine / docker-py 实际版本写入测试报告 |
+
+**附带加固：令牌文件显式 ACL（响应复审附带建议）**
+
+- **不假设 Windows 默认 ACL**：部署脚本对 `.env` 显式执行 `icacls .env /inheritance:r /grant:r "<当前用户>:F"`（禁继承、仅当前用户完全控制），并**检查父目录继承权限**是否会把宽权限带入；
+- 执行服务启动时**自检 ACL**：查询 .env 是否禁用继承且无 Users/Everyone 读权限；不满足 → 执行服务拒绝启动（fail-closed，令牌是其核心防护），并输出不含令牌值的错误说明；
+- 重申：日志、错误信息、命令行均不得出现令牌值（既有约束）。
+
+**测试报告分栏统计（采纳复审附带建议）**：V2-04B 起交付报告将分两栏——「协议/mock 测试通过」与「真实 Docker 隔离测试通过」分别统计；既有 238 项测试不替代新执行器测试。
+
+**禁止事项确认**：本轮零代码改动（仅本文档与 README 状态行）；未实现容器执行；未新增 subprocess 路径；未把 Docker SDK 放入业务进程；未新增前端运行按钮；未启动 V2-05/06/07；未修改 main / trae-dev；未执行任何合并。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-04A 第二轮架构复审：需补充三项后再批准
 
