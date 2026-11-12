@@ -267,15 +267,35 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 - V2-02 为骨架：无业务功能、无数据库模型、无 Docker 容器执行（V2-03/V2-04 交付）；执行器 run() 现阶段显式抛 DockerUnavailableError（有测试覆盖该行为）。
 - 依赖策略为版本区间（README 已记录验证版本）；未做 pip 精确锁定（避免跨平台差异，如 ChatGPT 认为需要可再加）。
 
-**需要对方处理或确认：**
-- ChatGPT 审查 V2-02（看板已标"待审查"）；确认依赖锁定策略是否需要升级为精确锁定。
-- 负责人：§11 中「8000 端口遗留进程」是否需要处理；仓库 public/private 决策仍未定。
-
 **下一步建议：**
 - V2-03：实验任务与步骤数据模型、规范化 JSON Schema（D-2）、验证器白名单注册机制；contracts 契约随之扩展。
 
 **关联提交：**
-- 本文件同批次提交（V2-02 骨架 + 文档），SHA 见 git log。
+- commit `10fc9de`：feat(v2-02): build V2 skeleton with versioned cross-end contract and tests（64 文件 +3132 行；已 rebase 合并 ChatGPT 并行提交 9beacc4 / fbcc7bc 后推送）。
+
+**给 ChatGPT 的汇报留档（对应聊天窗口汇报内容）：**
+
+本次汇报四项内容，与上方交接记录互为摘要：
+
+1. **提交 SHA**：`10fc9de`（V2-02 骨架 + 文档，64 文件 +3132 行，feat/zhidao-shixun-v2-rebuild）。
+2. **修改文件**（按模块）：contracts/（独立契约包 0.1.0：5 核心模型 + JSON Schema 基线 + 漂移测试）；server/（FastAPI 入口 /health、契约版本端点、统一错误结构、ZD_ 配置、日志、Docker 执行器接口与不可关闭安全基线）；web/（Vue3+Vite6+TS 最小页面、dev 代理可配置）；desktop/（PySide6 最小窗口：状态/暂停/停止，--smoke/--check）；scripts/ 4 个；根级 .gitignore / .env.example / pytest.ini；README 与本文档更新。
+3. **测试命令与结果（本机实测全部通过）**：`pytest` → 20 passed；`start-server.ps1 -Port 8100` + curl /health → HTTP 200 含 contract_version；404 → 统一错误结构；`start-desktop.ps1 -Check/-Smoke` → 连接成功 + 窗口真实启动自动退出；`npm run build` → vue-tsc+vite 通过；`npm run dev` → 页面 200、代理 /health 正常。
+4. **未完成事项**：业务功能（实验模型、AI 指导、标注、Docker 容器执行）未实现——执行器 run() 现阶段显式抛 DockerUnavailableError（测试覆盖该行为），V2-04 交付容器实现；Python 依赖为版本区间 + README 记录验证版本，未做 pip 精确锁定（是否升级为精确锁定请 ChatGPT 定夺）。
+
+**本次开发遇到的问题与解决（均已实测复现并解决，供后续阶段参考）：**
+
+| 问题 | 根因 | 解决方式 | 状态 |
+|---|---|---|---|
+| vite build 失败：rollup 原生 .node ERR_DLOPEN_FAILED | 本机 Windows Smart App Control（已开启）拦截未签名原生模块，与旧项目 TASK_BOARD R-02 记录的 SQLAlchemy C 扩展被拦截同因 | web/package.json 依赖别名 `rollup → npm:@rollup/wasm-node@^4.68.2`（纯 WASM，无原生模块）；npm overrides 方式对该场景不生效，顶层 devDependency 别名生效 | 已解决（决策已记录 §10） |
+| 推送被拒（fetch first） | ChatGPT 并行推送了 9beacc4 / fbcc7bc | fetch + rebase，无冲突，双方文档内容均保留；rebase 后复跑 pytest 仍 20 passed | 已解决 |
+| start-server.ps1 解析报错（Unexpected token） | PowerShell 5.1 在 GBK 代码页按 ANSI 读取 UTF-8 无 BOM 脚本，中文注释尾字节吞掉换行破坏语法 | 4 个 .ps1 全部改为 ASCII 英文注释；新增脚本同样遵守 | 已解决（决策已记录 §10） |
+| 8000 端口被占用（bind 10048） | 遗留 python 进程（路径 .workbuddy，非 V2 服务）监听 8000 并响应旧版 /health | 未动该进程；V2 支持 -Port / -ApiTarget，验证用 8100 | 待负责人决定是否清理 |
+| npm 11 提示 esbuild postinstall 未批准（allowScripts） | npm 11 新安全特性 | 可忽略：esbuild.exe 随平台包安装，构建不受影响 | 已知悉 |
+| contracts 首次安装失败（readme 指向包外文件） | setuptools 不允许读取包目录外文件 | 移除 pyproject 的 readme 字段 | 已解决 |
+
+**需要对方处理或确认：**
+- ChatGPT：审查 V2-02（看板已标"待审查"）；确认依赖锁定策略（版本区间 vs pip 精确锁定）。
+- 负责人：是否清理占用 8000 端口的遗留进程；仓库 public/private 决策仍未定。
 
 ### 2026-11-12｜ChatGPT：V2-01 审查通过，确定关键技术决策并启动 V2-02
 
