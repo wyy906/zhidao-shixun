@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第五轮架构修订已提交：Query B 七项严格校验 fail-closed + 精确 DACL 模板与父目录四权限枚举；待 ChatGPT 第五轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第五轮架构复审仍有两项阻塞：Query B 必须限定 exited/dead 状态、删除前重验 FinishedAt 并非强制删除；.env DACL 必须固定最终权限掩码并处理 owner 隐式 WRITE_DAC、父目录 owner/有效权限；第六轮修订通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1719,3 +1719,44 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 - 以上两项是安全边界阻塞项。Trae 完成第五轮文档修订并独立提交后，再进行第五轮复审。
 - 本轮未修改业务代码、未运行 Docker/ACL/attach 实测、未批准任何镜像 digest、未启动容器执行、未合并分支。
 - 项目负责人明确授权合并前，V2 分支绝不与 `main` 合并；`main` 与 `trae-dev` 保持不动。
+
+
+### 2026-11-12｜角色：ChatGPT｜V2-04A 第五轮架构复审：仍有两项安全边界待明确
+
+**审查基准：**
+- 已先读取 `CHATGPT_PROJECT_REASONING_BASIS.md`，再读取当前 V2 分支 `AI_COLLABORATION.md`、`README.md`、分支 HEAD、第五轮提交差异及镜像锁定清单。
+- 分支：`feat/zhidao-shixun-v2-rebuild`
+- Trae 第五轮提交：`923a7d3a1a0c36d7bbc83c8952db495ea33a747a`
+- 本次提交只修改 `AI_COLLABORATION.md` 和 `README.md`；无业务代码改动。镜像锁定文件未改，`approval_status=pending`，`manifest_digest` 与 `platform_manifest_digest` 均为 null。
+- Trae 报告既有基线 `238 passed / 0 failed / 0 skipped`；本轮 Query B 与 DACL 仍只是设计，未运行实现、未做 Windows 实机 ACL 测试或 Docker 测试。本次 ChatGPT 复审为静态审查。
+
+**已确认有效的第五轮修订：**
+1. Query B 已要求 instance 标签存在、非空、UUID 格式有效且不等于当前实例；FinishedAt 必须可解析为带时区时间且超过 5 分钟；异常/不确定时跳过并审计。
+2. 删除前增加标签与状态二次核验；仍保留 Docker API 层 `zhidao-exec-managed=true` 过滤、禁止全局 prune、running 容器不清扫等不变量。
+3. .env DACL 方案改为从零构造完整 DACL、关闭继承、设置后重新读取安全描述符并与模板逐项比较；增加 owner 核验、父目录四类权限检查、重解析点拒绝及 N-A6~N-A15 负向测试。
+4. 新增设计明确标记为未在 Windows 实机验证；未把文档设计冒充实现。
+5. 本次没有 Docker 执行代码、宿主机 subprocess 回退、FastAPI Docker SDK、前端运行按钮或镜像审批变更；没有修改 main/trae-dev，也没有合并。
+
+**仍需修订的两项阻塞问题：**
+
+1. **Query B 必须使用明确的 Docker 状态白名单，而不是笼统“非 running”。**
+   - Docker 容器状态不只有 running/non-running。官方状态枚举包括 `created`、`restarting`、`running`、`removing`、`paused`、`exited`、`dead`；其中 paused 容器仍属于运行中的容器状态，不能仅以“非 running”推断安全可删。
+   - 对旧实例 Query B，建议仅允许 `State.Status` 精确等于 `exited` 或 `dead` 的候选项；`created`、`paused`、`restarting`、`removing`、未知值、缺失值或读取异常全部跳过并审计。若 Trae 认为其他状态也应允许，必须给出状态语义和不可误删论证后再纳入白名单。
+   - 删除前二次核验必须重新读取并核对：managed=true、instance 标签与候选时一致、状态仍为允许的精确枚举值、FinishedAt 仍可解析且仍超过宽限期。不能只重验标签和“非 running”。
+   - 删除操作必须显式非强制（force=false）；删除时 Docker 返回运行中/冲突/状态变化错误，应记录并跳过，不得以 force 删除重试。
+   - 增加负向测试：paused、restarting、removing、created、未知状态；二次核验 FinishedAt 改变/缺失/变为未超期；非强制删除遇到运行中冲突时不得 force retry。
+   - 依据：Docker 官方容器状态说明 https://docs.docker.com/reference/cli/docker/container/ls/ 。
+
+2. **.env DACL 必须从“示例权限组合”变为固定、可审计的精确模板，并纳入 Windows owner 隐式权限。**
+   - 当前仍写“如 owner=...、SYSTEM=...、Administrators=...；具体位掩码在配置中定义”。这不是可供实现的唯一批准模板。请在文档中明确每个 SID 的最终 ACE 类型、access mask（最好给出十六进制值及符号分解）、ACE flags、继承标志、ACE 顺序和允许的 ACE 数量；不得把决定推迟到 V2-04B 编码时临时选择。
+   - 明确区分文件 owner、SYSTEM、Administrators 的权限意图。Administrators=`FILE_ALL_ACCESS` 意味着本机管理员能够读取/修改该令牌文件，应作为明确接受的本机管理员信任边界记录，而非宣称管理员也无法访问。
+   - Windows 对象 owner 默认隐式拥有 `READ_CONTROL` 和 `WRITE_DAC`；当前模板只核验 owner 与 DACL，没有说明该隐式权限如何处理。请明确选择并论证：使用 `OWNER RIGHTS` SID（S-1-3-4）ACE 限制 owner 隐式权限，或明确接受“运行用户/文件 owner 可修改 DACL”的同用户信任边界，并确保威胁模型与实际保护目标一致。不能只靠 DACL ACE 列表相等就声称 owner 无法改 ACL。
+   - 父目录检查还必须读取并核验目录 owner；非受信任 owner 可能具有隐式 WRITE_DAC，不能仅扫描显式 ACE。对父目录 DACL 应明确处理 generic rights 映射、显式/继承 ACE 和实际运行身份的有效访问；遇到无法可靠计算的访问权时 fail-closed。检查范围还要覆盖从受信任根目录到 .env 所在目录的路径组件，或用稳定的目录句柄/文件句柄方案证明上级路径不可被非受信任主体替换。
+   - 补充负向测试：父目录 owner 为非白名单主体；OWNER RIGHTS 缺失/不符合批准模板（若采用该机制）；父目录通过 GENERIC_ALL/GENERIC_WRITE 等泛型权限间接获得危险权限；祖先目录可替换/重命名目标目录；无法计算有效访问权时拒绝启动。
+   - 依据：Microsoft 关于 owner 隐式权限 https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/fb7c101d-ec8b-4fbf-bca8-7d7c2d747d0c ，以及标准访问权说明 https://learn.microsoft.com/en-us/windows/win32/secauthz/standard-access-rights 。
+
+**复审结论：**
+- **V2-04A 第五轮仍暂不批准 V2-04B。**
+- Trae 需完成第六轮架构文档修订并独立提交；第六轮复审通过前不得实现容器执行。
+- 当前未运行 Docker/Windows ACL 实测；未批准镜像 digest；未启动执行器实现。
+- 项目负责人明确说“同意合并”前，V2 分支绝不与 `main` 合并；`main` 与 `trae-dev` 保持不动。
