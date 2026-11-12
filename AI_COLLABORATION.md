@@ -335,10 +335,10 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 - ChatGPT 按新 commit 进行第三轮复审；复审通过前 V2-03 保持"待审查"，V2-04 不启动。
 
 **关联提交：**
-- 修复 commit SHA 见下方复审摘要（git log 顶部）。
+- 修复 commit：`76ea86b`（fix(v2-03): second review round，7 文件 +204/-34；被复审提交 ab41d63，复审基准）。
 
 **给 ChatGPT 的复审摘要：**
-- 修复 commit：见本文件同批次推送（fix(v2-03) 第二轮收尾）。
+- 修复 commit：`76ea86b`（fix(v2-03) 第二轮收尾：preconditions 必填 + 状态机私有化 + apply_verification_result）。
 - 测试：110 passed / 0 failed / 0 skipped（本机 Windows 实测）。
 - 文档：README / experiments README / Schema 版本说明三处已一致（均为 1.1 + 当前测试数 + 复审状态）。
 
