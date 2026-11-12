@@ -906,3 +906,42 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 5. 不要求用户重复转述已经写入本文件的背景和决定。
 6. 不把未验证的计划描述为已完成。
 7. 所有阶段以可运行、可验证、可演示为验收目标。
+
+
+### 2026-11-12｜角色：ChatGPT｜V2-03 第四轮静态复审：两处 Schema/Pydantic 镜像遗漏，暂不通过
+
+**审查基准：** 已先读取 CHATGPT_PROJECT_REASONING_BASIS.md，再读取最新协作文档、README、Schema、模型、加载器、状态机、验证器注册表和测试。当前分支相较上一轮文档基准 406d037 前进 6 个提交。Trae 报告第三轮修复后全量测试 215 passed / 0 failed / 0 skipped。本轮为 GitHub 源码静态复审，未在独立 Windows 环境重新运行测试；当前提交未见 GitHub CI status checks。
+
+**已确认第三轮修复有效：**
+1. preconditions 在 Schema step.required 中必填，Pydantic 无默认值；缺失拒绝、空数组通过、非法项拒绝均有测试。
+2. 低层转换改为私有 _transition()；模块无公开 transition；start_step、refresh_ready_steps、apply_skip_propagation、apply_verification_result 四个公开业务入口齐全。
+3. 状态机 6×6 的 36 种状态组合穷举测试、UNCERTAIN 36 种组合不推进测试、终态空转换集测试均已加入。
+4. depends_on、artifacts、capabilities、prerequisites 等此前遗漏的逐项约束已补齐，并有 Schema/Pydantic 双通道镜像测试。
+5. 加载器仍按版本、JSON Schema、Pydantic、语义四道门执行；验证器注册表只读，未知/预留验证器 fail-closed。
+6. 当前未发现实验 JSON 注入任意 Python 模块、函数或动态执行路径的通道。
+
+**仍需修复（V2-03 暂不通过）：**
+
+1. **schema_version 未镜像 JSON Schema const。**
+   - JSON Schema 使用 const: "1.1"。
+   - server/app/experiments/models.py 中 ExperimentDefinition.schema_version 仍为普通 str。
+   - 因此直接调用 ExperimentDefinition.model_validate() 可能接受 "1.0"、"9.9" 等 Schema 明确拒绝的版本。加载器前置版本门暂时挡住了，但模型本身不满足双重约束一致性。
+   - 请收紧为 Literal["1.1"] 或等效固定值校验，并添加直接 model_validate 拒绝测试。
+
+2. **verifier.type 未镜像 JSON Schema enum。**
+   - Schema 只允许 python_exit_code_zero、python_stdout_contains、mysql_query_result、mysql_table_state 四种值。
+   - 当前 VerifierDef.type 仍为普通 str，直接调用 VerifierDef.model_validate() 或完整模型 model_validate() 可能接受未知验证器字符串。
+   - 请改为对应 Literal 类型或共享枚举，并增加直接模型校验的未知类型拒绝测试。四种合法类型在结构层均应通过；环境匹配、参数合法性、reserved 类型拒绝执行继续由 registry/语义校验负责。
+
+3. **镜像测试直接覆盖上述两项。**
+   - schema_version="1.0" 和 "9.9"：JSON Schema 与 Pydantic model_validate 均拒绝。
+   - 未知 verifier.type：JSON Schema 与 Pydantic model_validate 均拒绝。
+   - schema_version="1.1" 和四种白名单 verifier 类型：两者均接受结构校验。
+   - 不要只经 load_experiment_dict() 测试，因为前置 Schema 门会掩盖 Pydantic 模型遗漏。
+
+4. **顺手修正过时注释（非单独阻断项）：**
+   - state_machine.py 的 TRANSITIONS 注释仍写“必须经 transition() 执行”，应改为准确描述私有 _transition() 与公开业务入口。
+
+**复审结论：**
+- 第三轮修复主体有效，但字段级镜像检查仍有遗漏。V2-03 保持“待审查”，V2-04 不得启动。
+- 本轮未修改业务代码；Trae 修复后独立提交新 commit，提供 SHA、完整 pytest 结果和镜像测试覆盖清单，再由 ChatGPT 复审。
