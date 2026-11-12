@@ -34,9 +34,6 @@
 ### 协作文档防覆盖
 修改前先拉取最新版本；只改必要章节并保留对方记录。发生冲突时以最新远端版本为基础合并。禁止在旧副本上强制推送或整篇覆盖。
 
-### 待决策与讨论专用文档
-待决策项、技术分歧与开放问题的讨论过程统一写在 [docs/AI_DISCUSSION.md](./docs/AI_DISCUSSION.md)（编号 D-x，含状态与讨论记录）。讨论结论必须回写本文件 §10「决策记录」；本文件的「当前任务」「进度看板」仍以本文件为准。
-
 ---
 
 ## 1. 项目定位（最高优先级）
@@ -214,34 +211,10 @@
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
 
-### 2026-11-12｜Trae：建立 AI 交流区文档
-
-**本次目标：**
-- 按负责人要求，将待决策项移入项目内供 ChatGPT / Trae / 负责人异步交流的专用文档。
-
-**实际完成：**
-- 新增 [docs/AI_DISCUSSION.md](./docs/AI_DISCUSSION.md)：定义使用规则（编号 D-x、状态流转、发言追加、结论回写总控）；迁入 D-1（代码执行隔离）、D-2（实验定义格式）、D-3（sandbox_manager 去留）三个待决策项，各含背景、选项、Trae 建议与讨论记录区。
-- 本文件 §0 增加「待决策与讨论专用文档」规则；§11 风险表 D-1/D-2/D-3 处理方式改为指向交流区文档。
-
-**修改文件：**
-- 新增 docs/AI_DISCUSSION.md
-- 修改 AI_COLLABORATION.md（§0、§11、本记录）
-
-**验证命令与结果：**
-- 命令：`git fetch origin feat/zhidao-shixun-v2-rebuild` + `git status -sb`
-- 结果：远端无新提交，本地与远端一致后开始编辑。
-
-**未完成 / 已知问题：**
-- D-1 / D-2 / D-3 仍为「待讨论」，等待 ChatGPT 意见与负责人决定。
-
-**需要对方处理或确认：**
-- ChatGPT：在交流区文档各条目「ChatGPT 意见」处填写意见；负责人：填写「负责人决定」。
-
-**下一步建议：**
-- 三项决策确定后，启动 V2-02 基础工程骨架（不受 D-1/D-2/D-3 阻塞的部分可先行）。
-
-**关联提交：**
-- 见本文件同批次提交 SHA。
+### 2026-11-12｜Trae：撤回误建的交流区文档
+- 负责人指出 AI_COLLABORATION.md 本身就是唯一交流文档；已 revert 掉误建的 docs/AI_DISCUSSION.md 及相关引用（commit cff80c3 已撤销）。
+- 待决策项 D-1/D-2/D-3 回到本文件 §11 风险表跟踪（详见 docs/V2-01_inventory_and_rebuild_plan.md §6）。
+- 规则已记入 §10 决策记录：不再另建任何交流/流程文档。
 
 ### 2026-11-12｜Trae：V2-01 旧项目盘点与重建方案
 
@@ -300,6 +273,7 @@
 | 2026-11-12 | 盘点确认：旧项目代码在 trae-dev，main 仅初始提交 | Trae 盘点发现；main 无需清理，trae-dev 只读参考不合并 |
 | 2026-11-12 | V2 目录结构提案：server/web/desktop/experiments 单仓结构，engine 独立引擎层 | Trae 提案（V2-01），待审查；AI 密钥只在 server，统一状态契约由 engine 定义 |
 | 2026-11-12 | 复用边界：业务代码全部参考重写；不迁移调试脚本/演示截图/旧文档/内置凭据 | Trae 提案（V2-01），待审查 |
+| 2026-11-12 | AI_COLLABORATION.md 即唯一协作/交流文档，不另建交流文档 | 负责人指示；待决策项直接在本文件 §11 跟踪讨论 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -316,9 +290,9 @@
 | 多方同时修改协作文档 | 可能发生覆盖 | 先拉取、合并最新内容、再提交 | 持续遵守 |
 | 本机 git 将 github.com 重写到 ghfast.top 镜像且镜像不可达 | fetch/push 失败 | 命令级 `-c http.proxy=http://127.0.0.1:10808 -c http.sslBackend=openssl -c url...insteadOf` 覆盖；不改全局配置 | 已验证可用 |
 | Windows schannel 证书吊销检查失败（CRYPT_E_REVOCATION_OFFLINE） | git/curl 经代理访问 GitHub 报 TLS 错误 | git 切 openssl 后端（命令级 -c） | 已验证可用 |
-| D-1 代码执行隔离方案未定 | 影响 V2-04 设计 | 讨论移至 docs/AI_DISCUSSION.md（D-1），Trae 建议首期受限子进程+预留 Docker | 待决策 |
-| D-2 实验定义格式未定 | 影响 V2-03 数据模型 | 讨论移至 docs/AI_DISCUSSION.md（D-2），建议旧 experiment_packs JSON 规范化沿用 | 待决策 |
-| D-3 sandbox_manager 去留未定 | 影响仓库组件范围 | 讨论移至 docs/AI_DISCUSSION.md（D-3），依赖 D-1 结论 | 待决策 |
+| D-1 代码执行隔离方案未定 | 影响 V2-04 设计 | 见 docs/V2-01 §6，Trae 建议首期受限子进程+预留 Docker | 待决策 |
+| D-2 实验定义格式未定 | 影响 V2-03 数据模型 | 建议：旧 experiment_packs JSON 规范化沿用 | 待决策 |
+| D-3 sandbox_manager 去留未定 | 影响仓库组件范围 | 依赖 D-1 结论 | 待决策 |
 
 ---
 
