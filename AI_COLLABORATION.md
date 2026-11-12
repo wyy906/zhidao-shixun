@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第八轮架构修订已提交：FILE_TRAVERSE/SeChangeNotifyPrivilege 语义修正（目录模板减为 3 ACE、保密边界改为文件 DACL）、A-E 目录层级×开发/最终安装双模式（撤销第七轮"不能替换祖先"错误表述，开发模式 C/D 标 R-4B-8 未阻止）、NtCreateFile 逐级相对打开无重解析方案、句柄共享模式定死（FILE_SHARE_READ 仅）；N-A33~N-A48；待 ChatGPT 第八轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第九轮架构修订已提交：修复第八轮复审四项阻塞——①文件/目录句柄掩码分离：文件 0x00120081（FILE_READ_DATA+FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE）、目录 0x00120080（FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE，不含 0x1，不获 FILE_LIST_DIRECTORY）；②目录 DACL 回 4 ACE 补运行账户元数据 ACE 0x00100080（FILE_READ_ATTRIBUTES+SYNCHRONIZE），有效权限与句柄掩码逐位吻合，逐位证明无 LIST/ADD/DELETE/DELETE_CHILD/WRITE_DAC/WRITE_OWNER；③FILE_SHARE_DELETE 保护范围分层界定（文件/父目录/子项/五操作表）；④NtCreateFile ctypes 前置条件（UNICODE_STRING 16B/OBJECT_ATTRIBUTES 48B/IO_STATUS_BLOCK 16B、对齐、调用约定、NTSTATUS 转换、CreateOptions 值）全部标注【未验证】；N-A49~N-A64；待 ChatGPT 第九轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1203,7 +1203,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | R-4B-1：容器逃逸残余风险依赖 Docker Desktop/WSL2 VM 边界 | 极端内核漏洞场景下隔离失效 | cap_drop ALL、no-new-privileges、非 root、无 socket/privileged 缩小攻击面；VM 边界残余风险接受并记录；镜像内无任何密钥 | 已记录（接受） |
 | R-4B-2：attach 双向流协议已明确（stdin 原始/输出帧解复用），但 docker-py 实际行为需实测确认 | SDK 抽象与协议预期不符会导致实现偏差 | V2-04B 首项任务为协议探针测试（stdout/stderr 分流+EOF 验证），探针通过后才实现执行器；不符则验证低层协议再选实现，绝不静默退回宿主机执行 | 待 V2-04B 实测 |
 | R-4B-4：镜像锁定清单 executor_image_lock.json 已真实提交（V2-04A 第四轮），当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest，两者都填）并更新清单；批准后重跑安全测试；部署脚本属 V2-04B 计划实现 | 待负责人审批 |
-| R-4B-5：.env 第七轮最小只读模板（文件 0x00120089 仅读/目录 0x00100020 仅遍历，双 OWNER RIGHTS 0x00020000，SYSTEM/Administrators 0x001F01FF）+ 父目录 Authz 有效权限（泛型映射）+ 路径链检查 + 运行期持有句柄闭环 TOCTOU，尚未 Windows 实机验证 | ACL 实际行为与设计不符时令牌保护弱于预期 | V2-04B 按模板全量构造 + 句柄上逐项校验 + 周期重验实现，附 N-A1~N-A32 共 32 项正负向测试；任一不符拒绝启动；Administrators/SYSTEM 的 FILE_ALL_ACCESS 为明确接受的本机管理员/SYSTEM 信任边界 | 待 V2-04B 实测 |
+| R-4B-5：.env 第九轮模板（文件句柄 0x00120081 含 FILE_READ_DATA+FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE；目录句柄 0x00120080 仅元数据读取，不含 0x1 不获 FILE_LIST_DIRECTORY；目录 DACL 4 ACE：OWNER RIGHTS 0x00020000 + 运行账户 0x00100080（FILE_READ_ATTRIBUTES+SYNCHRONIZE，仅目录元数据） + SYSTEM/Administrators 0x001F01FF，运行账户目录有效权限 0x00120080 与句柄掩码逐位吻合）+ 逐级句柄校验 + 句柄上 GetSecurityInfo/属性/FileId/卷序列号核验闭环 TOCTOU，尚未 Windows 实机验证 | ACL/共享模式实际行为与设计不符时令牌保护弱于预期；ctypes 结构布局在 32/64 位下偏差 | V2-04B 按模板全量构造 + 逐位比对有效权限 + N-A1~N-A64 共 64 项负向测试；任一不符拒绝启动；Administrators/SYSTEM 的 FILE_ALL_ACCESS 为明确接受的本机管理员/SYSTEM 信任边界 | 待 V2-04B 实测 |
 | R-4B-7：同用户进程（B）可读取 .env 密钥（同用户信任边界，Windows ACL 机制原理上无法阻止同 token 读取/进程注入/内存读取） | 同用户恶意进程可窃取 AI 密钥 | 本设计明确不宣称阻止同用户读取，仅保证其无法篡改/删除/替换 .env 或其 DACL；残余风险如实记录；完整隔离依赖后续独立服务账户/隔离部署（学校服务器部署前置条件，第二轮阻塞检查单） | 接受并记录；V2-07 前置条件 |
 | R-4B-8：开发模式（用户 profile 下）同用户进程可替换项目根/祖先目录/程序文件/启动入口（Windows 用户 profile 默认权限，第七轮威胁模型表"不能替换祖先"表述错误已撤销） | 被篡改的祖先可能影响下次启动加载的代码，仅靠 .env DACL 无法保护整个安装环境 | 开发模式如实标注同用户信任边界不宣称阻止；启动时路径链逐级校验（FileId/卷 ID/reparse 检查）失败即拒绝启动；完整防护依赖最终安装模式（Program Files + ProgramData 受控 ACL + 专用服务账户）列为 V2-07 前置条件，未实机验证前标注【未验证】 | 接受并记录（开发模式）；V2-07 前置 |
 | R-4B-6：清扫状态白名单（仅 exited/dead）与 force=false 非强制删除尚未 Docker 实测 | 误删 paused/created 等运行语义容器，或删除冲突处理不当 | 七项校验+四项删除前核验+force=false+失败不扩大范围；N-S1~N-S23 负向测试设计覆盖全部状态与竞态场景 | 待 V2-04B 实测 |
@@ -2050,6 +2050,108 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 - 当前未运行 Docker/Windows ACL 实测；未批准镜像 digest；未启动执行器实现。
 - 项目负责人明确说“同意合并”前，V2 分支绝不与 `main` 合并；`main` 与 `trae-dev` 保持不动。
 
+
+### 2026-11-13｜Trae：V2-04A 架构第九轮修订（文件/目录掩码分离 / 目录元数据 ACE 方案 A / 共享模式分层 / NtCreateFile 实现前置条件，docs-only）
+
+**修订 1：文件与目录句柄访问掩码分离（响应第八轮阻塞项 1；承认第八轮错误）**
+
+- **承认错误**：第八轮把 `0x00120089` 同时用于文件和目录句柄——`0x1` 在文件对象是 FILE_READ_DATA，在目录对象是 FILE_LIST_DIRECTORY；声明"目录句柄不需要列目录"却又请求了它，自相矛盾。本轮分离定义，掩码按所需权限逐位推导。
+
+**A. `.env` 文件句柄：dwDesiredAccess = `0x00120081`**（第八轮 0x00120089 精简：去掉 FILE_READ_EA，运行期无读取扩展属性需求）
+
+| 位 | 符号 | 文件对象语义 | 必要性 / 去掉的后果 |
+|---|---|---|---|
+| 0x00000001 | FILE_READ_DATA | 读取文件内容（密钥） | 必须有——ReadFile 的前提；去掉则无法读取配置 |
+| 0x00000080 | FILE_READ_ATTRIBUTES | 读取属性/时间/大小 | 必须——GetFileInformationByHandleEx（FileIdInfo/AttributeInfo）与 FSCTL_GET_REPARSE_POINT 查询的前提；去掉则 FileId/reparse 核验失败 |
+| 0x00020000 | READ_CONTROL | 读取 Owner/DACL 安全描述符 | 必须——GetSecurityInfo by handle 校验模板的前提；去掉则无法核验 DACL |
+| 0x00100000 | SYNCHRONIZE | 句柄同步等待 | 保留——CreateFileW 兼容（SYNCHRONOUS_IO 语义）与将来可能的重验等待；去掉不影响读，但降低实现一致性 |
+
+- 在目录对象上的语义：本掩码**只用于文件句柄**，不用于目录。若误用于目录：0x1 = FILE_LIST_DIRECTORY（列出内容）、0x80/0x20000/0x100000 语义不变——**N-A49/N-A50 负向测试锁定此错误**。
+- 该掩码 ≤ 文件 DACL owner ACE `0x00120089` ✓（请求的每个位都被授予）。
+
+**B. 目录句柄（根与每一级）：dwDesiredAccess = `0x00120080`**（SYNCHRONIZE + READ_CONTROL + FILE_READ_ATTRIBUTES，**不含 0x1**）
+
+| 位 | 符号 | 目录对象语义 | 必要性 / 去掉的后果 | 是否授予列目录能力 |
+|---|---|---|---|---|
+| 0x00000080 | FILE_READ_ATTRIBUTES | 读取目录属性 + FileId（**0x80 无文件/目录双语义差异，目录上仍为读属性**） | 必须——GetFileInformationByHandleEx 查询 FileIdInfo/AttributeInfo 与 FSCTL reparse 检测的前提；去掉则逐级核验失败 | **否**（列目录是 0x1 FILE_LIST_DIRECTORY） |
+| 0x00020000 | READ_CONTROL | 读取目录 Owner/DACL | 必须——GetSecurityInfo 核验目录模板的前提；去掉则目录校验不可行 | 否 |
+| 0x00100000 | SYNCHRONIZE | 同步 | 同文件句柄理由 | 否 |
+| **0x00000001（不请求）** | FILE_LIST_DIRECTORY（目录） | 列出目录内容 | **不需要**——服务按已知文件名逐级相对打开，从不需要枚举子项 | **掩码不含此位 → 不授予** |
+
+- 不请求 FILE_TRAVERSE (0x20)：路径遍历检查被 SeChangeNotifyPrivilege bypass（第八轮已确认），且目录 DACL（修订 2 模板）不授予运行账户该位——若句柄请求 0x20 会因 DACL 未授权而**打开失败**；相对打开子项依赖的 traverse 检查同样被 bypass，且不将其作为安全屏障。
+- 逐位推导依据：Microsoft File Access Rights Constants（0x1 在文件/目录的双语义）、CreateFileW/NtCreateFile DesiredAccess 语义；**全部标注【未验证】**，N-A49/N-A50 负向测试 + 实机验证后才能宣称确认。
+
+**修订 2：目录 DACL 增加"目录元数据读取" ACE——采用方案 A（响应第八轮阻塞项 2；方案 B 评估后弃用）**
+
+- **缺口确认**：第八轮 3-ACE 目录模板下运行账户有效目录权限 = OWNER RIGHTS 的 READ_CONTROL(0x20000)——**缺 FILE_READ_ATTRIBUTES(0x80)**，GetFileInformationByHandleEx/FileId 查询会失败（owner 隐式权限仅 READ_CONTROL/WRITE_DAC，且 WRITE_DAC 已被 OWNER RIGHTS 中和）；READ_CONTROL 由 owner 隐式+OWNER RIGHTS 提供 ✓。第八轮设计不可运行。
+- **方案选择：方案 A（给运行账户增加最小化目录元数据 ACE）**。方案 B（高权限组件验证后传句柄）评估：需跨进程 DuplicateHandle（源进程需对目标进程的句柄复制授权）、进程身份提升为管理员、生命周期/崩溃时句柄清理、句柄到达执行服务后仍需重新核验——新增一个高权限信任面与 IPC 面，复杂度与风险显著高于直接授予"读元数据"权限；弃用。方案 C：无更优。
+- **修订后父目录 DACL 模板（4 条 ACE，替代第八轮 3-ACE 模板）**：
+
+| 序 | 主体 SID | 类型 | Mask（hex） | 位分解（目录语义） | Flags |
+|---|---|---|---|---|---|
+| 1 | S-1-3-4（OWNER RIGHTS） | ALLOW | `0x00020000` | READ_CONTROL（中和 owner 隐式 WRITE_DAC，仅保留读安全描述符） | 0x0 |
+| 2 | `<运行账户 SID>` | ALLOW | `0x00100080` | SYNCHRONIZE(0x00100000) + FILE_READ_ATTRIBUTES(0x80)——**逐位证明不含**：FILE_LIST_DIRECTORY(0x1)✗、FILE_ADD_FILE(0x2)✗、FILE_ADD_SUBDIRECTORY(0x4)✗、FILE_TRAVERSE(0x20)✗、FILE_DELETE_CHILD(0x40)✗、DELETE(0x00010000)✗、WRITE_DAC(0x00040000)✗、WRITE_OWNER(0x00080000)✗ | 0x0 |
+| 3 | S-1-5-18（SYSTEM） | ALLOW | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+| 4 | S-1-5-32-544（Administrators） | ALLOW | `0x001F01FF` | FILE_ALL_ACCESS | 0x0 |
+
+- **运行账户有效目录权限 = 0x00120080**（OWNER RIGHTS 0x20000 ∪ ACE 0x100080）——恰好等于修订 1 的目录句柄 DesiredAccess `0x00120080`，**逐位吻合、无多余权限**；owner 保持运行账户（配置阶段创建）；继承关闭（SE_DACL_PROTECTED）；owner/DACL/继承核验方式与第七轮一致。
+- **最终安装模式映射**：目录 owner=SYSTEM 时，服务账户无法经 owner 路径获得 READ_CONTROL——模板 SID 替换为服务账户专用 ACE（同样 `0x00100080`，外加文件模板的 `0x00120089` 读 ACE），SYSTEM owner 由 SYSTEM ACE 满足其自身权限；owner 核验值改为 SYSTEM SID（S-1-5-18）【未验证，属最终模式实施细节】。
+- **运行账户实际可执行**：GetSecurityInfo(Owner/DACL)（READ_CONTROL）、GetFileInformationByHandleEx(FileIdInfo/AttributeInfo)、FSCTL_GET_REPARSE_POINT（FILE_ANY_ACCESS，0x80 足够）、NtCreateFile 以该句柄为 RootDirectory 相对打开（traverse 由 bypass + 模板不含限制）、作为下一级校验的锚点。**不允许获得**：列出目录内容、创建/删除/替换任何子项、修改自身或子项 DACL/owner。
+- OWNER RIGHTS ACE 是否满足需求（复审问 8）：仅满足 READ_CONTROL 部分；FILE_READ_ATTRIBUTES 必须经显式 ACE 0x100080 提供——两者配合才闭环。
+
+**修订 3：FILE_SHARE_DELETE 保护范围分层界定（响应第八轮澄清项 3）**
+
+- **总原则**：共享模式只约束"**已被打开的对象**"后续的打开请求；**不构成对目录树的通用删除保护**。子项删除能力由两道独立机制决定：①子项自身 DACL（DELETE access 是否授予）②父目录 DACL（FILE_DELETE_CHILD 是否授予）——共享模式只是第三道（对已打开对象）。
+- **分层结论表**：
+
+| 操作 | 依赖权限/机制 | 服务句柄作用 | 模板下同用户进程结果 |
+|---|---|---|---|
+| 删除 .env 文件 | ①文件 DACL DELETE（未授予）②目录 FILE_DELETE_CHILD（未授予）；对已打开文件还需 DELETE access 打开成功 | **第三道防线**：服务句柄 share=FILE_SHARE_READ 仅 → DELETE access 打开 sharing violation | **不能删除**（三道全挡）【未验证】 |
+| 重命名 .env | 文件 DELETE access + 目标位置目录 FILE_ADD_FILE | 同上（rename 需以 DELETE 打开源） | 不能（DACL✗ + sharing✗）【未验证】 |
+| 写入 .env | 文件 DACL 写权限（未授予） | 服务句柄无 FILE_SHARE_WRITE → 写 access 打开 violation | 不能【未验证】 |
+| 删除父目录本身 | 目录 DELETE access + 目录为空/FILE_DELETE_CHILD | 目录句柄 share=FILE_SHARE_READ 仅 → DELETE 打开 violation | 不能【未验证】 |
+| 重命名父目录 | 目录 DELETE access | 同上 | 不能【未验证】 |
+| 创建同名文件替换 | 目录 FILE_ADD_FILE + （删除被挡） | 目录句柄不阻断新建（share 不涉及新建）——**由目录 DACL 阻挡**（FILE_ADD_FILE 未授予） | 不能【未验证】 |
+| 删除/改名目录内**其他**文件 | 各文件自身 DACL + 目录 FILE_DELETE_CHILD | **服务句柄不保护未打开的子项**——如实声明：当前设计中目录内仅 .env 一个受控文件，其他文件不在此保护范围 | 视各文件 DACL；不在本设计宣称范围 |
+
+- 复审问 2/3 明确回答：运行账户/同用户进程**不拥有** FILE_DELETE_CHILD（目录模板逐位证明）；同用户进程删除 .env 的其他权限路径：仅剩 DELETE via file DACL（未授予）与 FILE_DELETE_CHILD（未授予）——无残余 ACL 路径；管理员/SYSTEM 仍可（信任边界不变）。
+
+**修订 4：NtCreateFile 实现前置条件（ctypes 层面定义，全部【未验证】；不写实现代码）**
+
+1. **UNICODE_STRING**（64 位：16 字节，8 对齐）：`USHORT Length; USHORT MaximumLength; [4 字节对齐填充] PWSTR Buffer;`（32 位：8 字节，4 对齐）——ctypes：`class UNICODE_STRING(Structure): _fields_=[("Length",c_ushort),("MaximumLength",c_ushort),("Buffer",c_void_p)]`，ctypes 默认对齐自动插入填充（64 位 Buffer 8 对齐 → Length/Max 后 pad 4）【未验证：实测 sizeof==16/8】。
+2. **OBJECT_ATTRIBUTES**（64 位：48 字节，8 对齐）：`ULONG Length(4)+pad(4); HANDLE RootDirectory(8); PUNICODE_STRING ObjectName(8); ULONG Attributes(4)+pad(4); PVOID SecurityDescriptor(8); PVOID SecurityQualityOfService(8)`（32 位：24 字节，4 对齐）——Length=sizeof(OBJECT_ATTRIBUTES)（64 位 48 / 32 位 24）【未验证】。Attributes=OBJ_CASE_INSENSITIVE(0x40)。
+3. **IO_STATUS_BLOCK**（64 位：16 字节）：`union {NTSTATUS Status; PVOID Pointer}（8）; ULONG_PTR Information(8)`——ctypes：`class IO_STATUS_BLOCK(Structure): _anonymous_=("Status",); _fields_=[("Status",IO_STATUS_UNION),("Information",c_size_t)]`，其中 union=ctypes.Union(c_long, c_void_p)【未验证】。
+4. **对齐要求**：64 位结构 8 字节对齐、32 位 4 字节——ctypes 自然对齐与 MSVC x64 ABI 一致，但 padding 必须由 sizeof 断言测试锁定（N-A62）。
+5. **调用约定**：NTAPI = stdcall（32 位经 `ctypes.WindLL("ntdll")`）；x64 统一 fastcall（ctypes 自动）【未验证】。
+6. **NTSTATUS 转换**：Severity=10（0xC0000000 位）为错误；经 `RtlNtStatusToDosError` 转 Win32 码；**绝不把 NTSTATUS 直接当 errno 解释**（N-A63：如 STATUS_SHARING_VIOLATION 0xC0000043 ≠ Win32 32，错误处理必须显式转换）；成功 STATUS_SUCCESS=0 / STATUS_PENDING 需等待处理【未验证】。
+7. **CreateOptions**：`FILE_OPEN_REPARSE_POINT = 0x00200000`（每级目录与最终 .env 均携带）+ `FILE_OPEN = 0x00000001`（CreateDisposition，仅打开不创建）+ 目录加 `FILE_DIRECTORY_FILE = 0x1`、文件加 `FILE_NON_DIRECTORY_FILE = 0x40` + `FILE_SYNCHRONOUS_IO_NONALERT = 0x20`（配合 SYNCHRONIZE access）【未验证】。
+8. **RootDirectory 句柄权限要求**：相对名称解析需父句柄有效且具备 traverse（服务 token SeChangeNotifyPrivilege bypass ✓，且不作为安全屏障）；父句柄同时必须已通过修订 1 掩码打开并完成校验（READ_CONTROL/FILE_READ_ATTRIBUTES 用于父级核验）【未验证】。
+9. **DesiredAccess 文件/目录差异**：同一常量双语义（0x1/0x2/0x4/0x20）——文件句柄 0x00120081、目录句柄 0x00120080，禁止共用（N-A44/N-A49 延续）。
+10. **句柄关闭与异常清理**：所有 NtCreateFile 成功句柄在失败路径 finally `CloseHandle`（等价 NtClose）；任一级失败即关闭本级及以上全部已开句柄；成功链在运行期保持；服务停止时统一关闭；不发生句柄泄漏【未验证】。
+- 若实机验证发现 ctypes/结构体不可用 → **重新设计并提交复审，绝不退回按路径字符串打开**（原则不变）。
+
+**修订 5：负向测试 N-A49~N-A64（16 项，全部为设计未运行）**
+
+| # | 前提 | 攻击/异常操作 | 预期结果 | 拒绝启动 | 审计 | mock 可验 | 需实机 |
+|---|---|---|---|---|---|---|---|
+| N-A49 | 实现误用文件掩码开目录 | 0x00120089 开目录句柄 | DACL 未授予 0x1(FILE_LIST_DIRECTORY) → ACCESS_DENIED；启动失败 | 是 | 是 | 是 | 是 |
+| N-A50 | 目录句柄意外取得 FILE_LIST_DIRECTORY | 请求 0x1 打开目录 | 被实现级断言拒绝（DesiredAccess 白名单=0x00120080/0x00120081）+ DACL 拒绝 | 是 | 是 | 是 | 是 |
+| N-A51 | 运行账户无目录 ACE（第八轮旧模板残留） | 打开目录句柄 | 缺 FILE_READ_ATTRIBUTES/READ_CONTROL → 打开失败 → 拒绝启动（暴露模板未更新） | 是 | 是 | 是 | 是 |
+| N-A52 | 目录 DACL 缺 READ_CONTROL 授予 | GetSecurityInfo by handle | 失败 → fail-closed 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A53 | 目录 DACL 缺 FILE_READ_ATTRIBUTES | FileId/属性查询 | 失败 → fail-closed | 是 | 是 | 是 | 是 |
+| N-A54 | 最终安装模式：目录 owner=SYSTEM、服务账户仅 0x00100080 ACE | 服务账户开目录句柄+查 Owner/DACL/FileId | 经模板 ACE 成功（不依赖 owner 路径）；Owner 核验值=SYSTEM | 否（正常运行） | 是 | 是 | 是 |
+| N-A55 | 目录句柄仅 FILE_SHARE_READ | 同用户进程删除目录内子文件（.env） | 被文件 DACL+目录 FILE_DELETE_CHILD 缺失+文件句柄 sharing 三道拒绝 | 否 | 是 | 否 | 是 |
+| N-A56 | 运行账户被误授予 FILE_DELETE_CHILD | 删除 .env | 实现级模板校验（有效权限≠批准掩码）拒绝启动；OS 层若无校验则删除成功——证明模板校验必须存在 | 是 | 是 | 是 | 是 |
+| N-A57 | 模板已应用 | 运行账户 rename 替换 .env | 文件 DELETE access 未授予 → OS 拒绝 | 否 | 是 | 否 | 是 |
+| N-A58 | 模板已应用 | 运行账户创建同名 .env | 目录 FILE_ADD_FILE 未授予 → OS 拒绝 | 否 | 是 | 否 | 是 |
+| N-A59 | 文件句柄与目录句柄共享模式被混用（如文件句柄含 FILE_SHARE_DELETE） | 实现级自检 | 共享模式白名单断言失败 → 拒绝启动 | 是 | 是 | 是 | 否 |
+| N-A60 | RootDirectory 句柄权限不足（如仅 SYNCHRONIZE） | NtCreateFile 相对打开 | 失败（traverse/解析错误）→ fail-closed 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A61 | READ_CONTROL 不足 | GetSecurityInfo | 失败 → fail-closed | 是 | 是 | 是 | 是 |
+| N-A62 | ctypes 结构体 sizeof/字段偏移错误（如 64 位下 IO_STATUS_BLOCK 不是 16） | 启动自检断言 sizeof(OBJECT_ATTRIBUTES)==48 / IO_STATUS_BLOCK==16 / UNICODE_STRING==16 | 断言失败 → 拒绝启动（防 ABI 错位写入内核结构） | 是 | 是 | 是 | 是 |
+| N-A63 | NTSTATUS 被错误按 Win32 errno 处理 | NtCreateFile 返回 STATUS_SHARING_VIOLATION(0xC0000043) | 代码必须经 RtlNtStatusToDosError 转换；负向断言：直接比较 32 == NTSTATUS 的处理路径失败 → 转换修正后 fail-closed 行为正确 | 是 | 是 | 是 | 是 |
+| N-A64 | 文件句柄关闭后（如服务重启间隙） | 同用户进程删除/替换 .env | 若替换成功：下次启动句柄上 DACL/owner/FileId 校验不一致 → 拒绝启动；模板下 B 无写权限无法注入内容（同第七轮结论） | 是（下次启动） | 是 | 是 | 是 |
+
+**范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；`executor_image_lock.json` 保持原样（pending、digest 全 null）；未实现容器执行、未新增 subprocess、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未创建或合并 PR、未合并任何分支。验证 = 文档设计审查 + 既有基线回归（238 passed）；修订 1–4 与 N-A49~N-A64 **全部未实机运行**，mock 可验项（实现级断言/结构自检）与 Windows 实机必须项（OS 权限行为）已逐项标注，实测归 V2-04B。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-04A 第八轮复审：暂不批准，发现目录句柄权限掩码与 ACL 矛盾
 
