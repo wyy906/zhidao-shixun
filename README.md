@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**V2-02 基础工程骨架、V2-03 实验定义与步骤数据模型已完成。** V2-03 第五轮源码复审通过；Trae 报告 Windows 本机全量测试为 238 passed / 0 failed / 0 skipped，前端 vue-tsc + vite 构建通过。ChatGPT 本轮完成 GitHub 源码静态审查，未在独立 Windows 环境重跑，当前修复提交未见 CI status checks。当前进入 V2-04A：先评审 Docker 隔离执行架构，架构通过前不实现容器执行。AI 指导、屏幕标注和真实沙箱执行等业务功能尚未实现。
+**V2-02 基础工程骨架、V2-03 实验定义与步骤数据模型已完成。** V2-03 第五轮源码复审通过；Trae 报告 Windows 本机全量测试为 238 passed / 0 failed / 0 skipped，前端 vue-tsc + vite 构建通过。当前进入 V2-04A：Trae 已提交 Docker 隔离执行架构设计与安全评审材料（三进程拓扑、固定镜像/命令白名单、代码受控传递、容器安全基线、威胁模型、12 项测试矩阵、Windows 部署说明），写入 AI_COLLABORATION.md，待 ChatGPT 复审；**架构复审通过前不实现容器执行（V2-04B）**。本机未安装 Docker（已实测确认），容器行为的真实验证需在负责人 Docker Desktop 环境进行。AI 指导、屏幕标注等业务功能尚未实现。
 
 仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
 

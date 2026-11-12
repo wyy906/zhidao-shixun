@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（先做 V2-04A 隔离架构评审；未授权前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 隔离架构评审材料已提交，待 ChatGPT 复审；复审通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -318,6 +318,150 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜Trae：V2-04A Docker 隔离执行架构设计与安全评审材料（仅设计，未实现容器执行）
+
+**基准确认：**
+- HEAD：`c6f1af8`（含 V2-03 第五轮复审通过记录 bd47881、V2-04A 状态 0de408c、最终部署验收目标 c6f1af8）。
+- 已复读现有代码：services/executor/base.py（占位执行器 + DockerSandboxConfig 安全基线）、api/v1/health.py、api/v1/contract.py、core/config.py、tests/test_executor.py、contracts 0.1.0。
+- **本机事实核查（已实测）**：本机未安装 Docker（`docker` 命令不存在，Docker Desktop 未安装）。因此本机只能验证 fail-closed 行为与协议层，所有真实容器行为验证必须在安装了 Docker Desktop 的环境进行。
+
+**一、组件隔离架构（三进程拓扑）**
+
+```
+web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不碰 docker socket/ named pipe）
+                        │ HTTP POST /api/v1/execute（仅限本地回环 + 共享令牌）
+                        ▼
+                    独立执行服务 executor-service（独立 OS 进程，uvicorn，127.0.0.1:8101）
+                        │ Docker SDK（经 Docker Desktop named pipe //./pipe/docker_engine 或 npipe）
+                        ▼
+                    Docker Engine（Linux 容器，python:3.12-slim）
+```
+
+- 业务进程与执行服务之间是普通 HTTP：业务进程唯一依赖是配置项 `ZD_EXECUTOR_BASE_URL`（默认 http://127.0.0.1:8101）与共享令牌 `ZD_EXEC_SERVICE_TOKEN`（两侧同值，来自 .env；.env 是本项目唯一允许存放密钥类配置的位置，符合 V2-02 决策）。业务进程**不 import docker、不打开任何 Docker 管道**；执行服务不可达时 API 返回 503 结构化错误，绝不回退宿主机执行（D-1）。
+- 访问控制三层：① 执行服务只绑定 127.0.0.1；② 请求头 `X-Execution-Token` 校验，失败 403；③ 只暴露两个端点 `GET /health`（返回 Docker 可用性）与 `POST /api/v1/execute`（无任何管理端点，不暴露容器列表/日志）。
+- 部署方式：新增独立入口 `server/app/services/executor_service/app.py` + `scripts/start-executor.ps1`（ASCII 注释），与业务进程分开启停；执行服务崩溃不影响 API 进程，API 侧表现为 fail-closed。
+- 每个请求是独立一次性容器（create → start → 收集输出 → kill/等待 → force remove），容器带 label `zhidao-exec=true` 供启动时清扫残留。
+
+**二、执行策略（全部白名单固定，请求不可指定）**
+
+| 维度 | 固定值 | 说明 |
+|---|---|---|
+| 镜像 | python:3.12-slim | 请求不接受 image 字段；V2-04B 可选 digest 锁定（待确认项 C-3） |
+| 命令 | `["python","-I","-","<受控路径>"]` 或 `["python","-I","-"]` | argv 数组，**绝不经过 shell 拼接**；`-I` 隔离模式（忽略 PYTHONPATH/用户 site、不写 pyc） |
+| 用户 | 65534:65534（nobody） | 请求不可指定 |
+| 网络 | network_mode=none | 请求不可指定 |
+| 工作目录 | /sandbox（tmpfs） | 请求不可指定 |
+| 卷/设备/env/extra_hosts/privileged | 一律无 | 执行服务 API 只接受 `{language, code, timeout_seconds}`；其余字段即使传入也被忽略并记审计日志 |
+
+- 执行服务对 `{language, code, timeout_seconds}` **二次强制校验**（与 ExecutionRequest 相同规则：仅 python、≤64KB、0<timeout≤20s），不信任调用方传入的任何其他参数。
+
+**三、代码传递**
+
+- 主方案（V2-04B 实现）：执行服务将代码写入宿主机临时文件（随机 UUID 文件名、权限仅执行服务用户可读、位于系统临时目录专用子目录），容器创建时以**只读 bind mount** 挂载为 `/sandbox/main.py:ro`；容器退出后 finally 中立即删除宿主临时文件 + `container.remove(force=True)`。
+- 备选方案（如 WSL2 bind mount 单文件受限）：Docker 低层 attach stdin（`python -I -` 从 stdin 读代码）。实现时按实测选择，标注为待验证细节（假设区 H-2）。
+- 两种方案都不让代码内容出现在命令行参数、URL、日志或错误消息中。
+
+**四、容器安全基线（全部不可关闭，沿用/扩展 DockerSandboxConfig）**
+
+| 措施 | 实现参数 | 针对威胁 |
+|---|---|---|
+| 禁网 | `network_mode="none"` | 网络外传、横向探测 |
+| 非 root | `user="65534:65534"` | 容器内提权、写系统路径 |
+| 只读根文件系统 | `read_only=True` + tmpfs `/tmp`(rw,size=16m) | 文件系统篡改、持久化、磁盘耗尽 |
+| 丢弃全部 capabilities | `cap_drop=["ALL"]` | 提权、逃逸辅助 |
+| 禁止再提权 | `security_opt=["no-new-privileges"]` | setuid 提权 |
+| 内存限制 | `mem_limit="256m"`（并设 memswap=mem_limit 防交换） | 内存耗尽 |
+| CPU 限制 | `cpus=1.0`（nano_cpus） | CPU 抢占 |
+| PID 限制 | `pids_limit=64` | fork bomb |
+| 时间限制 | SDK timeout + 服务端 watchdog，超时 `container.kill()` | 死循环 |
+| 输出限制 | 流式读取累计 ≤64KB，超出截断并标记 truncated | 输出洪泛 |
+| 禁 Docker socket | 不挂载任何 docker 管道/sock（基线已强制） | 从容器控制宿主 Docker |
+| 自动清理 | finally remove(force) + 启动时按 label 清扫 | 僵尸容器堆积 |
+
+**五、异常处理矩阵（全部 fail-closed，无宿主机回退路径）**
+
+| 场景 | 执行服务行为 | API 返回 |
+|---|---|---|
+| Docker daemon 不可达 | 抛 DockerUnavailableError | 503 结构化错误（执行服务不可用） |
+| 镜像缺失 | 预检失败即拒绝，不自动 pull（待确认 C-3） | 503 + 明确原因 |
+| 容器 create/start 失败 | 清理后抛 ExecutorError（含原因，不含学生代码） | 503 |
+| 执行超时 | watchdog kill → 返回 ExecutionResult(timed_out=True) | 200，结果交给验证器（不得记 passed） |
+| 输出超限 | 截断 truncated=True | 200，验证器对截断输出不得直接判 passed |
+| 执行服务进程异常/不可达 | — | API 503（连接失败），不重试不回退 |
+| 请求非法（代码超限等） | UnsafeExecutionRequest | 400 统一错误结构 |
+| 令牌错误 | 403 | （直连执行服务时）403 |
+
+**六、威胁模型（8 项风险逐条处理）**
+
+| # | 风险 | 处理方式 | 残余风险 |
+|---|---|---|---|
+| 1 | 恶意代码任意执行 | 一次性容器 + 固定镜像/命令 + 非root + cap_drop ALL + no-new-privileges + 只读 rootfs | 依赖 Docker Desktop（WSL2/Hyper-V）隔离边界（R-4B-1） |
+| 2 | fork bomb | pids_limit=64 + timeout watchdog + cpu 1.0 | 极端场景容器内自我阻塞，宿主不受影响 |
+| 3 | 资源耗尽（内存/CPU/磁盘） | mem 256m（禁交换）+ cpu 1.0 + tmpfs 16m + 只读 rootfs + 代码/输出 64KB 上限 | 宿主 Docker daemon 自身资源由负责人机器管理 |
+| 4 | 文件系统探测 | 只读 rootfs + 非 root + 仅挂载执行服务生成的受控只读文件（路径学生不可控）+ tmpfs /tmp | 容器内可读镜像内标准库（镜像内无任何密钥——镜像为官方 python:3.12-slim，事实） |
+| 5 | 网络外传 | network_mode=none（连 localhost 也不可达） | 无 |
+| 6 | 容器逃逸 | cap_drop ALL + no-new-privileges + 非 root + 无 socket/privileged + Windows 下 WSL2 轻量 VM 边界 | 逃逸依赖内核漏洞属业界公认残余风险，超出本项目可消除范围（R-4B-1，接受并记录） |
+| 7 | 并发滥用 | 执行服务信号量并发上限（默认 2，可配 ZD_EXEC_MAX_CONCURRENT）；超限立即 503 拒绝（不排队不等待） | 应用层全局限速（每用户/每会话）属 V2-07 账户体系范围（待确认 C-4） |
+| 8 | 执行服务被伪造请求调用 | 127.0.0.1 绑定 + X-Execution-Token 共享令牌（.env）+ 仅两个端点 | 同机其他本地进程若被攻破仍可读 .env——本地单机部署场景可接受；多用户部署需 V2-07 统一认证 |
+
+**七、测试矩阵（V2-04B 验收清单；标注运行环境要求）**
+
+| # | 测试 | 验证点 | 环境要求 |
+|---|---|---|---|
+| T1 | Docker 不可用拒绝 | 连接失败 → DockerUnavailableError；API 503；**无宿主回退** | 无 Docker 可跑（mock） |
+| T2 | 安全参数构造断言 | create 参数含 network_mode=none/read_only/cap_drop/user/pids_limit/no-new-privileges、无任何 socket 挂载 | 无 Docker 可跑（mock） |
+| T3 | 令牌校验 | 无/错令牌 → 403；正确令牌放行 | 无 Docker 可跑 |
+| T4 | 并发上限 | 超限请求立即 503 | 无 Docker 可跑（mock） |
+| T5 | 非 root | 容器内 id -u == 65534 | **需 Docker** |
+| T6 | 禁网 | 容器内 socket 连接失败 | **需 Docker** |
+| T7 | 超时终止 | 死循环脚本 → timed_out=True，墙钟 ≤ timeout+缓冲 | **需 Docker** |
+| T8 | 输出截断 | 打印 >64KB → truncated=True 且长度 ≤ 上限 | **需 Docker** |
+| T9 | 退出码传递 | exit(2) → exit_code=2 | **需 Docker** |
+| T10 | 容器清理 | 执行后按 label 扫描无残留容器 | **需 Docker** |
+| T11 | 宿主临时文件清理 | 执行后临时目录无残留 | **需 Docker**（文件路径逻辑可 mock 部分验证） |
+| T12 | pids_limit 生效 | 进程数爆炸脚本被限制终止（谨慎构造，只验证限制生效） | **需 Docker** |
+
+- T1–T4 是本机（无 Docker）可交付的部分；T5–T12 需在安装 Docker Desktop 的环境运行（负责人机器或 CI）。V2-04B 交付时将用 marker 区分并**如实报告哪些只在本机 mock 验证、哪些在 Docker 环境验证**，不冒充通过。
+
+**八、Windows + Docker Desktop 部署说明（负责人环境）**
+
+1. 前置：安装 Docker Desktop（WSL2 backend），`docker version` 可用；`docker pull python:3.12-slim`。
+2. 启动顺序：Docker Desktop → `scripts/start-executor.ps1`（启动执行服务，127.0.0.1:8101）→ `scripts/start-server.ps1`（业务进程）→ `scripts/start-web.ps1`。
+3. 健康检查：执行服务 `GET /health` 返回 `{"docker_available": true|false, ...}`；业务进程健康端点增加执行服务连通性字段（V2-04B）。
+4. .env 需要：`ZD_EXECUTOR_BASE_URL`、`ZD_EXEC_SERVICE_TOKEN`（两侧一致；.env.example 提供占位说明，不提交真实值）。
+5. 停止：脚本 Ctrl+C；容器清理由 finally + 启动清扫保证。
+
+**九、接口草案（协议层，V2-04B 实现）**
+
+- `POST /api/v1/execute`（执行服务）：请求 `{"language":"python","code":"<≤64KB>","timeout_seconds":≤20}` + `X-Execution-Token` 头；成功响应 `{"exit_code":int|null,"stdout":str,"stderr":str,"timed_out":bool,"truncated":bool}`（即现有 ExecutionResult 结构，跨端契约未来加入 contracts 时按语义版本规则升级）；失败按错误矩阵返回 400/403/503。
+- 业务进程内部沿用 `CodeExecutor.run(ExecutionRequest)` 抽象：新增 `HttpExecutorServiceExecutor`（实现该抽象，HTTP 调执行服务）替换占位调用点；`DockerCodeExecutor` 保留为执行服务内部的实现类（V2-04B 实现 run()）。这样业务进程侧类型不变，契约零改动。
+
+**十、已验证事实 vs 设计假设**
+
+已验证事实（本机实测/代码确认）：
+- 现有占位执行器 raise DockerUnavailableError、安全基线不可关闭（20 项基线测试含 test_executor）；
+- 业务进程当前无任何 Docker 依赖（requirements.txt 无 docker SDK，代码无 docker import）——已 grep 确认；
+- **本机未安装 Docker**（`docker` 命令不存在）；
+- ExecutionRequest/DockerSandboxConfig 的输入约束与上限（64KB/20s/64KB）已在代码中。
+
+设计假设（V2-04B 实现或负责人环境验证，不冒充已验证）：
+- H-1：Docker Desktop（WSL2 backend）下 network_mode=none、cap_drop、pids_limit、mem_limit、no-new-privileges、read_only、tmpfs 全部按预期生效——需在负责人环境跑 T5–T12 验证；
+- H-2：WSL2 backend 下单文件只读 bind mount 可用（不可用则切换 stdin 方案）；
+- H-3：python:3.12-slim 内存在 uid 65534（nobody）——官方镜像事实，仍将在 T5 实测确认；
+- H-4：Docker SDK 经 named pipe 在 Windows 主机进程可用（官方支持路径，T1 mock 之外的真实验证需 Docker）。
+
+**十一、待确认事项（请 ChatGPT/负责人裁决）**
+
+- C-1：执行服务并发上限默认值（建议 2；教学场景 30 人同时提交时可调）。
+- C-2：镜像获取方式：预拉取（推荐，部署说明已含 docker pull）vs 执行服务首次自动拉取（拉取过程长且带外网依赖，不建议）。
+- C-3：镜像 digest 锁定（防 tag 漂移）：建议 V2-04B 支持可选 `ZD_EXEC_IMAGE_DIGEST` 配置，设置后创建容器时按 digest 校验。
+- C-4：应用层每用户限速/配额归入 V2-07 账户体系（本阶段仅并发上限）。
+- C-5：审计日志（执行请求/容器生命周期记录）是否 V2-04B 最小化引入（建议仅本地文件日志，不落库）。
+
+**禁止事项确认：** 本轮未实现任何容器执行代码；未新增宿主机 subprocess 执行路径；未在业务进程引入 Docker SDK/socket；未触碰 AI/RAG/OCR/UI Automation/MySQL 功能；未启动 V2-05/06/07；未合并任何分支。唯一代码级改动预期为零（本轮仅文档）。
+
+**修改文件清单：** 仅 AI_COLLABORATION.md（本条目 + 看板 + 决策记录）与 README.md（状态行）。等待 ChatGPT 复审；**架构通过前不实现 V2-04B**。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-03 第五轮源码复审：通过
 
@@ -881,6 +1025,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | 2026-11-12 | 验证器 reserved 类型"可加载、拒执行" | mysql_* 结构可表达（满足双环境表达要求），求值一律 fail-closed 返回 uncertain，不伪装通过 |
 | 2026-11-12 | preconditions 为可选字段，schema_version 1.0→1.1 | 按既有版本策略（新增可选字段升次版本）；与 depends_on 严格分离；是否改必填由 ChatGPT 复审决定 |
 | 2026-11-12 | VERIFIER_REGISTRY 使用 MappingProxyType 只读映射 | 落实"冻结注册表"承诺；测试注入改用模块属性替换，不修改只读映射 |
+| 2026-11-12 | V2-04A：执行服务独立进程架构 | 业务进程经本地 HTTP+共享令牌调用独立执行服务（127.0.0.1:8101），Docker SDK/管道只存在于执行服务；学生代码经受控临时文件只读挂载或 stdin 传递，固定镜像与 argv 命令，禁 shell 拼接；并发上限+全部基线不可关闭 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
