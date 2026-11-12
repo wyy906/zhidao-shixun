@@ -25,7 +25,8 @@ def test_registry_is_fixed_whitelist() -> None:
         "mysql_query_result",
         "mysql_table_state",
     }
-    # registry 是普通模块级映射，实验 JSON 只能引用其中的字符串，无法注入实现
+    # registry 是 MappingProxyType 只读映射：实验 JSON 只能引用其中的字符串，无法注入实现，
+    # 运行期也不可赋值/删除（见 test_registry_is_readonly_mapping）
     assert VERIFIER_REGISTRY["python_exit_code_zero"].implementation is VerifierImplementation.IMPLEMENTED
     assert VERIFIER_REGISTRY["mysql_query_result"].implementation is VerifierImplementation.RESERVED
 

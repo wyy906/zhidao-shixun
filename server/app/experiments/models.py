@@ -1,24 +1,45 @@
 """实验定义 Pydantic 模型。
 
-约束与 experiments/schema/experiment_definition.schema.json 一一对应：
+约束与 experiments/schema/experiment_definition.schema.json 一一对应（第三轮复审后逐字段镜像）：
 - 全部模型 extra="forbid"（未知字段拒绝）；
-- 长度/数量上限与 Schema 相同；
+- 字符串长度、数组数量、元素长度、唯一性、正则表达式与 Schema 相同；
 - 验证器类型与适配器标识是白名单枚举；
 - Schema 结构校验之外的字段级约束（如依赖存在、无环、参数合法性）在 loader 语义校验层完成。
 """
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 VALID_ENVIRONMENTS: tuple[str, ...] = ("python_web", "mysql_workbench")
 
+_STEP_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
-def _validate_conditional_text_list(value: list[str]) -> list[str]:
-    """条件描述列表逐项校验：1..300 字符（与 Schema 的 item minLength/maxLength 镜像）。"""
+
+def _validate_bounded_text_list(value: list[str], *, max_item_length: int) -> list[str]:
+    """条件/能力描述列表逐项校验：字符串且长度 1..max_item_length（镜像 Schema item minLength/maxLength）。"""
     for index, item in enumerate(value):
-        if not isinstance(item, str) or not (1 <= len(item) <= 300):
-            raise ValueError(f"第 {index} 项必须是 1..300 字符的字符串")
+        if not isinstance(item, str) or not (1 <= len(item) <= max_item_length):
+            raise ValueError(f"第 {index} 项必须是 1..{max_item_length} 字符的字符串")
+    return value
+
+
+def _validate_unique_bounded_text_list(value: list[str], *, max_item_length: int) -> list[str]:
+    """在逐项长度校验基础上追加唯一性（镜像 Schema uniqueItems）。"""
+    _validate_bounded_text_list(value, max_item_length=max_item_length)
+    if len(set(value)) != len(value):
+        raise ValueError("列表项不允许重复")
+    return value
+
+
+def _validate_step_id_list(value: list[str]) -> list[str]:
+    """依赖列表校验：逐项符合步骤 ID 格式且不重复（镜像 Schema item pattern + uniqueItems）。"""
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not _STEP_ID_PATTERN.fullmatch(item):
+            raise ValueError(f"第 {index} 项 {item!r} 不符合步骤 ID 格式（小写字母/数字/下划线/连字符）")
+    if len(set(value)) != len(value):
+        raise ValueError("depends_on 不允许重复步骤 ID")
     return value
 
 
@@ -47,6 +68,11 @@ class ExpectedState(BaseModel):
     description: str = Field(min_length=1, max_length=500)
     artifacts: list[str] = Field(default_factory=list, max_length=10)
 
+    @field_validator("artifacts")
+    @classmethod
+    def _check_artifacts(cls, value: list[str]) -> list[str]:
+        return _validate_bounded_text_list(value, max_item_length=200)
+
 
 class StepDefinition(BaseModel):
     """单个实验步骤。三类信息显式分离：student_action（给学生）、verifier+expected_state（机器）、learning_goal（AI 参考）。"""
@@ -68,10 +94,15 @@ class StepDefinition(BaseModel):
     recovery_hints: list[str] = Field(default_factory=list, max_length=10)
     guide_hint: int = Field(ge=1, le=4)
 
+    @field_validator("depends_on")
+    @classmethod
+    def _check_depends_on(cls, value: list[str]) -> list[str]:
+        return _validate_step_id_list(value)
+
     @field_validator("preconditions", "common_errors", "recovery_hints")
     @classmethod
     def _check_text_items(cls, value: list[str]) -> list[str]:
-        return _validate_conditional_text_list(value)
+        return _validate_bounded_text_list(value, max_item_length=300)
 
 
 class AdapterSpec(BaseModel):
@@ -81,6 +112,11 @@ class AdapterSpec(BaseModel):
 
     adapter_id: Literal["python_web", "mysql_workbench"]
     capabilities: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("capabilities")
+    @classmethod
+    def _check_capabilities(cls, value: list[str]) -> list[str]:
+        return _validate_unique_bounded_text_list(value, max_item_length=40)
 
 
 class ExperimentMeta(BaseModel):
@@ -106,6 +142,11 @@ class ExperimentDefinition(BaseModel):
     prerequisites: list[str] = Field(default_factory=list, max_length=20)
     steps: list[StepDefinition] = Field(min_length=1, max_length=100)
     meta: ExperimentMeta
+
+    @field_validator("prerequisites")
+    @classmethod
+    def _check_prerequisites(cls, value: list[str]) -> list[str]:
+        return _validate_bounded_text_list(value, max_item_length=200)
 
     @property
     def step_map(self) -> dict[str, StepDefinition]:

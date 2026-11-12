@@ -1,13 +1,21 @@
 """步骤状态转换规则（纯函数领域规则，V2-07 前不涉及 AI）。
 
-规则（AI_COLLABORATION.md §7 V2-03 第 4 条 + 首轮审查修复）：
+接口分层（第三轮复审后明确）：
+- 私有低层原语 `_transition()`：仅做 TRANSITIONS 表级合法性检查，不感知实验定义与依赖；
+  仅供本模块内部与纯函数单测使用。
+- 四个公开受保护业务入口（引擎与其他调用方的唯一合法途径，均校验完整快照并返回新快照）：
+  - start_step(definition, states, step_id)：开始执行（依赖检查 + 状态机）；
+  - refresh_ready_steps(definition, states)：解除依赖全部 PASSED 的 BLOCKED 步骤；
+  - apply_skip_propagation(definition, states, skipped_step_id)：跳过并原子传播依赖失效；
+  - apply_verification_result(definition, states, step_id, verify_outcome)：应用验证结果
+    （passed/failed 作用于 IN_PROGRESS；uncertain 不推进）。
+
+业务规则：
 - 合法转换表见 TRANSITIONS；passed 与 skipped 是终态，不可再转换。
 - 进入 passed / failed 必须携带对应的验证结果；uncertain 永不推进步骤。
-- 禁止通过直接改状态文本把步骤标记为 passed——本模块是唯一合法入口，且强制验证结果驱动。
+- 禁止通过直接改状态文本把步骤标记为 passed。
 - 依赖未通过的步骤初始即为 blocked；依赖只有全部 passed 才能开始（skipped 的依赖不视为通过）。
 - skipped 的步骤会阻塞其全部直接/间接下游（不能自动视为通过）。
-- 引擎必须使用本模块的受保护操作入口（start_step / refresh_ready_steps /
-  apply_skip_propagation），不得绕过它们直接改状态字典；transition 是内部原语。
 - 所有入口对状态快照做完整性校验：键集必须与实验定义完全一致、值必须是 StepStatus
   成员；非法快照一律拒绝（fail-closed），绝不静默修正。
 - 传播操作是原子的：任何下游状态转换非法时整体拒绝，不产生部分修改。

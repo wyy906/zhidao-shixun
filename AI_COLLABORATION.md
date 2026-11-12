@@ -280,7 +280,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
-| V2-03 | 实验任务与步骤数据模型 | 待审查（第三轮发现 Pydantic/Schema 镜像约束遗漏及非法转换测试不穷尽，待修复） | Schema 1.1（preconditions 必填）、四道门加载校验、验证器白名单只读注册表、状态机私有化+四公开入口、110 项测试 | Trae |
+| V2-03 | 实验任务与步骤数据模型 | 待审查（第三轮四项已修复，等待第四轮复审） | Schema 1.1（preconditions 必填）、逐字段镜像 Pydantic（+镜像表驱动测试）、四道门加载校验、验证器白名单只读注册表、状态机私有化+四公开入口（+6×6 穷举测试）、215 项测试 | Trae |
 | V2-04 | Python网页实验闭环 | 未开始 | 编辑、Docker隔离运行、验证、步骤推进；禁止宿主机直接执行不可信代码 | Trae |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
@@ -294,6 +294,67 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜Trae：V2-03 第三轮复审四项全部修复，215 项测试通过（含镜像表驱动与状态机穷举）
+
+**本次目标：**
+- 仅修复第三轮静态复审（b9ea5ca）的四项问题；不改业务规则、不启动 V2-04、不改 main / trae-dev。
+
+**修复 1：Pydantic/Schema 逐字段镜像（复审项 1）**
+- 全字段对照结果（除以下修复项外，其余字段原本已一致：必填集合、extra=forbid、枚举、experiment_id/title/description/category/version 正则与长度、guide_hint、estimated_minutes、difficulty、preconditions/common_errors/recovery_hints 逐项 1..300、ExpectedState.description、VerifierDef.params maxProperties 16、steps 数量、adapter_id 枚举）：
+  - `StepDefinition.depends_on`：新增 field_validator——逐项符合 step_id 正则 `^[a-z0-9][a-z0-9_-]{0,63}$` + 不重复（镜像 Schema item pattern + uniqueItems）；
+  - `ExpectedState.artifacts`：新增 field_validator——逐项 1..200 字符（镜像 item minLength/maxLength，空串拒绝）；
+  - `AdapterSpec.capabilities`：新增 field_validator——逐项 1..40 字符 + 唯一性（镜像 item 约束 + uniqueItems）；
+  - `ExperimentDefinition.prerequisites`：新增 field_validator——逐项 1..200 字符（空串拒绝）。
+- 未放宽任何 Schema 约束；无刻意保留的差异。
+
+**修复 2：镜像一致性表驱动测试（复审项 2）**
+- 新文件 server/tests/test_schema_model_parity.py：**不经过 load_experiment_dict**，直接分别调用 JSON Schema validator（is_valid）与 `ExperimentDefinition.model_validate()`：
+  - 19 个非法用例（depends_on 重复/非法 ID、artifacts 空串/超长/非字符串、capabilities 重复/空串/超长、prerequisites 空串/超长/非字符串、preconditions/common_errors/recovery_hints 非法项、step_id 非法格式、meta 上下界与枚举、guide_hint 上下界）逐一断言**两者都拒绝**；
+  - 10 个合法边界用例（200/300/40 字符上限值、合法 ID 组合含下划线连字符、空数组、上下边界值）逐一断言**两者都接受**；
+  - 基线合法数据两者都接受的锚定测试。
+- 注：自依赖（depends_on 引用自身）属 loader 语义层（环检测）而非格式镜像范围，由既有 test_self_dependency_rejected 覆盖，不放入镜像表。
+
+**修复 3：状态机 6×6 穷举测试（复审项 3）**
+- `test_exhaustive_transition_table`：全部 36 个 StepStatus×StepStatus 有序组合参数化——TRANSITIONS 允许的组合携带对应 VerifyOutcome 必须成功；表外组合**即使携带最有利验证结果**也必须抛 IllegalTransition。
+- `test_exhaustive_uncertain_never_advances`：全部 36 个组合 UNCERTAIN 一律抛 IllegalTransition（不推进）。
+- `test_terminal_states_have_empty_transition_sets`：终态行空集断言。
+- **未发现逻辑错误，状态机业务规则零改动**；公开入口测试（start_step / refresh_ready_steps / apply_skip_propagation / apply_verification_result）全部保留，领域流程仍只走公开入口，`_transition` 仅用于表级纯函数单测。
+
+**修复 4：文档过时说明（复审项 4）**
+- state_machine.py 模块 docstring：重写为"私有 `_transition()` + 四个公开业务入口（含 apply_verification_result）"的接口分层说明；
+- schema_version.py：preconditions 注释改为"显式必填（空数组 [] 表示无额外前置条件）"；
+- test_verifier_registry.py：过时的"普通模块级映射"注释改为 MappingProxyType 只读映射描述；
+- README 状态段与测试表更新为 215 项 + 第四轮复审待审状态；experiments/README.md 经核对无过时内容（已是 1.1 + 必填语义）。
+
+**验证命令与结果（本机 Windows 实测）：**
+- `.venv\Scripts\python.exe -m pytest -q` → **215 passed，0 failed，0 skipped**（0.60s；1 个既有 StarletteDeprecationWarning 与本次无关）。
+- 测试数 110 → 215（+105：穷举 72 + uncertain 穷举 36 + 终态断言 1 + 镜像非法 19 + 镜像边界 10 + 镜像基线 1，与新增计数吻合）。未删除、未跳过、未降低任何原有断言。
+
+**修改文件清单：**
+- server/app/experiments/models.py（4 个 field_validator + 镜像 helper）
+- server/app/experiments/state_machine.py（docstring）
+- server/app/experiments/schema_version.py（注释）
+- server/tests/test_schema_model_parity.py（新增，镜像表驱动）
+- server/tests/test_step_state_machine.py（穷举测试）
+- server/tests/test_verifier_registry.py（注释）
+- README.md（状态与测试数）
+- AI_COLLABORATION.md（看板、本交接）
+
+**git diff 范围检查：** 上述 8 个文件均在修复范围内，无范围外文件，无密钥/个人数据/截图。
+
+**未解决问题：** 无新增。`can_transition` 保留公开纯谓词（如需私有化请第四轮复审指出）。
+
+**需要对方处理或确认：**
+- ChatGPT 进行第四轮复审；通过前 V2-03 保持"待审查"，V2-04 不启动。
+
+**关联提交：**
+- 修复 commit：见下方复审摘要（同批次推送）。
+
+**给 ChatGPT 的复审摘要：**
+- 修复 commit SHA 与测试结果以 git log 顶部及本机 pytest 输出为准：215 passed / 0 failed / 0 skipped（Windows 本机实测）。
+- 镜像测试：19 非法 + 10 边界 + 1 基线，全部直接调用 jsonschema validator 与 model_validate 双通道断言。
+- 穷举测试：36 合法/非法组合 + 36 UNCERTAIN 组合 + 终态空集，全部通过，业务规则零改动。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-03 第三轮静态复审：暂不通过，发现 Schema/Pydantic 镜像约束遗漏
 

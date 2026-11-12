@@ -407,3 +407,39 @@ def test_apply_verification_result_rejects_bad_snapshot_and_unknown_step() -> No
     full = {"root": StepStatus.IN_PROGRESS, "mid": StepStatus.BLOCKED, "leaf": StepStatus.BLOCKED}
     with pytest.raises(InvalidStateSnapshot, match="不在实验"):
         apply_verification_result(definition, full, "nope", VerifyOutcome.PASSED)
+
+
+# ---------- 第三轮复审：StepStatus × StepStatus 穷举测试 ----------
+
+ALL_STATUSES = list(StepStatus)
+# 非法组合测试时携带"对目标最有利"的验证结果：即使如此仍被拒绝，才是真正的表级非法
+_PREFERRED_OUTCOME = {
+    StepStatus.PASSED: VerifyOutcome.PASSED,
+    StepStatus.FAILED: VerifyOutcome.FAILED,
+}
+
+
+@pytest.mark.parametrize("current", ALL_STATUSES, ids=lambda s: s.value)
+@pytest.mark.parametrize("target", ALL_STATUSES, ids=lambda s: s.value)
+def test_exhaustive_transition_table(current: StepStatus, target: StepStatus) -> None:
+    """穷举全部 36 个有序组合：表内合法边（携带对应 VerifyOutcome）必须成功；表外必须抛 IllegalTransition。"""
+    preferred = _PREFERRED_OUTCOME.get(target)
+    if target in TRANSITIONS[current]:
+        assert _transition(current, target, verify_outcome=preferred) is target
+    else:
+        with pytest.raises(IllegalTransition):
+            _transition(current, target, verify_outcome=preferred)
+
+
+@pytest.mark.parametrize("current", ALL_STATUSES, ids=lambda s: s.value)
+@pytest.mark.parametrize("target", ALL_STATUSES, ids=lambda s: s.value)
+def test_exhaustive_uncertain_never_advances(current: StepStatus, target: StepStatus) -> None:
+    """穷举全部 36 个组合：UNCERTAIN 一律不得推进任何状态。"""
+    with pytest.raises(IllegalTransition):
+        _transition(current, target, verify_outcome=VerifyOutcome.UNCERTAIN)
+
+
+def test_terminal_states_have_empty_transition_sets() -> None:
+    """终态不可回退：PASSED / SKIPPED 行的合法目标集为空（穷举表的隐含要求）。"""
+    assert TRANSITIONS[StepStatus.PASSED] == frozenset()
+    assert TRANSITIONS[StepStatus.SKIPPED] == frozenset()

@@ -10,6 +10,7 @@
 EXPERIMENT_SCHEMA_VERSION = "1.1"
 
 # 加载器支持的实验定义版本（有序，最小在前；当前仅 1.1）。
-# 1.0 → 1.1：新增可选步骤字段 preconditions（操作前置条件）。
+# 1.0 → 1.1：新增步骤字段 preconditions——**显式必填**（每个步骤必须提供该字段，
+# 空数组 [] 表示没有额外操作前置条件），与 depends_on（步骤间依赖）相互独立。
 # 旧版本文件会得到明确的"不支持的版本"错误（不尝试尽力解析）；当前无存量实验文件，迁移成本为零。
 SUPPORTED_SCHEMA_VERSIONS: tuple[str, ...] = (EXPERIMENT_SCHEMA_VERSION,)

@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**V2-02 基础工程骨架已完成；V2-03 尚未验收通过。** Trae 报告本机全量测试为 110 passed / 0 failed / 0 skipped（含 V2-02 基线 20 项）。ChatGPT 第三轮静态复审确认第二轮要求的 preconditions 必填和状态机低层 API 私有化已修复，但发现 Pydantic 模型与 JSON Schema 在 depends_on、artifacts、capabilities、prerequisites 等字段仍有约束镜像遗漏，且非法状态转换测试未穷举。已将修复要求记录在 AI_COLLABORATION.md；V2-03 保持待审查，复审通过前不得进入 V2-04。ChatGPT 未在独立 Windows 环境重新运行上述测试。业务功能（AI 指导、标注、沙箱执行）尚未实现。
+**V2-02 基础工程骨架已完成；V2-03 尚未验收通过。** Trae 报告本机全量测试为 215 passed / 0 failed / 0 skipped（含 V2-02 基线 20 项；第三轮新增 Schema/Pydantic 镜像表驱动测试与状态机 6×6 穷举测试）。ChatGPT 第三轮静态复审发现的四项问题（Pydantic/Schema 镜像约束遗漏、镜像测试覆盖不足、状态机穷举测试缺失、文档过时说明）已由 Trae 全部修复，等待第四轮复审；复审通过前不得进入 V2-04。ChatGPT 未在独立 Windows 环境重新运行上述测试。业务功能（AI 指导、标注、沙箱执行）尚未实现。
 
 仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
 
@@ -64,7 +64,7 @@ git switch feat/zhidao-shixun-v2-rebuild
 | 后端 | `./scripts/start-server.ps1`（默认 8000 端口，`-Port` 可改） | `curl http://127.0.0.1:8000/health` 返回 `{"status":"ok",...}` |
 | 前端 | `./scripts/start-web.ps1` | 浏览器访问 http://localhost:5173，页面显示「后端连接正常」 |
 | 桌面助手 | `./scripts/start-desktop.ps1` | 窗口出现；`-Check` 仅探测后端；`-Smoke` 启动后 1.5 秒自动退出 |
-| 测试 | `.venv\Scripts\python.exe -m pytest` | 全量 110 项测试通过（含 V2-02 基线 20 项：契约模型 / Schema 漂移 / 配置 / 执行器 / 健康检查；以及 V2-03 实验定义体系 90 项） |
+| 测试 | `.venv\Scripts\python.exe -m pytest` | 全量 215 项测试通过（含 V2-02 基线 20 项：契约模型 / Schema 漂移 / 配置 / 执行器 / 健康检查；V2-03 实验定义体系 195 项，含 Schema/Pydantic 镜像表驱动与状态机穷举测试） |
 | 前端构建 | `npm run build`（web/ 目录内） | vue-tsc 类型检查 + vite 构建通过 |
 
 前后端端口说明：
