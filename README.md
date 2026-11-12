@@ -215,7 +215,8 @@ python -m pytest -q
 ```
 
 - 测试位于 `backend/tests/`（`conftest.py`、`test_auth.py`、`test_experiments.py`、
-  `test_progress.py`、`test_report.py`、`test_config_isolation.py`、`test_code_sandbox.py`）。
+  `test_progress.py`、`test_report.py`、`test_config_isolation.py`、`test_code_sandbox.py`、
+  `test_migration_code_tasks.py`）。
 - **完全隔离**：每个测试使用 `tmp_path` 下独立的临时 SQLite 库，`get_db` 通过
   `dependency_overrides` 替换；导入 app 之前已把 `DATABASE_URL` 指向一次性临时文件，
   不会连接、修改或删除真实数据库。
@@ -246,10 +247,10 @@ npm run type-check  # 等价命令
 
 ### 9.3 测试现状
 
-- 后端：**67 项用例，全部通过**。
-- 沙箱管理器：**35 项单元测试，全部通过**（容器参数与管理接口，无 Docker 依赖）。
+- 后端：**70 项用例，全部通过**。
+- 沙箱管理器：**71 项单元测试，全部通过**（容器参数、镜像校验、TLS 配置、生命周期，无 Docker 依赖）。
 - 前端：`npm test`（vue-tsc）通过。
-- 代码执行的**真实容器隔离尚未在 Linux 节点验证**。
+- 代码执行的**真实容器隔离与 TLS 握手尚未在 Linux 节点验证**。
 - 详见 [TEST_REPORT.md](TEST_REPORT.md)。
 
 ## 10. 安全说明（重要）
@@ -262,6 +263,9 @@ npm run type-check  # 等价命令
    `dist` 等；`ai_review/` 本地审核快照已被忽略。
 3. **JWT 密钥**：`APP_ENV` 非 `development` 时若仍使用默认密钥，应用会拒绝启动。
 4. **采集最小化**：桌面助手只上传当前目标窗口截图与 UIA 控件信息，不采集整屏内容。
+5. **执行节点边界**：沙箱管理器必须部署在独立 Linux 节点；Docker Socket 只对管理器进程可见，
+   绝不进入学生代码容器；管理接口生产强制 HTTPS、默认只监听本机/内网，且只允许业务后端访问
+   （防火墙白名单）。
 
 ## 11. 截图
 

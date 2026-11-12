@@ -104,9 +104,9 @@ def test_no_auto_remove_so_exit_code_can_be_read():
 # ===========================================================================
 # 回查 Docker 实际生效参数（防止“以为生效其实没生效”）
 # ===========================================================================
-def _host_config(**overrides) -> dict:
+def _attrs(image=IMAGE, **host_overrides) -> dict:
     limits = SandboxLimits()
-    cfg = {
+    host = {
         "NetworkMode": "none",
         "ReadonlyRootfs": True,
         "Privileged": False,
@@ -118,15 +118,22 @@ def _host_config(**overrides) -> dict:
         "SecurityOpt": ["no-new-privileges:true"],
         "Binds": None,
         "Devices": [],
-        "Tmpfs": {"/tmp": "size=4m", "/workspace": "size=12m"},
+        "PortBindings": {},
+        "PublishAllPorts": False,
+        "Tmpfs": {
+            "/tmp": "rw,noexec,nosuid,nodev,mode=1777,size=4m",
+            "/workspace": "rw,noexec,nosuid,nodev,mode=1777,size=12m",
+        },
+        "LogConfig": {"Type": "json-file", "Config": {"max-size": "64k", "max-file": "1"}},
         "Runtime": "runc",
     }
-    cfg.update(overrides)
-    return cfg
+    host.update(host_overrides)
+    return {"Config": {"User": "65534:65534", "Image": image}, "HostConfig": host}
 
 
-def test_verify_accepts_expected_host_config():
-    verify_container_security(_host_config(), SandboxLimits())
+def test_verify_accepts_expected_container_attrs():
+    verify_container_security(_attrs(), SandboxLimits())
+    verify_container_security(_attrs(), SandboxLimits(), image=IMAGE)
 
 
 @pytest.mark.parametrize("overrides", [
@@ -141,14 +148,46 @@ def test_verify_accepts_expected_host_config():
     {"SecurityOpt": []},
     {"Binds": ["/:/host"]},
     {"Devices": [{"PathOnHost": "/dev/sda"}]},
+    {"PortBindings": {"8080/tcp": [{"HostPort": "8080"}]}},
+    {"PublishAllPorts": True},
     {"Tmpfs": {}},
+    {"LogConfig": {"Type": "none", "Config": {}}},
+    {"LogConfig": {"Type": "json-file", "Config": {"max-size": "1g", "max-file": "1"}}},
+    {"LogConfig": {"Type": "json-file", "Config": {"max-size": "64k", "max-file": "10"}}},
 ])
-def test_verify_rejects_weak_host_config(overrides):
+def test_verify_rejects_weak_container_attrs(overrides):
     with pytest.raises(RuntimeError):
-        verify_container_security(_host_config(**overrides), SandboxLimits())
+        verify_container_security(_attrs(**overrides), SandboxLimits())
+
+
+def test_verify_checks_tmpfs_flags_and_capacity():
+    bad_flags = _attrs(Tmpfs={
+        "/tmp": "rw,size=4m",
+        "/workspace": "rw,noexec,nosuid,nodev,size=12m",
+    })
+    with pytest.raises(RuntimeError):
+        verify_container_security(bad_flags, SandboxLimits())
+
+    too_large = _attrs(Tmpfs={
+        "/tmp": "rw,noexec,nosuid,nodev,size=64m",
+        "/workspace": "rw,noexec,nosuid,nodev,size=64m",
+    })
+    with pytest.raises(RuntimeError):
+        verify_container_security(too_large, SandboxLimits())
+
+
+def test_verify_checks_running_user_and_image():
+    attrs = _attrs()
+    attrs["Config"]["User"] = "0:0"
+    with pytest.raises(RuntimeError):
+        verify_container_security(attrs, SandboxLimits())
+
+    with pytest.raises(RuntimeError):
+        verify_container_security(_attrs(image="other@sha256:" + "f" * 64),
+                                  SandboxLimits(), image=IMAGE)
 
 
 def test_verify_checks_configured_runtime():
-    verify_container_security(_host_config(Runtime="runsc"), SandboxLimits(), runtime="runsc")
+    verify_container_security(_attrs(Runtime="runsc"), SandboxLimits(), runtime="runsc")
     with pytest.raises(RuntimeError):
-        verify_container_security(_host_config(Runtime="runc"), SandboxLimits(), runtime="runsc")
+        verify_container_security(_attrs(Runtime="runc"), SandboxLimits(), runtime="runsc")

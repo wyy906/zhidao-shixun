@@ -110,27 +110,50 @@ def build_container_kwargs(
     return kwargs
 
 
-def verify_container_security(host_config: dict, limits: SandboxLimits, runtime: str = "") -> None:
-    """容器创建后回查 Docker 实际生效的 HostConfig
+def _parse_size_mb(value: str) -> float | None:
+    """解析 Docker 的 size 值（如 4m / 64k / 1g），返回 MB；无法解析返回 None"""
+    text = (value or "").strip().lower()
+    for suffix, factor in (("g", 1024.0), ("m", 1.0), ("k", 1.0 / 1024.0)):
+        if text.endswith(suffix):
+            try:
+                return float(text[: -len(suffix)]) * factor
+            except ValueError:
+                return None
+    try:
+        return float(text) / (1024.0 * 1024.0)  # 纯数字按字节
+    except ValueError:
+        return None
 
-    如果运行时不支持某项限制（例如 PidsLimit / NanoCpus），这里必须发现并拒绝执行，
-    绝不能“以为限制已经生效”就放行。失败时抛 RuntimeError，由调用方回收容器。
+
+def verify_container_security(
+    attrs: dict,
+    limits: SandboxLimits,
+    runtime: str = "",
+    image: str = "",
+) -> None:
+    """容器创建后回查 Docker 实际生效的完整配置（Config + HostConfig）
+
+    只要任意一项与预期不一致，就拒绝执行并由调用方删除容器。
+    这样可以发现“运行时不支持某项限制”或“参数被静默忽略”的情况。
     """
+    host_config = (attrs or {}).get("HostConfig") or {}
+    config = (attrs or {}).get("Config") or {}
     problems: list[str] = []
 
     def _check(name: str, actual, expected) -> None:
         if actual != expected:
             problems.append(f"{name}={actual!r}(期望 {expected!r})")
 
+    # ===== 网络 =====
     _check("NetworkMode", host_config.get("NetworkMode"), "none")
-    _check("ReadonlyRootfs", bool(host_config.get("ReadonlyRootfs")), True)
-    _check("Privileged", bool(host_config.get("Privileged")), False)
+    if host_config.get("PortBindings"):
+        problems.append(f"存在端口映射: {host_config.get('PortBindings')!r}")
+    _check("PublishAllPorts", bool(host_config.get("PublishAllPorts")), False)
 
-    mem_bytes = limits.memory_mb * 1024 * 1024
-    _check("Memory", host_config.get("Memory"), mem_bytes)
-    _check("MemorySwap", host_config.get("MemorySwap"), mem_bytes)
-    _check("NanoCpus", int(host_config.get("NanoCpus") or 0), int(limits.cpu_cores * 1_000_000_000))
-    _check("PidsLimit", int(host_config.get("PidsLimit") or 0), limits.pids_limit)
+    # ===== 身份与权限 =====
+    _check("User", str(config.get("User") or ""), SANDBOX_UID)
+    _check("Privileged", bool(host_config.get("Privileged")), False)
+    _check("ReadonlyRootfs", bool(host_config.get("ReadonlyRootfs")), True)
 
     cap_drop = [str(c).upper() for c in (host_config.get("CapDrop") or [])]
     if "ALL" not in cap_drop:
@@ -140,18 +163,56 @@ def verify_container_security(host_config: dict, limits: SandboxLimits, runtime:
     if not any("no-new-privileges" in str(opt) for opt in security_opt):
         problems.append("SecurityOpt 未包含 no-new-privileges")
 
+    # ===== 文件系统 =====
     if host_config.get("Binds"):
         problems.append("存在宿主机目录挂载")
     if host_config.get("Devices"):
         problems.append("存在宿主机设备映射")
 
     tmpfs = host_config.get("Tmpfs") or {}
+    total_mb = 0.0
     for path in ("/tmp", "/workspace"):
-        if path not in tmpfs:
+        opts = tmpfs.get(path)
+        if not opts:
             problems.append(f"缺少受限 tmpfs: {path}")
+            continue
+        parts = [p.strip().lower() for p in str(opts).split(",")]
+        for flag in ("noexec", "nosuid", "nodev"):
+            if flag not in parts:
+                problems.append(f"{path} tmpfs 缺少 {flag}")
+        size_mb = None
+        for part in parts:
+            if part.startswith("size="):
+                size_mb = _parse_size_mb(part.split("=", 1)[1])
+        if size_mb is None:
+            problems.append(f"{path} tmpfs 未设置可解析的 size")
+        else:
+            if size_mb > limits.disk_mb:
+                problems.append(f"{path} tmpfs 容量 {size_mb}MB 超过上限 {limits.disk_mb}MB")
+            total_mb += size_mb
+    if total_mb > limits.disk_mb:
+        problems.append(f"tmpfs 总容量 {total_mb}MB 超过上限 {limits.disk_mb}MB")
 
+    # ===== 资源 =====
+    mem_bytes = limits.memory_mb * 1024 * 1024
+    _check("Memory", host_config.get("Memory"), mem_bytes)
+    _check("MemorySwap", host_config.get("MemorySwap"), mem_bytes)
+    _check("NanoCpus", int(host_config.get("NanoCpus") or 0), int(limits.cpu_cores * 1_000_000_000))
+    _check("PidsLimit", int(host_config.get("PidsLimit") or 0), limits.pids_limit)
+
+    # ===== 输出限制：日志驱动与轮转 =====
+    log_config = host_config.get("LogConfig") or {}
+    _check("LogConfig.Type", log_config.get("Type"), "json-file")
+    log_opts = log_config.get("Config") or {}
+    expected_max = f"{max(1, limits.output_bytes // 1024)}k"
+    _check("LogConfig.max-size", str(log_opts.get("max-size") or "").lower(), expected_max)
+    _check("LogConfig.max-file", str(log_opts.get("max-file") or ""), "1")
+
+    # ===== 运行时与镜像 =====
     if runtime:
         _check("Runtime", host_config.get("Runtime"), runtime)
+    if image:
+        _check("Image", config.get("Image"), image)
 
     if problems:
         raise RuntimeError("容器安全配置未生效: " + "; ".join(problems))

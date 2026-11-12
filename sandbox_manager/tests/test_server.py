@@ -47,7 +47,14 @@ class FakeRunner:
 
 
 def _config(**overrides) -> ManagerConfig:
-    data = {"token": TOKEN, "image": IMAGE, "timeout_seconds": 2, "max_concurrent": 2}
+    data = {
+        "token": TOKEN,
+        "image": IMAGE,
+        "timeout_seconds": 2,
+        "max_concurrent": 2,
+        # 测试不启用 TLS，显式允许本机回环明文 HTTP
+        "allow_insecure_http": True,
+    }
     data.update(overrides)
     return ManagerConfig(**data)
 
@@ -118,6 +125,27 @@ def test_rejects_empty_and_oversize_code():
     assert client.post("/v1/jobs", json={"code": "   "}, headers=HEADERS).status_code == 400
     oversize = "a" * (_config().input_bytes + 1)
     assert client.post("/v1/jobs", json={"code": oversize}, headers=HEADERS).status_code == 400
+
+
+def test_rejects_extra_fields():
+    """调用方不能通过请求参数覆盖镜像 / 网络 / 资源限制"""
+    runner = FakeRunner()
+    client = _app(runner)
+    resp = client.post(
+        "/v1/jobs",
+        json={"code": "print(1)", "image": "evil:latest", "network_mode": "host"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 422
+    assert runner.calls == []
+
+
+def test_error_payload_does_not_leak_token_or_paths():
+    client = _app(FakeRunner(ready_error=SandboxError("docker_unavailable")))
+    resp = client.get("/health", headers=HEADERS)
+    assert resp.status_code == 503
+    assert TOKEN not in resp.text
+    assert resp.json()["detail"] == {"status": "unavailable", "error": "docker_unavailable"}
 
 
 def test_submit_refused_when_docker_unavailable():

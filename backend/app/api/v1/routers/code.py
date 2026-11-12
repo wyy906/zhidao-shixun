@@ -24,7 +24,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -48,6 +48,9 @@ TERMINAL_STATUSES = {
 
 
 class CodeRunIn(BaseModel):
+    # 禁止学生传入镜像、网络模式、资源限制等额外字段（只能由管理员配置）
+    model_config = ConfigDict(extra="forbid")
+
     code: str
     # 兼容旧前端：仍接受该字段，但会被管理员配置的上限压紧，学生无法提高
     timeout: int = 10

@@ -10,8 +10,9 @@ import os
 import threading
 import time
 
-from .config import ManagerConfig, is_registry_digest
+from .config import ManagerConfig
 from .container_spec import SandboxLimits, build_container_kwargs, verify_container_security
+from .image_verify import verify_image_reference
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +71,13 @@ class DockerRunner:
         except Exception as exc:
             raise SandboxError("image_missing", f"固定镜像不存在: {image_ref}") from exc
 
-        # 校验本地镜像内容与固定 digest 一致，防止 tag 漂移或镜像被替换
-        expected_digest = image_ref.split("@", 1)[1] if is_registry_digest(image_ref) else image_ref
-        if image.id != expected_digest:
-            raise SandboxError(
-                "image_digest_mismatch",
-                f"镜像 digest 与配置不一致: {image.id} != {expected_digest}",
+        # 校验固定引用与本地镜像一致（Registry Manifest Digest ≠ Image ID，不能混用比较）
+        try:
+            verification = verify_image_reference(
+                image_ref, image.id, image.attrs.get("RepoDigests") or []
             )
+        except ValueError as exc:
+            raise SandboxError("image_digest_mismatch", str(exc)) from exc
 
         info = client.info()
         runtime = self.config.runtime or ""
@@ -106,6 +107,7 @@ class DockerRunner:
             "docker": True,
             "image": image_ref,
             "image_id": image.id,
+            "image_verification": verification,
             "runtime": runtime,
             "cpu_cores": self.config.cpu_cores,
             "memory_mb": self.config.memory_mb,
@@ -127,6 +129,33 @@ class DockerRunner:
             input_bytes=self.config.input_bytes,
             max_concurrent=self.config.max_concurrent,
         )
+
+    # ------------------------------------------------------------------
+    # 残留容器清理（管理器重启 / 异常退出后）
+    # ------------------------------------------------------------------
+    def cleanup_stale_containers(self) -> int:
+        """删除所有带 zd.sandbox=1 标签的容器
+
+        管理器启动时调用：内存中的 JobStore 为空，因此这些容器一定是上次进程
+        异常退出后遗留的，直接强制删除（含运行中的容器及其子进程）。
+        """
+        client = self._docker()
+        try:
+            containers = client.containers.list(all=True, filters={"label": "zd.sandbox=1"})
+        except Exception as exc:
+            raise SandboxError("cleanup_failed", str(exc)) from exc
+
+        removed = 0
+        for container in containers:
+            try:
+                container.remove(force=True)
+                removed += 1
+            except Exception as exc:
+                logger.error("清理残留沙箱容器失败（未返回给学生）: %s", exc)
+                raise SandboxError("cleanup_failed", str(exc)) from exc
+        if removed:
+            logger.warning("已清理 %s 个残留沙箱容器", removed)
+        return removed
 
     # ------------------------------------------------------------------
     # 执行
@@ -159,10 +188,13 @@ class DockerRunner:
         )
         container = client.containers.create(**kwargs)
 
-        # 回查 Docker 实际生效的安全参数；任何一项未生效都拒绝执行并回收容器
+        # 回查 Docker 实际生效的完整安全参数；任何一项未生效都拒绝执行并回收容器
         try:
             verify_container_security(
-                container.attrs.get("HostConfig", {}), self.limits(), self.config.runtime
+                container.attrs,
+                self.limits(),
+                self.config.runtime,
+                self.config.image,
             )
         except RuntimeError as exc:
             try:

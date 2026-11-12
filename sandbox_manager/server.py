@@ -11,18 +11,25 @@
 """
 from __future__ import annotations
 
+import logging
 import secrets
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .config import ManagerConfig
 from .container_spec import SandboxLimits
 from .jobs import JobStore
 from .runner import DockerRunner, SandboxError
 
+logger = logging.getLogger(__name__)
+
 
 class JobIn(BaseModel):
+    # 禁止学生/调用方传入额外字段（镜像、网络模式、资源限制等一律不可覆盖）
+    model_config = ConfigDict(extra="forbid")
+
     code: str
     timeout: int = 10
 
@@ -46,7 +53,18 @@ def create_app(runner=None, config: ManagerConfig | None = None) -> FastAPI:
         )
     jobs = JobStore(exec_runner, limits)
 
-    app = FastAPI(title="zd-sandbox-manager", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # 重启/异常退出后，清理上次进程遗留的容器（失败不阻断启动，/health 会暴露问题）
+        cleanup = getattr(exec_runner, "cleanup_stale_containers", None)
+        if callable(cleanup):
+            try:
+                cleanup()
+            except SandboxError as exc:
+                logger.warning("启动时清理残留容器失败: %s", exc.code)
+        yield
+
+    app = FastAPI(title="zd-sandbox-manager", version="0.1.0", lifespan=lifespan)
     app.state.config = cfg
     app.state.runner = exec_runner
     app.state.jobs = jobs

@@ -7,6 +7,18 @@ from dataclasses import dataclass
 
 _DIGEST_REF_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 _IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def is_loopback_host(host: str) -> bool:
+    return (host or "").strip().lower() in _LOOPBACK_HOSTS
+
+
+def _require_readable_file(path: str, label: str) -> None:
+    if not os.path.isfile(path):
+        raise ValueError(f"{label}文件不存在: {path}")
+    if not os.access(path, os.R_OK):
+        raise ValueError(f"{label}文件不可读: {path}")
 
 
 def is_pinned_reference(image: str) -> bool:
@@ -30,10 +42,13 @@ class ManagerConfig:
     apparmor_profile: str = ""
     # 空表示使用默认 unix:///var/run/docker.sock
     docker_host: str = ""
-    # 内网 TLS / 双向 TLS（推荐，不能只依赖“IP 在局域网内”）
+    # 内网 TLS / 双向 TLS（生产必须；不能只依赖“IP 在局域网内”）
     tls_cert_file: str = ""
     tls_key_file: str = ""
     tls_client_ca_file: str = ""
+    # 仅允许本机开发/测试使用明文 HTTP，且必须同时监听回环地址。
+    # 生产环境保持 False：缺少 TLS 证书或证书不可读时拒绝启动，不会自动降级。
+    allow_insecure_http: bool = False
 
     cpu_cores: float = 0.5
     memory_mb: int = 128
@@ -63,6 +78,31 @@ class ManagerConfig:
         if self.max_concurrent <= 0:
             raise ValueError("最大并发必须为正数")
 
+        # ===== 传输安全：生产必须 HTTPS，禁止静默降级 =====
+        cert, key, ca = self.tls_cert_file, self.tls_key_file, self.tls_client_ca_file
+        if bool(cert) != bool(key):
+            raise ValueError("TLS 证书与私钥必须同时配置（不允许只配置其中一项）")
+        if ca and not (cert and key):
+            raise ValueError("启用双向 TLS 必须同时配置服务端证书与私钥")
+        if cert:
+            _require_readable_file(cert, "TLS 证书")
+            _require_readable_file(key, "TLS 私钥")
+        if ca:
+            _require_readable_file(ca, "客户端 CA ")
+
+        if self.allow_insecure_http:
+            if not is_loopback_host(self.host):
+                raise ValueError(
+                    "明文 HTTP 仅允许监听本机回环地址（127.0.0.1 / ::1 / localhost），"
+                    f"当前配置: {self.host}"
+                )
+        elif not cert:
+            raise ValueError(
+                "生产环境必须启用 HTTPS（配置 ZD_SANDBOX_TLS_CERT / ZD_SANDBOX_TLS_KEY）；"
+                "本机开发如需明文 HTTP，请显式设置 ZD_SANDBOX_ALLOW_INSECURE_HTTP=true "
+                "并只监听回环地址"
+            )
+
     @classmethod
     def from_env(cls) -> "ManagerConfig":
         def _int(name: str, default: int) -> int:
@@ -70,6 +110,12 @@ class ManagerConfig:
 
         def _float(name: str, default: float) -> float:
             return float(os.environ.get(name, default))
+
+        def _bool(name: str, default: bool = False) -> bool:
+            raw = os.environ.get(name)
+            if raw is None:
+                return default
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
 
         cfg = cls(
             token=os.environ.get("ZD_SANDBOX_TOKEN", ""),
@@ -83,6 +129,7 @@ class ManagerConfig:
             tls_cert_file=os.environ.get("ZD_SANDBOX_TLS_CERT", ""),
             tls_key_file=os.environ.get("ZD_SANDBOX_TLS_KEY", ""),
             tls_client_ca_file=os.environ.get("ZD_SANDBOX_TLS_CLIENT_CA", ""),
+            allow_insecure_http=_bool("ZD_SANDBOX_ALLOW_INSECURE_HTTP", False),
             cpu_cores=_float("ZD_SANDBOX_CPU", 0.5),
             memory_mb=_int("ZD_SANDBOX_MEMORY_MB", 128),
             timeout_seconds=_int("ZD_SANDBOX_TIMEOUT", 10),

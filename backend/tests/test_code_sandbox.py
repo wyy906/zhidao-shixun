@@ -228,6 +228,32 @@ def test_restart_marks_unfinished_tasks_failed(db_session, users):
     assert done.status == "succeeded"
 
 
+def test_extra_fields_rejected(client, student_headers):
+    """学生不能通过请求参数指定镜像、网络模式或资源限制"""
+    fake = FakeSandbox()
+    _use_sandbox(fake)
+    resp = client.post(
+        "/api/v1/code/run",
+        json={
+            "code": "print(1)",
+            "image": "evil:latest",
+            "network_mode": "host",
+            "memory_mb": 4096,
+        },
+        headers=student_headers,
+    )
+    assert resp.status_code == 422
+    assert fake.submitted == []
+
+
+def test_submitted_code_is_not_persisted():
+    """任务表只保存状态与长度，不落库学生代码本体"""
+    columns = set(CodeTask.__table__.columns.keys())
+    assert "code" not in columns
+    assert "code_b64" not in columns
+    assert "code_length" in columns
+
+
 def test_router_does_not_import_subprocess():
     """静态确认：沙箱版路由不再具备本机 subprocess 执行路径"""
     import inspect

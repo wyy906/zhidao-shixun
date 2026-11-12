@@ -1,5 +1,32 @@
 # 更新记录
 
+## 2026-11-12 — 阶段 3-A 安全审查问题修复
+
+### 修复
+
+- **镜像 digest 校验**：新增 `sandbox_manager/image_verify.py`，区分 Registry Manifest Digest
+  与本地 Image ID。Registry 引用改为校验 `RepoDigests`，本地 ID 校验完全相等；
+  镜像被替换、摘要错误、RepoDigests 缺失时返回 `image_digest_mismatch` 并拒绝执行。
+- **生产强制 HTTPS**：`ManagerConfig.validate` 要求证书与私钥成对且可读；双向 TLS 缺 CA/证书
+  拒绝启动；明文 HTTP 仅允许显式 `ZD_SANDBOX_ALLOW_INSECURE_HTTP=true` + 回环地址。
+  `build_uvicorn_kwargs` 不存在证书失败后降级为 HTTP 的路径。
+- **容器安全配置回查**：`verify_container_security` 改为检查完整 `Config + HostConfig`，
+  新增运行用户、tmpfs 容量与 `noexec/nosuid/nodev`、日志驱动与轮转上限、端口映射、
+  设备/挂载、运行时与镜像；任一不符立即删除容器并拒绝执行。
+- **部署边界**：systemd 单元增加加固项与网络暴露要求；部署文档明确独立节点、
+  Docker Socket 不进入学生容器、管理接口只允许业务后端访问。
+- **残留容器清理**：管理器启动时删除所有 `zd.sandbox=1` 标签容器。
+- **数据库迁移**：新增 `backend/alembic.ini`、`env.py` 与 `20261112_0001_add_code_tasks.py`。
+- **请求字段收紧**：业务端与管理器请求模型 `extra="forbid"`，学生不能传镜像/网络/资源参数。
+- **错误信息**：管理接口错误只返回错误码，不回显令牌或宿主机路径。
+
+### 测试
+
+- 后端 pytest：67 → **70 项**（新增额外字段、代码不落库、`code_tasks` 迁移）。
+- 沙箱管理器：35 → **71 项**（新增镜像校验、TLS 配置、容器配置回查、FakeDocker 生命周期）。
+- 前端 `npm test`：通过。
+- 真实 Linux 节点的网络/文件隔离、TLS 握手、残留容器清理**仍未验证**，不得视为已验收。
+
 ## 2026-11-12 — 阶段 1：建立现有项目代码基线
 
 提交：`3032872` `feat: import existing project code baseline`（111 files, +11389）

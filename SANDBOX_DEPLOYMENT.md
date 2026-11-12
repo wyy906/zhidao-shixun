@@ -30,10 +30,14 @@ FastAPI 业务后端（可部署在 Windows / Linux）
 | 执行容器 | 只运行本次学生代码 | 网络、宿主机文件、持久化 |
 
 **必须遵守**：
-- 执行节点与业务服务器分离（独立 Linux 虚拟机，最小化安装）。
-- 业务后端只能通过 HTTPS（推荐双向 TLS）+ 管理令牌调用管理器；
+- **执行节点必须独立部署**：专用 Linux 虚拟机/主机，不得与 FastAPI 业务后端、数据库、Redis 同机。
+- 业务后端只能通过 HTTPS（生产强制）+ 管理令牌调用管理器，建议同时启用双向 TLS；
   **不得只依赖“IP 在局域网内”作为认证**。
-- Docker Socket 只对管理器进程可见，绝不挂载进执行容器，也不向业务网络暴露 Docker API。
+- 管理接口默认只监听 `127.0.0.1`；跨机部署时必须绑定受防火墙保护的内网地址，
+  并且**只允许业务后端服务器访问**该端口。
+- 业务后端是**唯一**允许调用管理接口的服务；不得向学生网段、公网或桌面端暴露。
+- Docker Socket 只对管理器进程可见，绝不挂载进学生代码执行容器，也不向业务网络暴露 Docker API。
+- 学生代码容器不加入任何业务网络（`network_mode=none`）。
 
 ## 2. 执行节点环境要求
 
@@ -89,7 +93,12 @@ sudo bash sandbox_manager/scripts/build_image.sh zd-sandbox-python:3.12
 
 管理器启动时会检查：
 1. 镜像引用必须固定到 digest；使用 tag 会**拒绝启动**。
-2. 本地镜像 ID 必须与配置 digest 一致（防 tag 漂移 / 镜像被替换）。
+2. 本地镜像必须与固定引用一致：
+   - `repo@sha256:<manifest-digest>`：校验本地镜像 `RepoDigests` 中存在该 digest
+     （Registry Manifest Digest 与本地 Image ID 是两种不同摘要，**不能直接比较**）；
+   - 本地 `sha256:<image-id>`：校验镜像 ID 完全相等。
+   不匹配（镜像被替换、未按该 digest 拉取、RepoDigests 缺失）会返回
+   `image_digest_mismatch` 并拒绝执行。
 3. 镜像不存在 → `/health` 返回 503，所有任务拒绝执行。
 
 后续需要第三方教学库时：由管理员审核后在 `sandbox_manager/sandbox_image/Dockerfile` 中
@@ -126,14 +135,22 @@ ZD_SANDBOX_INPUT_BYTES=65536
 ZD_SANDBOX_MAX_CONCURRENT=2
 
 # 可选：内网 TLS / 双向 TLS
+# 生产环境**必须**配置证书；缺少证书或证书不可读时管理器拒绝启动。
+# 本机开发可显式改为 ZD_SANDBOX_ALLOW_INSECURE_HTTP=true，且只允许监听回环地址。
 ZD_SANDBOX_TLS_CERT=/etc/zd-sandbox/server.crt
 ZD_SANDBOX_TLS_KEY=/etc/zd-sandbox/server.key
 ZD_SANDBOX_TLS_CLIENT_CA=/etc/zd-sandbox/ca.crt
+# 仅本机开发测试使用；生产保持 false（不会自动降级为 HTTP）
+ZD_SANDBOX_ALLOW_INSECURE_HTTP=false
 # 可选：强制 seccomp / AppArmor / gVisor
 # ZD_SANDBOX_SECCOMP=/etc/zd-sandbox/seccomp.json
 # ZD_SANDBOX_APPARMOR=zd-sandbox
 # ZD_SANDBOX_RUNTIME=runsc
 ```
+
+> 证书/私钥必须成对配置；配置了 `ZD_SANDBOX_TLS_CLIENT_CA` 即为双向 TLS，
+> 缺少证书、私钥或 CA 不可读都会导致启动失败。明文 HTTP 仅限 `127.0.0.1 / ::1 / localhost`
+> 且必须显式设置 `ZD_SANDBOX_ALLOW_INSECURE_HTTP=true`，不存在证书失败后自动降级的路径。
 
 ```bash
 sudo chmod 600 /etc/zd-sandbox/manager.env
@@ -176,6 +193,18 @@ CODE_MAX_OUTPUT_BYTES=65536
 
 所有接口都需要 `X-Sandbox-Token`。
 
+网络暴露（必须）：
+
+```bash
+# 例：只允许业务后端服务器访问管理端口（ufw）
+sudo ufw deny 8443/tcp
+sudo ufw allow from <业务后端IP> to any port 8443 proto tcp
+```
+
+- 默认监听 `127.0.0.1`，由本机反向代理终止 TLS；跨机时绑定内网地址并配置上述防火墙规则。
+- 业务后端是唯一调用方；学生浏览器、桌面端、公网一律不可达。
+- 管理接口不提供任何“调试模式”“跳过认证”参数。
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/health` | 就绪状态（Docker / 镜像 digest / 运行时 / 限制参数） |
@@ -212,6 +241,8 @@ curl -s -H "X-Sandbox-Token: $ZD_SANDBOX_TOKEN" https://127.0.0.1:8443/health | 
 | 初始化 | `init=true`（回收僵尸进程） |
 | 输出 | Docker json-file 日志轮转 `max-size=64k, max-file=1` + 应用层截断 |
 | 生命周期 | 任务结束（成功/超时/取消/异常）一律 `remove(force=True)`，含全部子进程 |
+| 启动自检 | 创建后回查 `Config` / `HostConfig`：运行用户、tmpfs 容量与 `noexec/nosuid/nodev`、日志驱动与轮转上限、端口映射、设备与挂载、CPU/内存/进程数、运行时、镜像；任一不符立即删除容器并拒绝执行 |
+| 残留清理 | 管理器启动时删除所有带 `zd.sandbox=1` 标签的容器（上次异常退出遗留） |
 
 超时 / 取消通过 `container.kill()` 终止整个容器，而不是只杀最外层 Python 进程。
 
@@ -262,7 +293,9 @@ journalctl -u zd-sandbox -f
 ## 12. 容器与临时文件清理
 
 - 正常路径：管理器在任务结束后强制删除容器与 tmpfs。
-- 异常残留（管理器崩溃、节点断电）：
+- 管理器重启 / 异常退出：启动时自动扫描并删除所有 `zd.sandbox=1` 标签容器
+  （失败只记录日志，`/health` 会暴露 Docker 不可用）。
+- 手动兜底：
 
 ```bash
 docker ps -a --filter label=zd.sandbox=1 -q | xargs -r docker rm -f
@@ -302,3 +335,17 @@ docker ps -a --filter label=zd.sandbox=1 -q | xargs -r docker rm -f
   所有“真实隔离已验证”的结论必须以 `verify_isolation.py` 的实机输出为准。
 - Docker 默认 seccomp profile 由 Docker 提供；自定义 profile 需自行维护。
 - 首版镜像只含标准库，第三方库需管理员重新构建镜像。
+
+## 16. 数据库迁移（`code_tasks`）
+
+`code_tasks` 已有正式 Alembic 迁移：
+
+```bash
+cd backend
+alembic upgrade head      # 建表（若 create_all 已建则幂等跳过）
+alembic downgrade -1      # 回滚
+```
+
+- 迁移文件：`backend/alembic/versions/20261112_0001_add_code_tasks.py`。
+- 应用启动仍使用 `create_all`；迁移用于纳入正式迁移链，两者并存期间以幂等判断避免冲突。
+- 后续应补首个基线 revision，逐步结束 `create_all` 与迁移双轨。
