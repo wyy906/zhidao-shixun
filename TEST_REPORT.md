@@ -13,7 +13,7 @@
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
 | 后端测试 | **113 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **129 项，全部通过**（`sandbox_manager/tests/`） |
+| 沙箱管理器测试 | **141 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -23,9 +23,10 @@
 ## 2. 结论摘要
 
 1. 后端 113 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
-2. 沙箱管理器 129 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+2. 沙箱管理器 141 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
    生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、
-   结果字段校验、生命周期，以及验收工具 `verify_isolation.py` 的 PASS/FAIL/SKIP 判定可靠性。
+   结果字段校验、生命周期，以及验收工具 `verify_isolation.py` 的 PASS/FAIL/SKIP 判定可靠性
+   （网络 errno 分类、stdout/stderr 分别与合计截断、`memory.swap.max`、本地临时 mTLS 握手、执行节点身份声明）。
 3. 学生代码**已不在业务后端进程内执行**，也不再作为本机 subprocess 运行；沙箱不可用时一律 503，不存在降级路径。
 4. 测试在**无网络、无真实 AI Key、无真实数据库、无真实 `.env`、无 Docker** 的条件下可重复运行。
 5. 测试过程中发现 8 个问题：**2 个已修复**，**6 个待负责人决策**；1 项（桌面端 GUI）**尚未验证**。
@@ -48,7 +49,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（113 项 + 129 项）
+## 4. 后端自动化测试（113 项 + 141 项）
 
 ### 4.1 用例分布
 
@@ -67,11 +68,11 @@
 | `sandbox_manager/tests/test_container_spec.py` | 41 | 41 | 0 |
 | `sandbox_manager/tests/test_server.py` | 19 | 19 | 0 |
 | `sandbox_manager/tests/test_jobs.py` | 21 | 21 | 0 |
-| `sandbox_manager/tests/test_verify_isolation.py` | 17 | 17 | 0 |
+| `sandbox_manager/tests/test_verify_isolation.py` | 29 | 29 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_runner.py` | 17 | 17 | 0 |
-| **管理器合计** | **129** | **129** | **0** |
+| **管理器合计** | **141** | **141** | **0** |
 
 ### 4.2 实际执行结果
 
@@ -82,7 +83,7 @@ python -m pytest -q
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-129 passed, 1 warning in 1.65s
+141 passed, 1 warning in 2.64s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -355,6 +356,16 @@ python -m pytest -q sandbox_manager/tests
 |---|---|---|---|
 | F-26 | SKIP 也可能退出码 0、错误令牌任意异常算 PASS、标记文件可能不在 Docker 宿主机、Docker 残留可能查错机器、CPU 只做字符串匹配 | 新增 PASS/FAIL/INCOMPLETE 三态与退出码 0/1/2；错误令牌仅 401 通过；标记文件与宿主检查要求 `--on-execution-node`；Docker 残留要求 `--docker-check local`；CPU 解析 quota/period；网络与资源测试要求明确证据 | `test_verify_isolation.py` 17 项 |
 
+#### 第八轮验收证据补强
+
+| 编号 | 问题 | 修复 | 回归测试 |
+|---|---|---|---|
+| F-27 | 网络探测把所有 `OSError` 当 `NET_BLOCKED`，DNS 失败 / ConnectionRefused / 超时可能被误判为隔离 | 容器内输出结构化 `NET_RESULT`（type + errno）；只有 `ENETUNREACH(101)` / `EHOSTUNREACH(113)` / `EACCES(13)` / `EPERM(1)` 算阻断证据；Refused、DNS、timeout、未知异常均 FAIL；记录类型与 errno | `test_verify_isolation.py` 网络 6 项 |
+| F-28 | 只检查 stdout 截断，未验证 stderr 与合计上限 | 分别提交大量 stdout / stderr 任务，校验字节数、终态、非空，并新增 stdout+stderr 合计上限检查 | `test_verify_isolation.py` 3 项 |
+| F-29 | 未检查 `memory.swap.max`，`max` 可能被当作有限制 | 新增 `parse_swap_max`：`max`/空/格式错误均非 PASS；本项目 memswap==mem 期望 `0`；文件不可读时 SKIP | `test_verify_isolation.py` 1 项 |
+| F-30 | mTLS 只覆盖证书加载，未验证真实握手 | 本地临时 TLS 服务覆盖合法握手、无证书、不受信客户端证书、不受信服务端证书、错误令牌 401、证书与私钥不匹配；证书临时生成自动清理，不输出私钥 | `test_verify_isolation.py` 6 项 |
+| F-31 | `--on-execution-node` 布尔开关被当作身份证明 | 明确为人工声明；仅在本机 Docker 可用时记“非密码学证明”，未声明/不可用则 SKIP；文档要求先 SSH 登录执行节点并核对管理器/Docker/Socket 同节点 | `test_verify_isolation.py` 1 项 |
+
 ## 8. 历史记录（仅追溯，不代表当前状态）
 
 ### 8.1 阶段 0：项目接入与现状盘点
@@ -468,6 +479,24 @@ python -m pytest -q sandbox_manager/tests
   均要求任务终态与明确标记，不再把任意失败当作限制生效。
 - 管理器测试 112 → **129**（新增 `test_verify_isolation.py` 17 项），后端仍为 113。
 - 自动化测试通过，但**验收工具本身未在真实 Linux / Docker 节点运行**，
+  S-01 ~ S-15 仍全部未执行。
+
+### 8.12 阶段 3-A 第八轮验收证据补强
+
+- 网络判定改为解析容器内结构化 `NET_RESULT`，按 Linux errno 分类：
+  `ENETUNREACH/EHOSTUNREACH/EACCES/EPERM` 算阻断；`ConnectionRefused`、DNS 失败、
+  超时、未知异常均 FAIL；输出记录异常类型与 errno。
+- 新增 stdout / stderr 分别提交任务验证截断字节数、任务终态与非空输出，并新增
+  stdout+stderr 合计上限检查；不能用配置值替代实跑。
+- 新增 `memory.swap.max` 检查与 `--expected-swap-mb`（本项目 memswap==mem，期望 0）；
+  `max` 不算有限制，文件不可读 SKIP。
+- 新增本地临时 TLS 的 mTLS 握手测试：合法成功、无证书失败、不受信客户端证书失败、
+  不受信服务端证书失败、合法证书+错误令牌 401、证书与私钥不匹配初始化失败；
+  证书临时生成并自动清理，不输出私钥。
+- `--on-execution-node` 明确为操作人员声明而非密码学证明；文档要求先 SSH 登录执行节点，
+  核对管理器、Docker Engine、Docker Socket 同节点，无法确认时相关项 SKIP。
+- 管理器测试 129 → **141**（`test_verify_isolation.py` 17 → 29 项），后端仍为 113。
+- 全部为自动化/本地临时环境测试，**不代表真实 Linux / Docker 实机验收**；
   S-01 ~ S-15 仍全部未执行。
 
 ## 9. 本机环境限制（影响复现）

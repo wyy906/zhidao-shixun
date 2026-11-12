@@ -404,23 +404,42 @@ TOKEN='<与 manager.env 中 ZD_SANDBOX_TOKEN 一致>'
   --backend-host 10.0.0.10 --backend-port 8000 \
   --host-file /tmp/zd_host_probe.txt \
   --expected-cpu 0.5 --expected-memory-mb 128 --expected-pids 32 \
-  --output-limit 65536
+  --expected-swap-mb 0 \
+  --output-limit 32768 --output-total-limit 65536
 ```
 
 参数说明：
 
 | 参数 | 作用 |
 |---|---|
-| `--on-execution-node` | 声明脚本直接运行在 Docker 执行节点；**宿主机标记文件只在这种情况下创建**，否则该项 SKIP |
+| `--on-execution-node` | **操作人员的人工声明**，不是密码学身份认证。声明脚本直接运行在 Docker 执行节点；只有声明后才会创建宿主机标记文件、检查残留容器。请先通过 SSH 登录执行节点再运行脚本；无法确认管理器与 Docker 同节点时相关项 SKIP |
 | `--docker-check local\|skip` | `local` 表示本机 Docker CLI 就是执行节点，检查 `label=zd.sandbox=1` 残留容器；否则 SKIP |
 | `--client-cert` / `--client-key` | 双向 TLS 客户端证书，必须成对；私钥不会输出 |
-| `--expect-mtls` | 声明服务端强制 mTLS，执行四项验证：无证书拒绝、错误证书拒绝、合法证书成功、不受信服务端证书失败 |
+| `--expect-mtls` | 声明服务端强制 mTLS，执行四项验证：合法证书成功、无证书拒绝、错误证书拒绝、不受信服务端证书失败 |
 | `--invalid-client-cert` / `--invalid-client-key` | mTLS 负向测试用的错误证书；缺失时该项为必检 SKIP（结论 INCOMPLETE） |
 | `--expected-cpu` / `--expected-memory-mb` / `--expected-pids` | 从 cgroup v2 实际值校验限额，CPU 会同时校验 quota 与 period 比例 |
+| `--expected-swap-mb` | 校验 `/sys/fs/cgroup/memory.swap.max`；本项目 `memory_swap == memory`，期望 `0`（`max` 视为未限制，不算通过） |
+| `--output-limit` | 单流（stdout 或 stderr）输出上限，默认 `32768`（32KB） |
+| `--output-total-limit` | stdout + stderr 合计上限，默认 `65536`（64KB） |
 
 > 在**执行节点本机**运行时也可用 `--url https://127.0.0.1:8443`（需证书包含对应名称/IP）。
 > `--host-file` 必须是执行节点上**专门创建的无敏感内容测试文件**（例如
 > `/tmp/zd_host_probe.txt`），不要指向真实 `.env` 或真实密钥文件。
+
+**执行节点身份确认（人工前置）**：
+
+本架构中管理器与 Docker Engine 位于**同一执行节点**（见 §2 拓扑）；Docker Socket
+只对本机管理器可见（§3）。`--on-execution-node` 只是操作人员的声明，脚本无法自动
+证明“打标记文件的机器就是管理器使用的 Docker 宿主机”。因此在执行验收前必须：
+
+1. 通过 SSH 登录到该执行节点（即运行管理器、持有 `/var/run/docker.sock` 的机器）；
+2. 在该机器上确认管理器进程、Docker Engine、Docker Socket 三者同节点
+   （例如 `systemctl status zd-sandbox-manager`、`docker info`、`ls -l /var/run/docker.sock`）；
+3. 再在该机器本机运行本脚本。
+
+若无法确认三者处于同一节点，`--on-execution-node` 相关项（标记文件、残留容器、
+节点身份）必须记为 SKIP，结论为 INCOMPLETE，**不得视为通过**。该参数不提供任何
+密码学身份认证。
 
 判定与输出：
 
@@ -434,13 +453,22 @@ TOKEN='<与 manager.env 中 ZD_SANDBOX_TOKEN 一致>'
 脚本覆盖：
 
 - 错误令牌必须由服务端返回 HTTP 401 才算通过；网络、TLS、DNS 异常一律记为 FAIL
-- 公网 / 局域网 / 业务端口不可达：要求测试代码成功执行并输出 `NET_BLOCKED`
-  （区分 `NET_REACHABLE`；任务失败不算通过）
+- 公网 / 局域网 / 业务端口不可达：测试代码成功执行并输出结构化 `NET_RESULT`；
+  只有明确“连接未建立”的错误才作为阻断证据：
+  - `ENETUNREACH(101)` / `EHOSTUNREACH(113)`、`EACCES(13)` / `EPERM(1)` → PASS
+  - `ConnectionRefusedError(111)` → **FAIL**（主机可达、仅端口无服务，不能证明隔离）
+  - `timeout(110)`、`gaierror`（DNS 解析失败）、未知异常 → **FAIL**
+  - 连接成功、缺少 `NET_RESULT`、任务失败 → FAIL；输出记录异常类型与 errno 作为判定依据
+- 执行节点身份：`--on-execution-node` 仅为人工声明 + 本机 Docker Engine 可用性检查，
+  **不提供密码学身份认证**；未声明或本机 Docker 不可用时该项 SKIP
 - 宿主机标记文件、业务项目文件 / `.env` 不可读（必须在执行节点确认文件存在）
 - 任务工作目录独立且为空、非 root（`UID: 65534`）、根文件系统只读、仅回环网卡
-- cgroup v2 实际限额：CPU quota/period 比例、内存字节数、PID 数
-- 无限循环超时、内存超限、fork 受限、磁盘受限、输出截断
-  （均结合任务终态与明确标记判定，异常终止不算通过）
+- cgroup v2 实际限额：CPU quota/period 比例、内存字节数、`memory.swap.max`（期望 0）、
+  PID 数；文件不可读时该项 SKIP，不得当作通过
+- 无限循环超时、内存超限、fork 受限、磁盘受限
+- 输出截断：分别提交大量 stdout 与大量 stderr 任务，校验各自的返回字节数、任务终态、
+  非空输出，并校验 stdout+stderr 合计不超过 `--output-total-limit`
+  （异常终止或输出为空均不算通过）
 - 任务结束后无残留容器（需 `--docker-check local` 且在执行节点）
 
 > ⚠️ 该脚本包含破坏性测试，只能在**专用、可销毁的测试节点**运行。
@@ -576,21 +604,21 @@ echo "job=$JOB container=$CID"
 
 | 编号 | 验收目标 | 执行命令 | 预期结果 | 实际结果 | 证据保存位置 | 状态 |
 |---|---|---|---|---|---|---|
-| S-01 | 容器网络隔离（无公网 / 局域网 / 业务端口） | `verify_isolation.py ... --lan-host <IP> --lan-port <端口> --backend-host <IP> --backend-port 8000`；`docker inspect $CID --format '{{.HostConfig.NetworkMode}}'` | 公网/局域网/业务端口均不可达为 PASS；`NetworkMode=none` | 未执行 | `S-01.txt` | 未执行 |
+| S-01 | 容器网络隔离（无公网 / 局域网 / 业务端口） | `verify_isolation.py ... --lan-host <IP> --lan-port <端口> --backend-host <IP> --backend-port 8000`；`docker inspect $CID --format '{{.HostConfig.NetworkMode}}'` | 公网/局域网/业务端口均不可达为 PASS；仅接受 `ENETUNREACH/EHOSTUNREACH/EACCES/EPERM` 证据，`ConnectionRefused`、DNS 失败、超时、未知异常均为 FAIL；`NetworkMode=none` | 未执行 | `S-01.txt` | 未执行 |
 | S-02 | 文件系统隔离（宿主机 / 业务文件不可读） | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --host-file /tmp/zd_host_probe.txt`；`docker inspect $CID --format '{{json .Mounts}}'` | 标记文件/业务文件读取被拒绝（`READ_DENIED`）；`Mounts=[]`；非执行节点运行时该项为 SKIP | 未执行 | `S-02.txt` | 未执行 |
 | S-03 | 根文件系统只读 | `verify_isolation.py`；`docker inspect $CID --format '{{.HostConfig.ReadonlyRootfs}}'` | `MOUNT_OPTS: ro...` 为 PASS；`ReadonlyRootfs=true` | 未执行 | `S-03.txt` | 未执行 |
 | S-04 | 非 root 身份运行 | `verify_isolation.py`；`docker inspect $CID --format '{{.Config.User}}'` | `UID: 65534` 为 PASS；`User=65534:65534` | 未执行 | `S-04.txt` | 未执行 |
 | S-05 | 无额外挂载与设备 | `docker inspect $CID --format '{{json .Mounts}} {{json .HostConfig.Devices}}'` | `[] []` | 未执行 | `S-05.txt` | 未执行 |
 | S-06 | 无端口映射 | `docker ps --format '{{.Ports}}' --filter label=zd.sandbox=1`；`docker inspect $CID --format '{{json .HostConfig.PortBindings}}'` | 端口列为空；绑定为 `{}` 或 `null` | 未执行 | `S-06.txt` | 未执行 |
 | S-07 | CPU 限制 0.5 核 | `docker inspect $CID --format '{{.HostConfig.NanoCpus}}'`；`verify_isolation.py` | `500000000`；cgroup `CPU_MAX: 50000 100000` | 未执行 | `S-07.txt` | 未执行 |
-| S-08 | 内存与交换限制 128MB | `docker inspect $CID --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'`；`verify_isolation.py` | `134217728 134217728`；`MEM_MAX: 134217728` | 未执行 | `S-08.txt` | 未执行 |
+| S-08 | 内存与交换限制 128MB | `docker inspect $CID --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'`；`verify_isolation.py --expected-swap-mb 0` | `134217728 134217728`；`MEM_MAX: 134217728`；`SWAP_MAX: 0`（`max` 不算通过） | 未执行 | `S-08.txt` | 未执行 |
 | S-09 | PID 数量限制 32 | `docker inspect $CID --format '{{.HostConfig.PidsLimit}}'`；`verify_isolation.py` | `32`；`PIDS_MAX: 32`；fork 测试 PASS | 未执行 | `S-09.txt` | 未执行 |
 | S-10 | 临时磁盘限制（tmpfs 合计 24MB，业务 16MB） | `docker inspect $CID --format '{{json .HostConfig.Tmpfs}}'`；`verify_isolation.py` | 含 `/workspace`、`/tmp`、`/dev/shm` 与容量/`noexec,nosuid,nodev`；磁盘测试 PASS | 未执行 | `S-10.txt` | 未执行 |
 | S-11 | 执行超时与进程终止 | `verify_isolation.py`（无限循环用例） | `无限循环被超时终止` 为 PASS | 未执行 | `S-11.txt` | 未执行 |
-| S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 65536` | `巨量输出被截断` 为 PASS，`stdout_bytes ≤ 65636` | 未执行 | `S-12.txt` | 未执行 |
+| S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 32768 --output-total-limit 65536` | `stdout 输出被截断` 与 `stderr 输出被截断` 均为 PASS，各自 `bytes ≤ 32868`；`stdout+stderr 合计输出限制` 为 PASS，合计 `≤ 65636` | 未执行 | `S-12.txt` | 未执行 |
 | S-13 | 任务完成后容器清理 | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --docker-check local`；`docker ps -aq --filter label=zd.sandbox=1` | 输出为空；`任务结束后无残留容器` 为 PASS；无法确认 Docker CLI 属于执行节点时为 SKIP（结论 INCOMPLETE） | 未执行 | `S-13.txt` | 未执行 |
 | S-14 | 并发与队列限制（2 并发 / 8 排队） | 并行提交 16 个 `time.sleep(5)` 任务：`seq 16 \| xargs -P16 -I{} curl ... /v1/jobs`；随后 `docker ps` | 至少 1 个 HTTP 429 `queue_full`；接受数 ≤ 10；无残留容器 | 未执行 | `S-14.txt` | 未执行 |
-| S-15 | HTTPS / mTLS 身份认证与证书错误处理 | 见 §5.1；或 `verify_isolation.py ... --client-cert ... --client-key ... --expect-mtls --invalid-client-cert ... --invalid-client-key ...` | 合法证书 200；无客户端证书 / 错误证书 / 不受信服务端证书均被拒绝；错误令牌 401；整体退出码 0 或 2（含 SKIP 时不得视为通过） | 未执行 | `S-15.txt` | 未执行 |
+| S-15 | HTTPS / mTLS 身份认证与证书错误处理 | 见 §5.1；或 `verify_isolation.py ... --client-cert ... --client-key ... --expect-mtls --invalid-client-cert ... --invalid-client-key ...` | 合法证书 200；无客户端证书 / 错误证书 / 不受信服务端证书均被拒绝；错误令牌 401；整体退出码 0 或 2（含 SKIP 时不得视为通过）。本地临时 TLS 单元测试（含“证书与私钥不匹配初始化失败”）仅证明客户端逻辑，**不能替代本节实机结论** | 未执行 | `S-15.txt` | 未执行 |
 
 状态填写规则：
 

@@ -2,7 +2,7 @@
 
 ## 现状一句话
 
-后端 113 项 pytest、沙箱管理器 129 项单元测试、前端 `npm test` 全部通过；
+后端 113 项 pytest、沙箱管理器 141 项单元测试、前端 `npm test` 全部通过；
 学生代码已改为「独立 Linux 执行节点 + 一次性 Docker 容器」执行，业务后端不再持有本机执行路径。
 已完成三轮安全审查修复（镜像 digest、HTTPS/mTLS、容器配置回查、启动清理阻断、清理范围、
 输出限额、数据库初始化、队列上限、错误脱敏、异步轮询与异常收口）。
@@ -110,6 +110,22 @@
   CPU 按 quota/period 校验；网络与资源测试要求明确证据。
 - 新增 mTLS 客户端证书参数与四项 TLS 验证。
 - 管理器测试 112 → **129**（新增 17 项工具可靠性测试）；仍无 Linux 实机验证。
+
+#### 验收证据补强（第八轮已完成）
+
+- 网络判定改为解析容器内结构化 `NET_RESULT`，按 Linux errno 分类：仅
+  `ENETUNREACH/EHOSTUNREACH/EACCES/EPERM` 算阻断；`ConnectionRefused`、DNS 失败、
+  超时、未知异常一律 FAIL，并输出异常类型与 errno。
+- 新增 stdout / stderr 分别提交任务的截断验证（字节数、终态、非空）以及
+  stdout+stderr 合计上限检查。
+- 新增 `memory.swap.max` 检查与 `--expected-swap-mb`（本项目 memswap==mem，期望 0）；
+  `max` 不算有限制，文件不可读 SKIP。
+- 新增本地临时 TLS 的 mTLS 六场景测试（合法握手、无证书、不受信客户端证书、
+  不受信服务端证书、错误令牌 401、证书私钥不匹配）；证书临时生成并自动清理。
+- `--on-execution-node` 明确为人工声明而非密码学证明；文档要求先 SSH 登录执行节点、
+  核对管理器/Docker/Socket 同节点，无法确认则 SKIP。
+- 管理器测试 129 → **141**（`test_verify_isolation.py` 17 → 29 项）；仍无 Linux 实机验证，
+  **S-01 ~ S-15 全部未执行**。
 
 ---
 

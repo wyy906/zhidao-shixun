@@ -15,7 +15,8 @@
         [--backend-host 10.0.0.10 --backend-port 8000] \
         [--host-file /tmp/zd_host_probe.txt] \
         [--expected-cpu 0.5 --expected-memory-mb 128 --expected-pids 32] \
-        [--output-limit 65536]
+        [--expected-swap-mb 0] \
+        [--output-limit 32768 --output-total-limit 65536]
 
 判定语义：
   - PASS：所有必检项通过。
@@ -25,6 +26,14 @@
   - 可选项目（未提供局域网/业务后端目标、未提供 host-file）SKIP 不影响结论，
     但会在输出中单独标注。
 
+注意：
+  - `--on-execution-node` 只是操作人员的人工声明，**不是密码学身份认证**。
+    请先通过 SSH 登录到 Docker 执行节点本机，再运行本脚本；无法确认
+    管理器与 Docker 处于同一节点时，相关项目会 SKIP，不得当作通过。
+  - 网络判定只接受明确“连接未建立”的证据（ENETUNREACH/EHOSTUNREACH/
+    EACCES/EPERM）；DNS 解析失败、ConnectionRefused、超时、未知异常一律
+    不能证明网络隔离。
+
 退出码：0 = PASS；1 = FAIL；2 = INCOMPLETE（SKIP 不等于通过）。
 结果只代表**本次**节点与配置，请把输出如实记录到验收证据目录。
 """
@@ -33,7 +42,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import socket
 import ssl
 import subprocess
 import sys
@@ -91,18 +99,63 @@ def judge_wrong_token(status: int | None = None, error: BaseException | None = N
 
 
 def judge_network(status: str, stdout: str, stderr: str) -> tuple[bool, str]:
-    """只有任务成功执行且明确输出 NET_BLOCKED 才算网络隔离通过"""
+    """解析容器内网络探测结果，只有明确“未建立连接”的错误才算隔离
+
+    判定规则（errno 以 Linux 为准）：
+      - ENETUNREACH(101) / EHOSTUNREACH(113)：目标不可达 → PASS
+      - EACCES(13) / EPERM(1)：被策略拒绝 → PASS
+      - ECONNREFUSED(111)：主机可达、端口无服务 → FAIL（不能证明隔离）
+      - ETIMEDOUT(110) / timeout：超时原因不明 → FAIL
+      - gaierror / DNS 失败 → FAIL（DNS 失败不能证明网络隔离）
+      - 连接成功、缺少 NET_RESULT、任务异常 → FAIL
+    """
     if status != "succeeded":
         return False, f"测试代码未正常结束（status={status}），不能判定为隔离"
-    if "NET_REACHABLE" in stdout:
-        return False, "目标网络可达（NET_REACHABLE）"
-    if "NET_BLOCKED" in stdout:
-        evidence = next(
-            (line.strip() for line in stdout.splitlines() if "NET_BLOCKED" in line),
-            "NET_BLOCKED",
-        )
-        return True, evidence
-    return False, "缺少明确的不可达证据（未看到 NET_BLOCKED）"
+
+    line = next((ln for ln in stdout.splitlines() if ln.startswith("NET_RESULT")), None)
+    if line is None:
+        return False, "缺少 NET_RESULT 证据"
+    try:
+        payload = json.loads(line[len("NET_RESULT"):].strip())
+    except json.JSONDecodeError:
+        return False, f"NET_RESULT 无法解析: {line[:80]}"
+
+    if payload.get("connected"):
+        return False, "连接成功（NET_REACHABLE）"
+
+    err_type = str(payload.get("type") or "")
+    err_no = payload.get("errno")
+    detail = f"type={err_type} errno={err_no}"
+
+    # 容器内是 Linux，errno 使用 Linux 数值（不依赖脚本宿主平台）
+    if err_no in (101, 113):          # ENETUNREACH / EHOSTUNREACH
+        return True, f"目标不可达 {detail}"
+    if err_no in (13, 1):             # EACCES / EPERM
+        return True, f"策略拒绝 {detail}"
+    if err_no == 111 or err_type == "ConnectionRefusedError":
+        return False, f"端口拒绝，但主机可能可达，不能证明隔离 {detail}"
+    if err_no == 110 or "timeout" in err_type.lower():
+        return False, f"连接超时，原因无法确定 {detail}"
+    if "gaierror" in err_type.lower():
+        return False, f"DNS 解析失败，不能证明网络隔离 {detail}"
+    return False, f"未知网络错误，不能判定为隔离 {detail}"
+
+
+def network_probe_code(host: str, port: int) -> str:
+    """生成容器内网络探测代码：输出结构化 NET_RESULT"""
+    return (
+        "import json, socket\n"
+        "try:\n"
+        f"    s = socket.create_connection(({host!r}, {port}), 2)\n"
+        "    s.close()\n"
+        "    print('NET_RESULT', json.dumps({'connected': True}))\n"
+        "except Exception as e:\n"
+        "    print('NET_RESULT', json.dumps({\n"
+        "        'connected': False,\n"
+        "        'type': type(e).__name__,\n"
+        "        'errno': getattr(e, 'errno', None),\n"
+        "    }))\n"
+    )
 
 
 def judge_marker(status: str, stdout: str) -> tuple[bool, str]:
@@ -174,6 +227,19 @@ def parse_pids_max(text: str, expected: int) -> tuple[bool, str]:
     return value == expected, f"pids.max={value} 期望={expected}"
 
 
+def parse_swap_max(text: str, expected_mb: int) -> tuple[bool, str]:
+    """memory.swap.max：`max` 表示未限制；本项目 memswap == mem 时期望 0"""
+    raw = (text or "").strip()
+    if raw in {"", "max"}:
+        return False, f"memory.swap.max={raw or '空'}（未限制或不可读）"
+    try:
+        value = int(raw)
+    except ValueError:
+        return False, f"无法解析 memory.swap.max={raw!r}"
+    expected = expected_mb * 1024 * 1024
+    return value == expected, f"memory.swap.max={value} 期望={expected}"
+
+
 def judge_timeout(status: str) -> tuple[bool, str]:
     return status == "timeout", f"status={status}（期望 timeout）"
 
@@ -212,6 +278,31 @@ def judge_output(status: str, stdout_size: int, limit: int) -> tuple[bool, str]:
         return False, "stdout 为空，缺少截断证据"
     ok = stdout_size <= limit + 100
     return ok, f"stdout_bytes={stdout_size} 上限≈{limit}"
+
+
+def judge_total_output(status: str, stdout_size: int, stderr_size: int,
+                       total_limit: int) -> tuple[bool, str]:
+    if status != "succeeded":
+        return False, f"status={status}，不能判定总输出限制"
+    if stdout_size + stderr_size <= 0:
+        return False, "stdout/stderr 均为空，缺少证据"
+    total = stdout_size + stderr_size
+    return total <= total_limit + 100, (
+        f"stdout_bytes={stdout_size} stderr_bytes={stderr_size} 合计={total} 上限≈{total_limit}"
+    )
+
+
+def judge_node_identity(on_execution_node: bool, docker_available: bool) -> tuple[bool | None, str]:
+    """--on-execution-node 是人工声明，不是密码学证明
+
+    脚本只能确认本机 Docker Engine 可用；无法证明管理器使用的就是本机 Docker。
+    未声明或本机 Docker 不可用时必须 SKIP。
+    """
+    if not on_execution_node:
+        return None, "未声明 --on-execution-node，无法确认执行节点身份"
+    if not docker_available:
+        return None, "本机 Docker Engine 不可用，无法确认与管理器同节点"
+    return True, "人工声明 + 本机 Docker Engine 可用（非密码学证明，需人工复核）"
 
 
 def judge_container_residue(docker_check: str, on_execution_node: bool,
@@ -345,7 +436,12 @@ def main() -> int:
     parser.add_argument("--expected-cpu", type=float, default=0.5)
     parser.add_argument("--expected-memory-mb", type=int, default=128)
     parser.add_argument("--expected-pids", type=int, default=32)
-    parser.add_argument("--output-limit", type=int, default=65536)
+    parser.add_argument("--expected-swap-mb", type=int, default=0,
+                        help="memory.swap.max 期望值（memswap==mem 时为 0）")
+    parser.add_argument("--output-limit", type=int, default=32768,
+                        help="单个输出流上限（管理器默认每流 32KB）")
+    parser.add_argument("--output-total-limit", type=int, default=65536,
+                        help="stdout+stderr 合计上限（默认 64KB）")
     args = parser.parse_args()
 
     results: list[dict] = []
@@ -381,16 +477,23 @@ def main() -> int:
         add("双向 TLS 客户端证书认证", None,
             "未启用 --expect-mtls（仅校验服务端证书）", OPTIONAL)
 
+    # 0.2 执行节点身份（人工声明 + 本机 Docker 可用性）
+    docker_available = False
+    if args.on_execution_node:
+        try:
+            subprocess.check_output(
+                ["docker", "info", "--format", "{{.ID}}"],
+                text=True, stderr=subprocess.DEVNULL, timeout=10,
+            )
+            docker_available = True
+        except Exception:  # noqa: BLE001
+            docker_available = False
+    identity_ok, identity_detail = judge_node_identity(
+        args.on_execution_node, docker_available)
+    add("执行节点身份（管理器与 Docker 同节点）", identity_ok, identity_detail)
+
     # 1. 公网隔离
-    public_code = (
-        "import socket\n"
-        "try:\n"
-        "    s=socket.create_connection(('1.1.1.1',443),2)\n"
-        "    s.close(); print('NET_REACHABLE')\n"
-        "except OSError as e:\n"
-        "    print('NET_BLOCKED', type(e).__name__, getattr(e,'errno',None))\n"
-    )
-    case("公网不可达", public_code, judge_network)
+    case("公网不可达", network_probe_code("1.1.1.1", 443), judge_network)
 
     # 2. 局域网 / 业务后端 / 数据库端口
     for label, host, port in [
@@ -400,15 +503,7 @@ def main() -> int:
         if not host:
             add(label, None, "未提供目标地址，跳过（可选）", OPTIONAL)
             continue
-        code = (
-            "import socket\n"
-            "try:\n"
-            f"    s=socket.create_connection(({host!r},{port}),2)\n"
-            "    s.close(); print('NET_REACHABLE')\n"
-            "except OSError as e:\n"
-            "    print('NET_BLOCKED', type(e).__name__, getattr(e,'errno',None))\n"
-        )
-        case(label, code, judge_network)
+        case(label, network_probe_code(host, port), judge_network)
 
     # 3. 宿主机标记文件：只能在执行节点本机创建
     scope_ok, scope_detail = judge_host_marker_scope(args.on_execution_node)
@@ -488,12 +583,13 @@ def main() -> int:
         "        return 'UNAVAILABLE'\n"
         "print('CPU_MAX:', _read('/sys/fs/cgroup/cpu.max'))\n"
         "print('MEM_MAX:', _read('/sys/fs/cgroup/memory.max'))\n"
+        "print('SWAP_MAX:', _read('/sys/fs/cgroup/memory.swap.max'))\n"
         "print('PIDS_MAX:', _read('/sys/fs/cgroup/pids.max'))\n"
     )
     try:
         cg = run_case(m, cgroup_code)
         if cg["status"] != "succeeded":
-            for name in ("CPU 限额", "内存限额", "PID 限额"):
+            for name in ("CPU 限额", "内存限额", "交换空间限额", "PID 限额"):
                 add(name, None, f"cgroup 读取任务未成功（status={cg['status']}）")
         else:
             values = dict(
@@ -503,6 +599,7 @@ def main() -> int:
             for name, raw, judge in [
                 ("CPU 限额", "CPU_MAX", lambda v: parse_cpu_max(v, args.expected_cpu)),
                 ("内存限额", "MEM_MAX", lambda v: parse_memory_max(v, args.expected_memory_mb)),
+                ("交换空间限额", "SWAP_MAX", lambda v: parse_swap_max(v, args.expected_swap_mb)),
                 ("PID 限额", "PIDS_MAX", lambda v: parse_pids_max(v, args.expected_pids)),
             ]:
                 value = values.get(raw, "UNAVAILABLE")
@@ -512,7 +609,7 @@ def main() -> int:
                     ok, detail = judge(value)
                     add(name, ok, detail)
     except Exception as exc:  # noqa: BLE001
-        for name in ("CPU 限额", "内存限额", "PID 限额"):
+        for name in ("CPU 限额", "内存限额", "交换空间限额", "PID 限额"):
             add(name, False, f"任务异常: {type(exc).__name__}")
 
     # 6. 超时
@@ -552,12 +649,31 @@ def main() -> int:
     case("磁盘超限被限制", disk_code,
          lambda status, out, err: judge_disk(status, out), timeout=8)
 
-    # 10. 输出截断
-    case("巨量输出被截断",
-         "print('A' * (5 * 1024 * 1024))\n",
-         lambda status, out, err: judge_output(
-             status, len(out.encode("utf-8")), args.output_limit),
-         timeout=8)
+    # 10. 输出截断（stdout / stderr / 合计）
+    out_bytes = err_bytes = 0
+    out_status = err_status = "failed"
+    try:
+        r_out = run_case(m, "print('A' * (5 * 1024 * 1024))\n", timeout=8)
+        out_status = r_out["status"]
+        out_bytes = len(r_out.get("stdout", "").encode("utf-8"))
+        ok, detail = judge_output(out_status, out_bytes, args.output_limit)
+        add("stdout 输出被截断", ok, detail)
+    except Exception as exc:  # noqa: BLE001
+        add("stdout 输出被截断", False, f"任务异常: {type(exc).__name__}")
+    try:
+        r_err = run_case(
+            m, "import sys\nsys.stderr.write('B' * (5 * 1024 * 1024))\n", timeout=8)
+        err_status = r_err["status"]
+        err_bytes = len(r_err.get("stderr", "").encode("utf-8"))
+        ok, detail = judge_output(err_status, err_bytes, args.output_limit)
+        add("stderr 输出被截断", ok, detail)
+    except Exception as exc:  # noqa: BLE001
+        add("stderr 输出被截断", False, f"任务异常: {type(exc).__name__}")
+    total_ok, total_detail = judge_total_output(
+        "succeeded" if out_status == err_status == "succeeded" else "failed",
+        out_bytes, err_bytes, args.output_total_limit,
+    )
+    add("stdout+stderr 合计输出限制", total_ok, total_detail)
 
     # 11. 容器残留
     if args.docker_check == "local" and args.on_execution_node:
