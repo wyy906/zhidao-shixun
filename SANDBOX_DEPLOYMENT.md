@@ -48,6 +48,30 @@ FastAPI 业务后端（可部署在 Windows / Linux）
 - 内核：建议启用 AppArmor；如需更强隔离可安装 gVisor（`runsc`）。
 - 时间同步（chrony/systemd-timesyncd）。
 
+### 2.1 节点就绪检查（部署前必须全部通过）
+
+```bash
+# 1) 系统与内核
+lsb_release -a
+uname -r
+
+# 2) Docker 版本与服务状态（建议 Docker Engine 24+）
+docker version --format 'client={{.Client.Version}} server={{.Server.Version}}'
+systemctl is-active docker
+
+# 3) cgroup v2（CPU / 内存 / PID 限额依赖 cgroup）
+stat -fc %T /sys/fs/cgroup        # 期望输出 cgroup2fs
+test -f /sys/fs/cgroup/cpu.max && echo cgroup-v2-ok
+
+# 4) AppArmor（如计划启用）
+cat /sys/module/apparmor/parameters/enabled   # 期望 Y
+
+# 5) 端口占用（8443 不应被其他服务占用）
+ss -lntp | grep 8443 || echo "8443 free"
+```
+
+> 以上任一项不满足时不要继续部署；cgroup v1 节点请先升级或调整内核启动参数启用 cgroup v2。
+
 ## 3. Docker 安装与加固
 
 ```bash
@@ -56,7 +80,13 @@ sudo systemctl enable --now docker
 
 # 创建专用账号，仅授予 docker 组权限（不要用 root 运行管理器）
 sudo useradd -r -s /usr/sbin/nologin -G docker zd-sandbox
+sudo -u zd-sandbox docker version --format '{{.Server.Version}}'   # 验证 docker 组权限可用
 ```
+
+> Docker Socket 等价于宿主机 root 权限：`zd-sandbox` 账号只应存在于专用执行节点，
+> 不得在该节点运行其他业务服务。<br>
+> 如需 gVisor：按官方文档安装 `runsc` 并在 `/etc/docker/daemon.json` 的 `runtimes` 中注册，
+> 再用 `docker info --format '{{json .Runtimes}}'` 确认存在。
 
 加固建议（`/etc/docker/daemon.json`）：
 
@@ -79,17 +109,29 @@ sudo systemctl restart docker
 
 ## 4. 构建固定 Python 镜像
 
-仅预装 Python 标准库（首版不预装第三方教学库）：
+仅预装 Python 标准库（首版不预装第三方教学库）。先把仓库检出到执行节点：
 
 ```bash
-cd /opt/zd-sandbox-src
-sudo bash sandbox_manager/scripts/build_image.sh zd-sandbox-python:3.12
+sudo mkdir -p /opt/zhidao-shixun
+sudo chown "$USER":"$USER" /opt/zhidao-shixun
+git clone https://github.com/wyy906/zhidao-shixun.git /opt/zhidao-shixun
+REPO=/opt/zhidao-shixun          # 如仓库在其他路径，修改为实际路径
+
+# 构建镜像（需要节点能拉取 Python 基础镜像）
+sudo bash "$REPO/sandbox_manager/scripts/build_image.sh" zd-sandbox-python:3.12
 ```
 
 脚本会输出镜像 ID 或仓库 digest。**必须**把 digest 写入执行节点配置：
 
 - 单节点：可用本地镜像 ID（`sha256:...`）。
 - 多节点 / 可重建环境：推送到私有仓库，使用 `repo@sha256:...`。
+
+验证输出与本地镜像一致：
+
+```bash
+docker inspect --format '{{.Id}}' zd-sandbox-python:3.12
+docker inspect --format '{{json .RepoDigests}}' zd-sandbox-python:3.12
+```
 
 管理器启动时会检查：
 1. 镜像引用必须固定到 digest；使用 tag 会**拒绝启动**。
@@ -107,11 +149,15 @@ sudo bash sandbox_manager/scripts/build_image.sh zd-sandbox-python:3.12
 ## 5. 部署沙箱管理器
 
 ```bash
+REPO=${REPO:-/opt/zhidao-shixun}   # 仓库检出路径，如不同请修改
+# 依赖：python3-venv（Ubuntu 默认未安装）
+sudo apt update && sudo apt install -y python3-venv
+
 sudo mkdir -p /opt/zd-sandbox /etc/zd-sandbox
-sudo cp -r sandbox_manager /opt/zd-sandbox/
-cd /opt/zd-sandbox
-sudo python3 -m venv venv
-sudo ./venv/bin/pip install -r sandbox_manager/requirements.txt
+sudo cp -r "$REPO/sandbox_manager" /opt/zd-sandbox/
+sudo cp "$REPO/SANDBOX_DEPLOYMENT.md" /opt/zd-sandbox/   # systemd Documentation 路径
+sudo python3 -m venv /opt/zd-sandbox/venv
+sudo /opt/zd-sandbox/venv/bin/pip install -r /opt/zd-sandbox/sandbox_manager/requirements.txt
 sudo chown -R zd-sandbox:zd-sandbox /opt/zd-sandbox
 ```
 
@@ -166,11 +212,83 @@ sudo systemctl enable --now zd-sandbox
 sudo systemctl status zd-sandbox
 ```
 
+常用运维命令：
+
+```bash
+sudo systemctl start zd-sandbox     # 启动
+sudo systemctl stop zd-sandbox      # 停止（业务端随后返回 503）
+sudo systemctl restart zd-sandbox   # 重启（启动时会清理本实例残留容器）
+journalctl -u zd-sandbox -n 200 --no-pager   # 查看最近日志
+journalctl -u zd-sandbox -f                  # 实时日志
+```
+
 > gVisor / AppArmor / seccomp 是**可配置的增强项**：配置后管理器会在 `/health` 与每次提交前
 > 检查运行时是否存在、profile 文件是否可读、AppArmor 是否启用；创建容器后还会核对
 > Docker `HostConfig.SecurityOpt` 中确实记录了对应选项。**但 inspect 只能证明配置被记录，
 > 不能证明内核已加载并强制执行**——后者必须在执行节点用 `scripts/verify_isolation.py`
 > 和实际攻击脚本验证，未验证前不得宣称“seccomp/AppArmor 已生效”。
+
+### 5.1 HTTPS / 双向 TLS 证书生成与验证
+
+以下命令在**执行节点**用 bash 执行；把 `10.0.0.20` 换成执行节点真实内网 IP/DNS。
+
+```bash
+sudo mkdir -p /etc/zd-sandbox/tls && cd /etc/zd-sandbox/tls
+
+# 1) 私有 CA（10 年）
+sudo openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
+  -keyout ca.key -out ca.crt -subj "/CN=ZD-Sandbox-CA"
+
+# 2) 服务端证书（含 IP SAN；必须与实际访问地址一致）
+sudo openssl req -newkey rsa:3072 -nodes -keyout server.key -out server.csr \
+  -subj "/CN=zd-sandbox"
+sudo openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -days 825 -out server.crt \
+  -extfile <(printf "subjectAltName=IP:10.0.0.20,DNS:zd-sandbox.local\nextendedKeyUsage=serverAuth")
+
+# 3) 业务后端客户端证书（双向 TLS）
+sudo openssl req -newkey rsa:3072 -nodes -keyout client.key -out client.csr \
+  -subj "/CN=zhidao-backend"
+sudo openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -days 825 -out client.crt \
+  -extfile <(printf "extendedKeyUsage=clientAuth")
+
+# 4) 权限：管理器账号可读，其他用户不可读
+sudo chown zd-sandbox:zd-sandbox server.crt server.key ca.crt
+sudo chmod 640 ca.crt server.crt
+sudo chmod 600 server.key ca.key
+```
+
+`manager.env` 对应配置：
+
+```ini
+ZD_SANDBOX_HOST=10.0.0.20        # 跨机访问时绑定内网地址
+ZD_SANDBOX_TLS_CERT=/etc/zd-sandbox/tls/server.crt
+ZD_SANDBOX_TLS_KEY=/etc/zd-sandbox/tls/server.key
+ZD_SANDBOX_TLS_CLIENT_CA=/etc/zd-sandbox/tls/ca.crt   # 配置后强制双向 TLS
+```
+
+验证（在业务后端所在机器）：
+
+```bash
+# 单向握手 + 服务端证书校验（应输出 Verify return code: 0 (ok)）
+openssl s_client -connect 10.0.0.20:8443 -CAfile ca.crt \
+  -verify_ip 10.0.0.20 -verify_return_error </dev/null
+
+# 无客户端证书访问双向 TLS 端口：应握手失败（预期失败）
+curl -sS https://10.0.0.20:8443/health --cacert ca.crt || echo "mTLS 拒绝无客户端证书（预期）"
+
+# 带客户端证书 + 错误令牌：应 HTTP 401（预期失败）
+curl -sS -o /dev/null -w '%{http_code}\n' https://10.0.0.20:8443/health \
+  --cacert ca.crt --cert client.crt --key client.key -H 'X-Sandbox-Token: wrong'
+
+# 带客户端证书 + 正确令牌：应 200
+curl -sS https://10.0.0.20:8443/health \
+  --cacert ca.crt --cert client.crt --key client.key \
+  -H "X-Sandbox-Token: $ZD_SANDBOX_TOKEN" | python3 -m json.tool
+```
+
+> 任何握手失败都不存在自动降级为 HTTP 的分支；管理器与业务后端都会直接拒绝请求。
 
 ## 6. 业务后端配置
 
@@ -272,16 +390,35 @@ curl -s -H "X-Sandbox-Token: $ZD_SANDBOX_TOKEN" https://127.0.0.1:8443/health | 
 
 ```bash
 cd /opt/zd-sandbox
-sudo -u zd-sandbox ZD_SANDBOX_TOKEN=<token> \
-  ./venv/bin/python sandbox_manager/scripts/verify_isolation.py \
-  --url https://127.0.0.1:8443 --token <token> \
-  --ca /etc/zd-sandbox/ca.crt \
+TOKEN='<与 manager.env 中 ZD_SANDBOX_TOKEN 一致>'
+./venv/bin/python sandbox_manager/scripts/verify_isolation.py \
+  --url https://10.0.0.20:8443 --token "$TOKEN" \
+  --ca /etc/zd-sandbox/tls/ca.crt \
   --lan-host 10.0.0.5 --lan-port 3306 \
-  --backend-host 10.0.0.10 --backend-port 8000
+  --backend-host 10.0.0.10 --backend-port 8000 \
+  --host-file /opt/zhidao-shixun/backend/.env \
+  --output-limit 65536
 ```
 
-脚本会验证：公网不可达、局域网/数据库/业务端口不可达、宿主机标记文件不可读、
-工作目录独立、无限循环超时、内存超限、fork 受限、磁盘受限、输出截断、无残留容器。
+> 在**执行节点本机**运行时也可用 `--url https://127.0.0.1:8443`（需证书包含对应名称/IP）。
+> `--host-file` 必须是执行节点上**专门创建的无敏感内容测试文件**（例如
+> `/tmp/zd_host_probe.txt`），不要指向真实 `.env` 或真实密钥文件。
+
+脚本逐项输出 `[PASS] / [FAIL] / [SKIP]`，覆盖：
+
+- 管理接口拒绝错误令牌
+- 公网不可达、局域网 / 业务后端端口不可达
+- 宿主机标记文件、业务项目文件不可读
+- 任务工作目录独立且为空
+- 容器内为非 root 用户（`UID: 65534`）
+- 根文件系统只读（`MOUNT_OPTS` 含 `ro`）
+- 容器仅有回环网络接口（`IFACES: ['lo']`）
+- cgroup v2 实际限额（CPU `50000`、内存 `134217728`、PID `32`；不可读时输出 SKIP，不能算通过）
+- 无限循环超时、内存超限、fork 受限、磁盘受限、输出截断
+- 任务结束后无残留容器（本机有 docker CLI 时）
+
+退出码：`0` 表示无 FAIL（但可能含 SKIP，必须人工确认）；`1` 表示存在 FAIL。
+**SKIP 不等于通过**，需要在验收清单中记为“阻塞/未验证”。
 
 > ⚠️ 该脚本包含破坏性测试，只能在**专用、可销毁的测试节点**运行。
 
@@ -347,6 +484,11 @@ docker ps -a --filter label=zd.sandbox=1 -q | xargs -r docker rm -f
 | 业务端 503 | 未配置 URL/令牌、节点不可达、TLS 校验失败 | 检查 `.env`、网络、CA |
 | `/health` 503 `docker_unavailable` | Docker 未启动 / 无 socket 权限 | `systemctl start docker`；确认账号在 docker 组 |
 | `/health` 503 `image_missing` | 镜像未构建或 digest 不匹配 | 重新构建并更新 `ZD_SANDBOX_IMAGE` |
+| `/health` 503 `image_digest_mismatch` | 本地镜像与配置的 digest / 镜像 ID 不一致（镜像被替换） | 重新按固定 digest 拉取或重建，更新配置 |
+| 启动报 `sandbox startup cleanup failed` | Docker 不可用或残留容器删除失败 | 先修复 Docker，再手动检查 `docker ps -a --filter label=zd.sandbox=1` |
+| 启动报 `token_not_configured` / 401 | 令牌为空或两端不一致 | 核对 `manager.env` 与业务后端 `SANDBOX_MANAGER_TOKEN` |
+| `/health` 503 `seccomp_profile_missing` | 配置了 seccomp 但文件不存在 | 放置 profile 或清空 `ZD_SANDBOX_SECCOMP` |
+| 启动报证书/私钥不可读 | 文件权限或属主错误 | `chown zd-sandbox`，证书 `640`、私钥 `600` |
 | `/health` 503 `runtime_unavailable` | 配置了 gVisor 但未安装 | 安装 runsc 或清空 `ZD_SANDBOX_RUNTIME` |
 | `/health` 503 `apparmor_unavailable` | 内核未启用 AppArmor | 启用或清空 `ZD_SANDBOX_APPARMOR` |
 | 任务一直 `queued` | 并发或排队已满（默认 2 / 8） | 等待或调整 `ZD_SANDBOX_MAX_CONCURRENT` / `ZD_SANDBOX_MAX_PENDING`（管理员） |
@@ -382,3 +524,87 @@ uvicorn app.main:app ...  # 缺表会直接启动失败
 
 `code_tasks` 迁移文件：`backend/alembic/versions/20261112_0001_add_code_tasks.py`
 （幂等：`create_all` 已建表时跳过；`downgrade` 可回滚）。
+
+## 17. 实机安全验收清单（S-01 ~ S-15）
+
+> **当前状态：全部未执行。** 本仓库开发机为 Windows，未安装 Docker，也没有可连接的
+> Linux 执行节点，因此没有任何一项可以标记为“通过”。本节只定义在真实节点上的
+> 执行命令、预期结果和证据要求；**不得用单元测试或配置检查替代实机结论**。
+
+执行前准备（在业务后端所在机器或执行节点本机执行；以下变量按实际替换）：
+
+```bash
+BASE=https://10.0.0.20:8443
+TOKEN='<manager.env 中的 ZD_SANDBOX_TOKEN>'
+CA=/etc/zd-sandbox/tls/ca.crt
+CERT=/etc/zd-sandbox/tls/client.crt
+KEY=/etc/zd-sandbox/tls/client.key
+API="curl -sS --cacert $CA --cert $CERT --key $KEY -H \"X-Sandbox-Token: $TOKEN\""
+
+# 提交一个保持 8 秒的任务，供 docker inspect 观察运行中的容器
+JOB=$(curl -sS --cacert "$CA" --cert "$CERT" --key "$KEY" \
+  -H "X-Sandbox-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -X POST "$BASE/v1/jobs" \
+  -d '{"code":"import time\ntime.sleep(8)","timeout":8}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["job_id"])')
+CID=$(docker ps -q --filter label=zd.sandbox=1 | head -n1)
+echo "job=$JOB container=$CID"
+```
+
+| 编号 | 验收目标 | 执行命令 | 预期结果 | 实际结果 | 证据保存位置 | 状态 |
+|---|---|---|---|---|---|---|
+| S-01 | 容器网络隔离（无公网 / 局域网 / 业务端口） | `verify_isolation.py ... --lan-host <IP> --lan-port <端口> --backend-host <IP> --backend-port 8000`；`docker inspect $CID --format '{{.HostConfig.NetworkMode}}'` | 公网/局域网/业务端口均不可达为 PASS；`NetworkMode=none` | 未执行 | `S-01.txt` | 未执行 |
+| S-02 | 文件系统隔离（宿主机 / 业务文件不可读） | `verify_isolation.py ... --host-file /tmp/zd_host_probe.txt`；`docker inspect $CID --format '{{json .Mounts}}'` | 标记文件/业务文件读取被拒绝；`Mounts=[]` | 未执行 | `S-02.txt` | 未执行 |
+| S-03 | 根文件系统只读 | `verify_isolation.py`；`docker inspect $CID --format '{{.HostConfig.ReadonlyRootfs}}'` | `MOUNT_OPTS: ro...` 为 PASS；`ReadonlyRootfs=true` | 未执行 | `S-03.txt` | 未执行 |
+| S-04 | 非 root 身份运行 | `verify_isolation.py`；`docker inspect $CID --format '{{.Config.User}}'` | `UID: 65534` 为 PASS；`User=65534:65534` | 未执行 | `S-04.txt` | 未执行 |
+| S-05 | 无额外挂载与设备 | `docker inspect $CID --format '{{json .Mounts}} {{json .HostConfig.Devices}}'` | `[] []` | 未执行 | `S-05.txt` | 未执行 |
+| S-06 | 无端口映射 | `docker ps --format '{{.Ports}}' --filter label=zd.sandbox=1`；`docker inspect $CID --format '{{json .HostConfig.PortBindings}}'` | 端口列为空；绑定为 `{}` 或 `null` | 未执行 | `S-06.txt` | 未执行 |
+| S-07 | CPU 限制 0.5 核 | `docker inspect $CID --format '{{.HostConfig.NanoCpus}}'`；`verify_isolation.py` | `500000000`；cgroup `CPU_MAX: 50000 100000` | 未执行 | `S-07.txt` | 未执行 |
+| S-08 | 内存与交换限制 128MB | `docker inspect $CID --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'`；`verify_isolation.py` | `134217728 134217728`；`MEM_MAX: 134217728` | 未执行 | `S-08.txt` | 未执行 |
+| S-09 | PID 数量限制 32 | `docker inspect $CID --format '{{.HostConfig.PidsLimit}}'`；`verify_isolation.py` | `32`；`PIDS_MAX: 32`；fork 测试 PASS | 未执行 | `S-09.txt` | 未执行 |
+| S-10 | 临时磁盘限制（tmpfs 合计 24MB，业务 16MB） | `docker inspect $CID --format '{{json .HostConfig.Tmpfs}}'`；`verify_isolation.py` | 含 `/workspace`、`/tmp`、`/dev/shm` 与容量/`noexec,nosuid,nodev`；磁盘测试 PASS | 未执行 | `S-10.txt` | 未执行 |
+| S-11 | 执行超时与进程终止 | `verify_isolation.py`（无限循环用例） | `无限循环被超时终止` 为 PASS | 未执行 | `S-11.txt` | 未执行 |
+| S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 65536` | `巨量输出被截断` 为 PASS，`stdout_bytes ≤ 65636` | 未执行 | `S-12.txt` | 未执行 |
+| S-13 | 任务完成后容器清理 | 任务结束后执行 `docker ps -aq --filter label=zd.sandbox=1`；`verify_isolation.py` | 输出为空；`任务结束后无残留容器` 为 PASS | 未执行 | `S-13.txt` | 未执行 |
+| S-14 | 并发与队列限制（2 并发 / 8 排队） | 并行提交 16 个 `time.sleep(5)` 任务：`seq 16 \| xargs -P16 -I{} curl ... /v1/jobs`；随后 `docker ps` | 至少 1 个 HTTP 429 `queue_full`；接受数 ≤ 10；无残留容器 | 未执行 | `S-14.txt` | 未执行 |
+| S-15 | HTTPS / mTLS 身份认证与证书错误处理 | 见 §5.1：`openssl s_client`、无客户端证书 `curl`、错误令牌 `curl`、正确令牌 `curl` | 证书校验 `Verify return code: 0`；无客户端证书握手失败；错误令牌 401；正确令牌 200 | 未执行 | `S-15.txt` | 未执行 |
+
+状态填写规则：
+
+- **未执行**：尚未在真实节点运行（当前默认值）。
+- **通过**：命令输出与预期完全一致，且证据文件已保存。
+- **失败**：输出与预期不符；必须记录差异并修复后重跑，不能改预期迁就现状。
+- **阻塞**：缺少节点 / Docker / 证书 / 网络条件，需负责人提供环境。
+
+> 仅凭 `docker inspect` 的配置字段不能证明内核已强制执行（尤其 seccomp / AppArmor）。
+> 必须同时有 `verify_isolation.py` 的实际运行输出或独立的攻击脚本证据。
+
+## 18. 验收证据保存
+
+```bash
+STAMP=$(date +%Y%m%d-%H%M)
+EVID=/var/log/zd-sandbox-acceptance/$STAMP
+sudo mkdir -p "$EVID"
+
+# 示例：保存 S-01 的脚本输出（其余项同理，改文件名）
+./venv/bin/python sandbox_manager/scripts/verify_isolation.py \
+  --url "$BASE" --token "$TOKEN" --ca "$CA" \
+  --lan-host 10.0.0.5 --lan-port 3306 \
+  --backend-host 10.0.0.10 --backend-port 8000 \
+  --host-file /tmp/zd_host_probe.txt \
+  2>&1 | sudo tee "$EVID/S-01.txt"
+
+# 保存管理器日志片段
+sudo journalctl -u zd-sandbox --since "1 hour ago" --no-pager | sudo tee "$EVID/manager-journal.txt"
+
+# 保存版本与环境信息
+{ docker version; docker info --format '{{json .SecurityOptions}}'; uname -a; } \
+  2>&1 | sudo tee "$EVID/environment.txt"
+```
+
+要求：
+
+- 证据文件保存在执行节点的 `/var/log/zd-sandbox-acceptance/`，**不要提交到 Git**。
+- 证据中不得包含真实令牌、证书私钥、服务器密码或真实用户数据；令牌在粘贴前替换为 `<redacted>`。
+- `TEST_REPORT.md` 只记录汇总结论、执行日期、节点版本和证据文件路径，不复制敏感内容。
+- 每项验收完成后，同步更新 §17 的“实际结果 / 证据保存位置 / 状态”三列。

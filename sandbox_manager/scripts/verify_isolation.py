@@ -7,10 +7,14 @@
 用法（在能访问沙箱管理器的机器上）：
     python3 verify_isolation.py \
         --url https://10.0.0.20:8443 --token "$ZD_SANDBOX_TOKEN" \
-        [--ca /etc/zd-sandbox/ca.pem] \
+        [--ca /etc/zd-sandbox/tls/ca.crt] \
         [--lan-host 10.0.0.5 --lan-port 3306] \
         [--backend-host 10.0.0.10 --backend-port 8000] \
-        [--host-file /opt/zhidao/backend/.env]
+        [--host-file /tmp/zd_host_probe.txt]
+
+覆盖：管理接口认证、公网/局域网/业务端口不可达、宿主机文件不可读、工作目录隔离、
+非 root 身份、根文件系统只读、仅回环网卡、cgroup CPU/内存/PID 限额、
+超时、内存、fork、磁盘、输出截断、容器残留。
 
 退出码：0 表示全部通过（或明确 SKIP），1 表示存在 FAIL。
 结果只代表**本次**节点配置，请把输出如实记录到 TEST_REPORT.md。
@@ -177,6 +181,55 @@ def main() -> int:
         record("任务工作目录独立且为空", "WORKSPACE: []" in r["stdout"], r["stdout"].strip())
     except Exception as exc:
         record("任务工作目录独立且为空", False, str(exc))
+
+    # 5.1 非 root 身份
+    try:
+        r = run_case(m, "uid", "import os\nprint('UID:', os.getuid())\n")
+        record("容器内为非 root 用户", "UID: 65534" in r["stdout"], r["stdout"].strip())
+    except Exception as exc:
+        record("容器内为非 root 用户", False, str(exc))
+
+    # 5.2 根文件系统只读（读取 /proc/mounts 中 / 的挂载选项）
+    try:
+        code = (
+            "opts = [p.split()[3] for p in open('/proc/mounts') if len(p.split()) > 3 and p.split()[1] == '/']\n"
+            "print('MOUNT_OPTS:', opts[0] if opts else 'UNKNOWN')\n"
+        )
+        r = run_case(m, "rootfs", code)
+        record("根文件系统只读", "MOUNT_OPTS: ro" in r["stdout"], r["stdout"].strip()[:120])
+    except Exception as exc:
+        record("根文件系统只读", False, str(exc))
+
+    # 5.3 网络接口（network=none 时只应有回环）
+    try:
+        r = run_case(m, "ifaces", "import socket\nprint('IFACES:', sorted(n for _, n in socket.if_nameindex()))\n")
+        record("容器仅有回环网络接口", "IFACES: ['lo']" in r["stdout"], r["stdout"].strip())
+    except Exception as exc:
+        record("容器仅有回环网络接口", False, str(exc))
+
+    # 5.4 cgroup v2 实际限额（CPU / 内存 / PID）
+    try:
+        code = (
+            "def _read(path):\n"
+            "    try:\n"
+            "        return open(path).read().strip()\n"
+            "    except OSError:\n"
+            "        return 'UNAVAILABLE'\n"
+            "print('CPU_MAX:', _read('/sys/fs/cgroup/cpu.max'))\n"
+            "print('MEM_MAX:', _read('/sys/fs/cgroup/memory.max'))\n"
+            "print('PIDS_MAX:', _read('/sys/fs/cgroup/pids.max'))\n"
+        )
+        r = run_case(m, "cgroup", code)
+        out = r["stdout"]
+        if "UNAVAILABLE" in out:
+            record("CPU / 内存 / PID 限额实际生效", None, out.strip()[:160])
+        else:
+            cpu_ok = "CPU_MAX: 50000" in out
+            mem_ok = "MEM_MAX: 134217728" in out
+            pids_ok = "PIDS_MAX: 32" in out
+            record("CPU / 内存 / PID 限额实际生效", cpu_ok and mem_ok and pids_ok, out.strip()[:160])
+    except Exception as exc:
+        record("CPU / 内存 / PID 限额实际生效", False, str(exc))
 
     # 6. 无限循环 → 超时终止
     try:
