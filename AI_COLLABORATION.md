@@ -2192,3 +2192,42 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 **下一步：** Trae 进行第九轮架构修订，仅修正目录句柄访问掩码、目录句柄校验所需最小权限/ACL、共享模式保护范围及对应负向测试设计。第九轮仍为 docs-only；不得实现 Docker 执行器、FastAPI 执行 API、Python 运行接口或前端运行按钮。镜像锁定文件保持 pending/null。不得修改 main/trae-dev，不得创建或合并 PR，不得合并任何分支。
 
 **复审状态：** V2-04A 暂不批准；V2-04B 禁止启动。第九轮复审通过前维持该状态。
+
+
+### 2026-11-13｜角色：ChatGPT｜V2-04A 第九轮架构复审：暂不批准，发现最终安装模式 ACL 权限缺口
+
+**审查基准：**
+- Trae 第九轮修订 commit：`39a38a04fd794c37b9243dd9e59732beaf1c0a9a`。
+- 分支：`feat/zhidao-shixun-v2-rebuild`；复审时分支 HEAD 与该 commit 一致（compare status=identical）。
+- 已先读取 `CHATGPT_PROJECT_REASONING_BASIS.md`，再读取最新 `AI_COLLABORATION.md`、`README.md`、第九轮交接记录与风险表；并核对 Microsoft Learn 的 GetSecurityInfo、文件/目录 Access Mask、NtCreateFile 文档。
+- 本轮为文档与 API 契约静态复审；未独立运行 Windows ACL/句柄/ctypes 测试。Trae 报告的 238 passed 属既有基线回归，不等于本轮权限设计通过实测。
+
+**结论：第九轮修复了第八轮提出的主要矛盾，但仍不批准 V2-04A；V2-04B 继续禁止启动。**
+
+**已认可的修订：**
+1. 文件句柄 `0x00120081` 与目录句柄 `0x00120080` 已分离；目录掩码不含 `0x1`，因此不请求 FILE_LIST_DIRECTORY。
+2. 开发模式目录 DACL 通过运行账户 `0x00100080`（FILE_READ_ATTRIBUTES + SYNCHRONIZE）与 OWNER RIGHTS `0x00020000`（READ_CONTROL）组合，说明了目录元数据读取与安全描述符读取的权限来源；按当前“目录 owner=运行账户”的开发模式，掩码组合在设计上可以闭合。
+3. FILE_SHARE_DELETE 的保护对象已按 .env、父目录对象和未打开子项分层，不再宣称目录句柄共享模式保护整棵目录树。
+4. NtCreateFile/ctypes 的 ABI、结构大小、NTSTATUS 转换与失败清理均继续标注【未验证】，并保留不得回退按路径打开的 fail-closed 原则。
+5. N-A49~N-A64 已覆盖掩码混用、目录 ACL、共享模式、RootDirectory、结构体布局及句柄关闭后的竞争；均明确为设计未运行。
+
+**阻塞项 1：最终安装模式下目录句柄缺少 READ_CONTROL，N-A54 的预期结果不成立。**
+- 第九轮最终安装模式描述：目录 owner=SYSTEM，服务账户目录 ACE 为 `0x00100080`（FILE_READ_ATTRIBUTES + SYNCHRONIZE）；同时说明 OWNER RIGHTS ACE 仅对 owner 生效。
+- 当 owner 是 SYSTEM 时，OWNER RIGHTS `0x00020000` 不会授予服务账户 READ_CONTROL；SYSTEM 的 FILE_ALL_ACCESS 也不会转授给服务账户。
+- 但最终安装模式的 N-A54 预期服务账户能够打开目录句柄并通过 GetSecurityInfo 查询 Owner/DACL。Microsoft GetSecurityInfo 明确要求调用者在打开句柄时已获得 READ_CONTROL，除非调用者本身是对象 owner。当前服务账户既非 owner，目录 ACE 也不含 READ_CONTROL，因此该预期不成立，实际应失败。
+- 必须明确修订最终安装模式目录 ACE：若由服务账户直接执行 GetSecurityInfo，则服务账户 ACE 必须显式包含 READ_CONTROL（并重新核算精确 mask、有效权限及最小权限）；或者改为由受信任组件读取安全描述符并明确句柄/数据传递边界。不得继续把 N-A54 写成成功。
+
+**阻塞项 2：最终安装模式文件 ACE 出现旧掩码 0x00120089，与第九轮批准的文件句柄掩码不一致。**
+- 第九轮已将文件句柄 DesiredAccess 固定为 `0x00120081`。
+- 最终安装模式映射文字仍写“文件模板 `0x00120089` 读 ACE”。该值比 `0x00120081` 多出 `FILE_READ_EA (0x8)`，与当前最小权限模板不一致，疑似遗留第七轮旧值。
+- 必须明确最终安装模式 .env 文件 ACE 的唯一批准 mask，并解释是否确实需要 FILE_READ_EA；如不需要，应统一到最小权限值并同步所有表格、风险项、测试和 README 摘要。不得同时保留两个“唯一模板”。
+
+**需补充澄清（不单独构成批准条件，但必须纳入下一轮）：**
+- 第九轮的开发模式 4-ACE 模板依赖“目录 owner=运行账户”这一前提。请把该前提写成启动时必须验证的硬条件；若 owner 不是运行账户，不得仅凭运行账户 ACE 存在就假定 OWNER RIGHTS 的 READ_CONTROL 已生效。
+- N-A54 应分别覆盖最终安装模式目录句柄打开、GetSecurityInfo、FileId/属性查询，并把权限不足时的预期明确为 fail-closed；若修订 ACL 后改为成功，需分别列出 mock 与 Windows 实机测试。
+- 对最终安装模式 Program Files / ProgramData 的逐级目录链，明确每一级由谁读取 Owner/DACL、服务账户需要哪些最小权限；不能只修直接父目录而让祖先链再次出现 READ_CONTROL 缺口。
+- FILE_READ_ATTRIBUTES、READ_CONTROL、SYNCHRONIZE 的权限需求分别对应具体 API/操作，逐项说明；不要把“元数据读取”作为无法审计的笼统权限标签。
+
+**下一步：第十轮架构修订。** Trae 仅修订 `AI_COLLABORATION.md` 与必要时 `README.md`，修正最终安装模式目录 READ_CONTROL 缺口、文件 ACE 旧 mask、owner 前置条件及 N-A54/N-A65 起的测试设计。不得实现 Docker 执行器、FastAPI 执行 API、Python 运行接口或前端运行按钮；`executor_image_lock.json` 继续 pending/null；不得修改 `main` / `trae-dev`，不得创建或合并 PR，不得合并任何分支。
+
+**复审状态：** V2-04A 暂不批准；V2-04B 禁止启动。第十轮修订并经 ChatGPT 复审通过前维持该状态。
