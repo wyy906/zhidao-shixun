@@ -48,7 +48,9 @@
 │   │   ├── adapters/       # 软件适配器（Python / MySQL / 注册表）
 │   │   └── knowledge/      # 软件教程关键词库
 │   ├── alembic/            # 数据库迁移（目前仅 env.py 占位）
+│   ├── tests/              # pytest 用例（隔离临时数据库）
 │   ├── requirements.txt
+│   ├── requirements-dev.txt
 │   └── .env.example        # 环境变量模板（不含真实密钥）
 ├── frontend/               # Vue 3 网页端
 │   ├── src/
@@ -188,11 +190,38 @@ GET    /api/v1/analytics/overview | /students | /experiments/{id}
 GET    /health
 ```
 
-## 9. 测试现状
+## 9. 测试
 
-- 目前**没有自动化测试套件**（无 pytest / vitest 配置）。
-- `scripts/test_*.py` 是一次性调试脚本，依赖真实屏幕、真实后端与真实模型 Key，不作为回归测试。
-- 已验证：`npx vue-tsc --noEmit` 通过（0 错误）。
+### 9.1 后端 pytest
+
+```powershell
+cd backend
+pip install -r requirements-dev.txt   # 含 pytest
+python -m pytest -q
+```
+
+- 测试位于 `backend/tests/`（`conftest.py`、`test_auth.py`、`test_experiments.py`、
+  `test_progress.py`、`test_report.py`）。
+- **完全隔离**：每个测试使用 `tmp_path` 下独立的临时 SQLite 库，`get_db` 通过
+  `dependency_overrides` 替换；导入 app 之前已把 `DATABASE_URL` 指向一次性临时文件，
+  不会连接、修改或删除真实数据库。
+- 不需要联网、不需要真实 AI Key，也不读取真实 `.env`。
+
+### 9.2 前端
+
+```powershell
+cd frontend
+npm install      # 首次
+npm test         # 执行 vue-tsc 类型检查，返回真实退出码
+npm run type-check  # 等价命令
+```
+
+> 目前前端测试入口只做类型检查，尚未引入 Vitest 组件测试。
+
+### 9.3 测试现状
+
+- 后端：49 项用例，全部通过。
+- 前端：`npm test`（vue-tsc）通过。
 - 详见 [TEST_REPORT.md](TEST_REPORT.md)。
 
 ## 10. 安全说明（重要）

@@ -1,6 +1,20 @@
 # 任务看板
 
-## 当前阶段：阶段 1 — 建立现有项目代码基线（已完成，待验收）
+## 当前阶段：阶段 2 — 最小自动化测试体系（已完成，待验收）
+
+### 阶段 2 任务
+
+- [x] 解决测试数据库隔离（临时 DATABASE_URL + `tmp_path` 独立库 + `dependency_overrides`）。
+  - 证据：实测全局 engine 指向 `%TEMP%/zd_shixun_test_guard_*/guard.db`，每个用例指向 `pytest-of-*/test.db`；
+    仓库内未生成任何 `.db` 文件。
+- [x] 建立 `backend/tests/`：`conftest.py`、`test_auth.py`、`test_experiments.py`、`test_progress.py`、`test_report.py`。
+- [x] 后端 49 项用例全部通过（`pytest -q`）。
+- [x] 前端新增 `npm test`（vue-tsc），实测退出码 0。
+- [x] 修复测试发现的 2 个真实缺陷（D-01 步骤序号越界、D-02 不存在实验写入孤儿进度）。
+- [x] 记录 6 个待决策问题（D-03 ~ D-08，见 `TEST_REPORT.md`）。
+- [x] 更新 `TEST_REPORT.md` / `NEXT_STEPS.md` / `README.md`。
+
+## 阶段 1 — 建立现有项目代码基线（已完成）
 
 ### 阶段 1 任务
 

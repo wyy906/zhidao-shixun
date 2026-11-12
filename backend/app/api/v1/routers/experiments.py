@@ -77,6 +77,16 @@ def import_experiment(data: ExperimentImportIn, db: Session = Depends(get_db)):
     return ExperimentOut.model_validate(exp)
 
 
+def _require_experiment(db: Session, exp_id: int) -> Experiment:
+    """取实验，不存在直接 404（避免为不存在的实验写入进度/报告）"""
+    exp = db.query(Experiment).options(joinedload(Experiment.steps)).filter(
+        Experiment.id == exp_id
+    ).first()
+    if not exp:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "实验不存在")
+    return exp
+
+
 @router.post("/{exp_id}/step")
 def update_step_progress(
     exp_id: int,
@@ -85,6 +95,9 @@ def update_step_progress(
     current_user: User = Depends(get_current_user),
 ):
     """桌面助手回报当前步骤进度"""
+    exp = _require_experiment(db, exp_id)
+    if data.step_index < 0 or data.step_index >= len(exp.steps):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "步骤序号超出范围")
     progress = _get_or_create_progress(db, current_user.id, exp_id)
     progress.current_step = data.step_index
     if data.completed:
@@ -243,6 +256,7 @@ def save_report(
     current_user: User = Depends(get_current_user),
 ):
     """保存报告草稿（自动创建/更新当前用户的报告）"""
+    _require_experiment(db, exp_id)
     progress = _get_or_create_progress(db, current_user.id, exp_id)
     report = db.query(ExperimentReport).filter(
         ExperimentReport.progress_id == progress.id
@@ -263,6 +277,7 @@ def submit_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _require_experiment(db, exp_id)
     progress = _get_or_create_progress(db, current_user.id, exp_id)
     report = db.query(ExperimentReport).filter(
         ExperimentReport.progress_id == progress.id

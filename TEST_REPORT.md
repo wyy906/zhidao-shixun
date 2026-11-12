@@ -184,6 +184,72 @@
 - 结论：**通过（缺陷已修复）**
 - 未覆盖：脚本会安装依赖并长驻前台，未实际执行
 
+## 阶段 2：最小自动化测试体系（2026-11-12）
+
+### 测试环境
+
+| 项 | 值 |
+|---|---|
+| Python | 3.13.14 |
+| pytest | 8.3.4 |
+| FastAPI | 0.115.6 |
+| SQLAlchemy | 2.0.36 |
+| httpx | 0.28.1 |
+| 前端 | TypeScript 5.9.3 + vue-tsc 2.2.12 |
+| 网络 | **不需要**（无外部调用） |
+| AI Key | **不需要**（不触发任何 AI 接口） |
+
+### 数据库隔离验证（实测）
+
+三层隔离同时生效：
+
+1. `conftest.py` 在**导入 app 之前**设置 `DATABASE_URL` 指向一次性临时文件；
+2. 每个测试用 `tmp_path` 新建独立 SQLite；
+3. `app.dependency_overrides[get_db]` 替换为测试会话。
+
+实测连接路径：
+
+```
+[隔离检查] 全局 engine 实际连接: sqlite:///C:/Users/wyy/AppData/Local/Temp/zd_shixun_test_guard_audmw42g/guard.db
+[隔离检查] 本次测试库连接: sqlite:///C:/Users/wyy/AppData/Local/Temp/pytest-of-wyy/pytest-2/.../test.db
+```
+
+- 仓库内 `Get-ChildItem -Recurse -Filter *.db` 结果为空，**未生成/修改任何真实数据库**。
+- `TestClient` 未使用 `with`，不触发 lifespan 的建表与建管理员逻辑。
+
+### 用例统计与结果
+
+| 文件 | 用例数 | 通过 | 失败 |
+|---|---|---|---|
+| `tests/test_auth.py` | 12 | 12 | 0 |
+| `tests/test_experiments.py` | 16 | 16 | 0 |
+| `tests/test_progress.py` | 11 | 11 | 0 |
+| `tests/test_report.py` | 10 | 10 | 0 |
+| **合计** | **49** | **49** | **0** |
+
+```
+python -m pytest -q   →   49 passed, 232 warnings in 36.96s
+npm test              →   exit 0
+```
+
+> 232 条 warning 全部是 `datetime.utcnow()` 的 DeprecationWarning（见 D-08），不影响结果。
+
+### 测试发现的缺陷
+
+| 编号 | 缺陷 | 位置 | 处理 |
+|---|---|---|---|
+| D-01 | `POST /experiments/{id}/step` 不校验步骤序号范围，`step_index=999` 或 `-1` 都会被接受并写入 `completed_steps` | `experiments.py` `update_step_progress` | **已修复**：超出 `0..len(steps)-1` 返回 400，并补回归用例 |
+| D-02 | 对**不存在**的实验调用 `/step`、`PUT /report`、`POST /report/submit` 会创建指向不存在实验的孤儿进度行 | `experiments.py` `_get_or_create_progress` 调用点 | **已修复**：先查实验，不存在返回 404，并补回归用例 |
+| D-03 | `overwrite=False` 时同标题实验可重复导入，产生多个同名实验 | `experiments.py` `import_experiment` | **已记录**（业务规则，需负责人确认是否应拒绝） |
+| D-04 | 没有教师查看/批阅学生报告的接口，`GET /{id}/report` 只返回当前登录者自己的报告 | `experiments.py` 报告接口 | **已记录**（需新增功能，本轮不实现） |
+| D-05 | 报告存在但六个字段全为空时，`POST /report/submit` 仍可提交成功 | `experiments.py` `submit_report` | **已记录**（业务规则，需确认「空报告」定义） |
+| D-06 | `GET /experiments/{id}` 与 `GET /experiments/{id}/steps` **无鉴权**，未登录即可读取实验内容 | `experiments.py` | **已记录**（涉及权限策略，需负责人确认） |
+| D-07 | 覆盖导入会删除同标题旧实验，连带删除学生已有进度、报告与操作记录（数据不可恢复） | `experiments.py` `import_experiment` | **已记录**（产品行为，需确认是否应改为「保留进度」） |
+| D-08 | 全量使用 `datetime.utcnow()`，触发 DeprecationWarning，未来版本将移除 | 多个 router | **已记录**，不影响当前功能 |
+
+> 未通过删除断言、放宽预期或跳过用例来制造全绿：首轮运行是 `3 failed, 46 passed`，
+> 修复 D-01、D-02 后复跑才达到 `49 passed`。
+
 ## 本机环境限制（影响复现）
 
 - 全局 Git 配置存在 `url.https://ghfast.top/https://github.com/.insteadOf=https://github.com/`，
