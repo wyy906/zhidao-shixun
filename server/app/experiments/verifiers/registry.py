@@ -12,6 +12,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
 from typing import Any
 
 from zhidao_contracts import VerifyOutcome, VerifyResult
@@ -146,7 +147,7 @@ def _validate_reserved_mysql_params(allowed_keys: set[str]) -> Callable[[Mapping
 
 # ---------- 白名单注册表（冻结；实验文件不可扩展） ----------
 
-VERIFIER_REGISTRY: Mapping[str, VerifierSpec] = {
+VERIFIER_REGISTRY: Mapping[str, VerifierSpec] = MappingProxyType({
     "python_exit_code_zero": VerifierSpec(
         verifier_type="python_exit_code_zero",
         environments=frozenset({"python_web"}),
@@ -179,7 +180,10 @@ VERIFIER_REGISTRY: Mapping[str, VerifierSpec] = {
         evaluate=None,
         description="（预留，V2-06 实现）数据库表状态满足条件；当前仅支持结构表达，拒绝执行",
     ),
-}
+})
+
+# 白名单是只读映射（MappingProxyType）：运行期赋值/删除会抛 TypeError；
+# 实验 JSON 更不可能扩展它。测试需要注入异常求值时，应替换模块属性而非修改注册表本身。
 
 
 def get_spec(verifier_type: str) -> VerifierSpec | None:

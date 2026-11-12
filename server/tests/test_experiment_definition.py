@@ -81,7 +81,74 @@ def test_unknown_schema_version_rejected() -> None:
         load_experiment_dict(data)
     message = str(excinfo.value)
     assert "schema_version" in message
-    assert "1.0" in message
+    assert "1.1" in message
+
+
+def test_old_schema_version_1_0_rejected_with_upgrade_hint() -> None:
+    """1.0 → 1.1 后，旧版本文件必须得到明确升级提示，不得尽力解析。"""
+    data = deep_copy(make_valid_experiment())
+    data["schema_version"] = "1.0"
+    with pytest.raises(ExperimentValidationError) as excinfo:
+        load_experiment_dict(data)
+    message = str(excinfo.value)
+    assert "schema_version" in message
+    assert "1.1" in message
+
+
+# ---------- 问题 4：preconditions 字段（操作前置条件，独立于 depends_on） ----------
+
+
+def test_preconditions_roundtrip() -> None:
+    data = deep_copy(make_valid_experiment())
+    data["steps"][0]["preconditions"] = ["已启动本地 MySQL 服务", "示例数据库已导入"]
+    definition = load_experiment_dict(data)
+    assert definition.steps[0].preconditions == ["已启动本地 MySQL 服务", "示例数据库已导入"]
+    # preconditions 不参与依赖计算：depends_on 仍为空
+    assert definition.steps[0].depends_on == []
+
+
+def test_preconditions_optional_by_default() -> None:
+    data = deep_copy(make_valid_experiment())
+    del data["steps"][0]["preconditions"]  # 1.1 中为可选字段
+    definition = load_experiment_dict(data)
+    assert definition.steps[0].preconditions == []
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        ["x" * 301],  # 单项超长（>300）
+        [""],  # 空字符串
+        [123],  # 非字符串
+    ],
+)
+def test_preconditions_invalid_items_rejected(bad_value) -> None:
+    data = deep_copy(make_valid_experiment())
+    data["steps"][0]["preconditions"] = bad_value
+    with pytest.raises(ExperimentValidationError):
+        load_experiment_dict(data)
+
+
+def test_preconditions_over_item_limit_rejected() -> None:
+    data = deep_copy(make_valid_experiment())
+    data["steps"][0]["preconditions"] = [f"条件{i}" for i in range(11)]  # maxItems 10
+    with pytest.raises(ExperimentValidationError):
+        load_experiment_dict(data)
+
+
+def test_preconditions_mirrors_between_schema_and_model() -> None:
+    """镜像一致性：同一份非法数据在 Schema 门与模型门都被拒绝（两道门约束一致）。"""
+    import json as _json
+
+    import jsonschema as _jsonschema
+
+    data = deep_copy(make_valid_experiment())
+    data["steps"][0]["preconditions"] = ["x" * 301]
+    with pytest.raises(ExperimentValidationError):
+        load_experiment_dict(data)  # loader 任意一道门拒绝即通过
+    schema = _json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))
+    errors = list(_jsonschema.validators.validator_for(schema)(schema).iter_errors(data))
+    assert any("preconditions" in str(list(e.absolute_path)) for e in errors)
 
 
 def test_overlong_input_rejected() -> None:

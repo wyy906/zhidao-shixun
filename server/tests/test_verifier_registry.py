@@ -90,7 +90,12 @@ def test_type_mismatch_between_verifier_and_environment() -> None:
 
 
 def test_evaluator_exception_becomes_uncertain(monkeypatch) -> None:
+    """求值异常 fail-closed。注入方式：替换模块属性指向的注册表（只读映射本身不可修改）。"""
     import dataclasses
+
+    from types import MappingProxyType
+
+    import app.experiments.verifiers.registry as registry_module
 
     spec = get_spec("python_stdout_contains")
     assert spec is not None
@@ -99,10 +104,19 @@ def test_evaluator_exception_becomes_uncertain(monkeypatch) -> None:
         raise RuntimeError("boom")
 
     broken_spec = dataclasses.replace(spec, evaluate=boom)
-    monkeypatch.setitem(VERIFIER_REGISTRY, "python_stdout_contains", broken_spec)
+    patched = MappingProxyType({**registry_module.VERIFIER_REGISTRY, "python_stdout_contains": broken_spec})
+    monkeypatch.setattr(registry_module, "VERIFIER_REGISTRY", patched)
     result = evaluate_verifier("python_stdout_contains", {"text": "x"}, {"stdout": "x"}, step_id="s")
     assert result.outcome is VerifyOutcome.UNCERTAIN
     assert "求值异常" in result.feedback
+
+
+def test_registry_is_readonly_mapping() -> None:
+    """白名单对外暴露只读映射：运行期赋值/删除抛 TypeError（审查建议修复）。"""
+    with pytest.raises(TypeError):
+        VERIFIER_REGISTRY["evil_type"] = get_spec("python_exit_code_zero")  # type: ignore[index]
+    with pytest.raises(TypeError):
+        del VERIFIER_REGISTRY["python_exit_code_zero"]  # type: ignore[attr-defined]
 
 
 def test_experiment_json_cannot_inject_new_verifier_type() -> None:

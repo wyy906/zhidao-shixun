@@ -280,7 +280,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
-| V2-03 | 实验任务与步骤数据模型 | 待审查 | Schema 1.0、四道门加载校验、验证器白名单注册表、依赖环检测、状态机规则、56 个新测试 | Trae |
+| V2-03 | 实验任务与步骤数据模型 | 待审查（首轮审查问题已修复，等待复审） | Schema 1.1、四道门加载校验、验证器白名单只读注册表、依赖环检测、状态机（终态保护/受保护入口）、103 项测试 | Trae |
 | V2-04 | Python网页实验闭环 | 未开始 | 编辑、Docker隔离运行、验证、步骤推进；禁止宿主机直接执行不可信代码 | Trae |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
@@ -294,6 +294,50 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜Trae：V2-03 首轮审查四个阻断问题全部修复，103 项测试通过
+
+**本次目标：**
+- 仅修复 ChatGPT 对 V2-03（be04c96）首轮代码审查提出的 4 个阻断问题 + 1 个建议改进；不开发 V2-04，不改 main / trae-dev。
+
+**逐项修复情况：**
+
+1. **终态保护（阻断项 1）**：`apply_skip_propagation` 现在拒绝把已 PASSED 的目标步骤改为 SKIPPED、拒绝重复跳过已 SKIPPED 的目标（抛 IllegalTransition，消息含"终态"）；不再有静默覆盖。新增测试 `test_skip_propagation_refuses_passed_target` / `test_skip_propagation_refuses_already_skipped_target`，两种情况均断言原快照未被破坏。
+2. **传播不绕过状态机（阻断项 2）**：`apply_skip_propagation` 重写——(a) 快照完整性校验（键集必须与实验定义完全一致、值必须是 StepStatus 成员，否则抛 InvalidStateSnapshot）；(b) 全部下游修改经 `transition()` 状态机执行；为支持依赖失效语义，转换表新增 pending→blocked、failed→blocked（扩展而非削弱：原先非法的 in_progress→blocked 仍非法并有测试）；(c) 原子性——先全量校验再写入，任何下游非法（如 in_progress 无法合法置为 blocked）整体拒绝，不产生部分修改。新增测试：缺/多键快照、非枚举值、in_progress 下游原子拒绝、passed 下游保留且更下游仍被阻塞、pending/failed/blocked 下游经状态机转换。
+3. **受保护操作入口（阻断项 3）**：新增领域函数 `refresh_ready_steps(definition, states)` 与 `start_step(definition, states, step_id)`（均校验完整快照 + 实验定义）：
+   - `refresh_ready_steps` 只解除"BLOCKED 且依赖全部 PASSED"的步骤（经 blocked→pending）；
+   - `start_step` 是 pending→in_progress 的唯一合法途径：依赖为 skipped/failed/pending/blocked 一律抛 DependencyNotSatisfied（列出未满足项及状态）；BLOCKED + 依赖全 passed 时先解除再开始（两步均经状态机）；
+   - 新增测试证明依赖不满足的四类状态均不放行、未知步骤/坏快照拒绝、blocked 经入口解除开始、组合流（start→pass→refresh→start→fail→下游不可开始）。transition 保留为内部原语并在 docstring 标明引擎必须使用受保护入口。
+4. **preconditions 字段（阻断项 4）**：步骤新增独立可选字段 `preconditions`（操作前置条件，1..10 项、每项 1..300 字符），与 `depends_on`（步骤间依赖）严格分离，Schema description 明确说明二者区别。**按 Schema 既有版本策略（新增可选字段升次版本）将 schema_version 1.0 → 1.1**：$id、const、版本策略注释同步更新；Pydantic 模型同步（field_validator 逐项校验，同时收紧 common_errors/recovery_hints 的逐项约束与 Schema 一致）；测试夹具同步；加载器只接受 1.1，1.0 文件得到明确升级提示（新增测试）。镜像一致性测试：同一非法数据在 Schema 门与模型门均被拒。
+5. **建议改进（registry 只读）**：`VERIFIER_REGISTRY` 改为 `MappingProxyType` 只读映射，运行期赋值/删除抛 TypeError（新增测试 `test_registry_is_readonly_mapping`）；异常求值测试改为替换模块属性指向的注册表快照（不修改只读映射本身）。未引入其他复杂架构。
+
+**对原有测试的调整说明（无删除）：**
+- 原有 76 项测试全部保留并通过；仅两处断言随规则扩展而调整：(a) 转换表新增 pending→blocked、failed→blocked（依赖失效传播需要），原 illegal 列表中的 pending→blocked 移入 legal 列表并说明；(b) illegal 列表新增 in_progress→blocked。测试总数 76 → 103（新增 27 项）。
+
+**修改文件：**
+- server/app/experiments/state_machine.py（重写：终态保护、快照校验、原子传播、refresh_ready_steps/start_step、新异常 IllegalTransition/InvalidStateSnapshot/DependencyNotSatisfied）
+- experiments/schema/experiment_definition.schema.json（1.1 + preconditions）
+- server/app/experiments/schema_version.py（1.1）、models.py（preconditions + 逐项校验器）
+- server/app/experiments/verifiers/registry.py（MappingProxyType）
+- server/tests/：helpers_experiment.py、test_step_state_machine.py、test_experiment_definition.py、test_verifier_registry.py 更新与新增测试
+- 本文件（看板、交接、决策）与 README.md 未改（README 无需变化：schema 版本细节在 experiments/README 中，见下）
+
+**验证命令与结果（本机 Windows 实测）：**
+- `.venv\Scripts\python.exe -m pytest -q` → **103 passed**，0 failed，0 skipped（0.53s；1 个既有 StarletteDeprecationWarning 与本修复无关）。
+- 未跳过任何测试，未删除任何原有测试。
+
+**未解决 / 待确认：**
+- 版本策略执行：preconditions 采用可选字段 + 次版本升级（1.0→1.1）而非必填；如 ChatGPT 认为"前置条件"必须强制填写（必填字段 → 主版本 2.0），请复审时指出，改动集中在 Schema const、夹具与文档，成本很小。
+- 未知版本一律明确拒绝（当前只支持 1.1）；是否需要同时接受 1.0（无 preconditions 时语义等价）由 ChatGPT 复审定夺。
+
+**需要对方处理或确认：**
+- ChatGPT 按新 commit 复审 V2-03（看板保持"待审查（首轮审查问题已修复，等待复审）"，未标记通过）。
+
+**下一步：**
+- 等待 ChatGPT 复审；复审通过前不启动 V2-04。
+
+**关联提交：**
+- 修复 commit：见本文件同批次推送 SHA（git log 顶部）。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-03 首轮代码审查：暂不通过，要求修复
 
@@ -569,6 +613,8 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | 2026-11-12 | .ps1 脚本一律 ASCII 英文注释 | PowerShell 5.1 在 GBK 代码页读 UTF-8 无 BOM 脚本时中文注释破坏解析（已实测复现） |
 | 2026-11-12 | V2-03 不向 contracts/ 新增实验模型 | 实验定义是 server 域内数据，未跨端传输；API 暴露时再入契约并升版本；contracts 保持 0.1.0 无兼容性变化 |
 | 2026-11-12 | 验证器 reserved 类型"可加载、拒执行" | mysql_* 结构可表达（满足双环境表达要求），求值一律 fail-closed 返回 uncertain，不伪装通过 |
+| 2026-11-12 | preconditions 为可选字段，schema_version 1.0→1.1 | 按既有版本策略（新增可选字段升次版本）；与 depends_on 严格分离；是否改必填由 ChatGPT 复审决定 |
+| 2026-11-12 | VERIFIER_REGISTRY 使用 MappingProxyType 只读映射 | 落实"冻结注册表"承诺；测试注入改用模块属性替换，不修改只读映射 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 

@@ -9,9 +9,17 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 VALID_ENVIRONMENTS: tuple[str, ...] = ("python_web", "mysql_workbench")
+
+
+def _validate_conditional_text_list(value: list[str]) -> list[str]:
+    """条件描述列表逐项校验：1..300 字符（与 Schema 的 item minLength/maxLength 镜像）。"""
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not (1 <= len(item) <= 300):
+            raise ValueError(f"第 {index} 项必须是 1..300 字符的字符串")
+    return value
 
 
 class VerifierDef(BaseModel):
@@ -52,9 +60,19 @@ class StepDefinition(BaseModel):
     expected_state: ExpectedState
     verifier: VerifierDef
     depends_on: list[str] = Field(default_factory=list, max_length=10)
+    preconditions: list[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="操作前置条件（本步骤自身的条件），与 depends_on（步骤间依赖）相互独立",
+    )
     common_errors: list[str] = Field(default_factory=list, max_length=10)
     recovery_hints: list[str] = Field(default_factory=list, max_length=10)
     guide_hint: int = Field(ge=1, le=4)
+
+    @field_validator("preconditions", "common_errors", "recovery_hints")
+    @classmethod
+    def _check_text_items(cls, value: list[str]) -> list[str]:
+        return _validate_conditional_text_list(value)
 
 
 class AdapterSpec(BaseModel):

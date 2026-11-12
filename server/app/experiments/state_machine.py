@@ -1,23 +1,30 @@
 """步骤状态转换规则（纯函数领域规则，V2-07 前不涉及 AI）。
 
-规则（AI_COLLABORATION.md §7 V2-03 第 4 条）：
+规则（AI_COLLABORATION.md §7 V2-03 第 4 条 + 首轮审查修复）：
 - 合法转换表见 TRANSITIONS；passed 与 skipped 是终态，不可再转换。
 - 进入 passed / failed 必须携带对应的验证结果；uncertain 永不推进步骤。
 - 禁止通过直接改状态文本把步骤标记为 passed——本模块是唯一合法入口，且强制验证结果驱动。
 - 依赖未通过的步骤初始即为 blocked；依赖只有全部 passed 才能开始（skipped 的依赖不视为通过）。
 - skipped 的步骤会阻塞其全部直接/间接下游（不能自动视为通过）。
+- 引擎必须使用本模块的受保护操作入口（start_step / refresh_ready_steps /
+  apply_skip_propagation），不得绕过它们直接改状态字典；transition 是内部原语。
+- 所有入口对状态快照做完整性校验：键集必须与实验定义完全一致、值必须是 StepStatus
+  成员；非法快照一律拒绝（fail-closed），绝不静默修正。
+- 传播操作是原子的：任何下游状态转换非法时整体拒绝，不产生部分修改。
 """
 
 from zhidao_contracts import StepStatus, VerifyOutcome
 
 from app.experiments.models import ExperimentDefinition, StepDefinition
 
-# 当前状态 → 允许的目标状态集合（纯状态机层面；passed/failed 另需验证结果佐证）
+# 当前状态 → 允许的目标状态集合（纯状态机层面；passed/failed 另需验证结果佐证）。
+# pending/failed → blocked 用于依赖失效传播（apply_skip_propagation），
+# 必须经 transition() 执行，不允许直接改状态字典绕过。
 TRANSITIONS: dict[StepStatus, frozenset[StepStatus]] = {
-    StepStatus.PENDING: frozenset({StepStatus.IN_PROGRESS, StepStatus.SKIPPED}),
+    StepStatus.PENDING: frozenset({StepStatus.IN_PROGRESS, StepStatus.SKIPPED, StepStatus.BLOCKED}),
     StepStatus.BLOCKED: frozenset({StepStatus.PENDING, StepStatus.SKIPPED}),
     StepStatus.IN_PROGRESS: frozenset({StepStatus.PASSED, StepStatus.FAILED, StepStatus.SKIPPED}),
-    StepStatus.FAILED: frozenset({StepStatus.IN_PROGRESS, StepStatus.SKIPPED}),
+    StepStatus.FAILED: frozenset({StepStatus.IN_PROGRESS, StepStatus.SKIPPED, StepStatus.BLOCKED}),
     StepStatus.PASSED: frozenset(),  # 终态
     StepStatus.SKIPPED: frozenset(),  # 终态
 }
@@ -33,6 +40,37 @@ class IllegalTransition(Exception):
         self.reason = reason
 
 
+class InvalidStateSnapshot(Exception):
+    """状态快照与实验定义不一致（键集不匹配或值非法）。拒绝处理，不静默修正。"""
+
+
+class DependencyNotSatisfied(Exception):
+    """受保护入口的依赖检查未通过。"""
+
+    def __init__(self, step_id: str, unmet: list[str], unmet_states: dict[str, str]):
+        detail = "、".join(f"{dep}={unmet_states[dep]}" for dep in unmet)
+        super().__init__(f"步骤 {step_id} 的依赖未全部通过：{detail}")
+        self.step_id = step_id
+        self.unmet = unmet
+        self.unmet_states = unmet_states
+
+
+def _validate_snapshot(definition: ExperimentDefinition, states: dict[str, StepStatus]) -> None:
+    """快照完整性校验：键集必须与实验定义完全一致，值必须是 StepStatus 成员。"""
+    expected_ids = set(definition.step_map)
+    actual_ids = set(states)
+    if actual_ids != expected_ids:
+        missing = sorted(expected_ids - actual_ids)
+        extra = sorted(actual_ids - expected_ids)
+        raise InvalidStateSnapshot(
+            f"状态快照与实验定义 {definition.experiment_id} 不一致"
+            f"（缺少：{missing or '无'}；多余：{extra or '无'}）"
+        )
+    bad_values = [key for key, value in states.items() if not isinstance(value, StepStatus)]
+    if bad_values:
+        raise InvalidStateSnapshot(f"状态快照包含非法状态值：{sorted(bad_values)}")
+
+
 def can_transition(current: StepStatus, target: StepStatus) -> bool:
     """纯状态机层面是否允许（不含验证结果要求）。"""
     return target in TRANSITIONS[current]
@@ -44,7 +82,7 @@ def transition(
     *,
     verify_outcome: VerifyOutcome | None = None,
 ) -> StepStatus:
-    """执行状态转换；非法时抛 IllegalTransition。
+    """执行状态转换；非法时抛 IllegalTransition。内部原语，引擎应使用受保护入口。
 
     - target 为 passed：必须 verify_outcome == passed；
     - target 为 failed：必须 verify_outcome == failed；
@@ -75,6 +113,59 @@ def can_start(step: StepDefinition, states: dict[str, StepStatus]) -> bool:
     return all(states.get(dep) is StepStatus.PASSED for dep in step.depends_on)
 
 
+def refresh_ready_steps(
+    definition: ExperimentDefinition,
+    states: dict[str, StepStatus],
+) -> dict[str, StepStatus]:
+    """受保护入口：解除已就绪的 BLOCKED 步骤。
+
+    仅当步骤当前为 BLOCKED 且其全部依赖均为 PASSED 时，经状态机（blocked→pending）
+    解除为 PENDING。依赖为 skipped/failed/pending/blocked 的步骤不放行。
+    非法快照整体拒绝；返回新字典，不修改入参。
+    """
+    _validate_snapshot(definition, states)
+    new_states = dict(states)
+    for step in definition.steps:
+        if new_states[step.step_id] is StepStatus.BLOCKED and can_start(step, new_states):
+            new_states[step.step_id] = transition(
+                new_states[step.step_id], StepStatus.PENDING
+            )
+    return new_states
+
+
+def start_step(
+    definition: ExperimentDefinition,
+    states: dict[str, StepStatus],
+    step_id: str,
+) -> dict[str, StepStatus]:
+    """受保护入口：开始执行一个步骤（唯一的 pending→in_progress 合法途径）。
+
+    - 校验快照完整性（非法快照拒绝）；
+    - 步骤必须存在于实验定义中；
+    - BLOCKED 步骤：依赖全部 PASSED 时先解除（blocked→pending）再开始，两步均经状态机；
+    - 任何依赖为 skipped/failed/pending/blocked：拒绝并指出未满足项；
+    - 返回新状态字典，不修改入参。
+    """
+    _validate_snapshot(definition, states)
+    if step_id not in definition.step_map:
+        raise InvalidStateSnapshot(f"步骤 {step_id} 不在实验 {definition.experiment_id} 中")
+
+    step = definition.get_step(step_id)
+    current = states[step_id]
+    unmet = [dep for dep in step.depends_on if states[dep] is not StepStatus.PASSED]
+    if unmet:
+        raise DependencyNotSatisfied(
+            step_id, unmet, {dep: states[dep].value for dep in unmet}
+        )
+
+    new_states = dict(states)
+    if current is StepStatus.BLOCKED:
+        new_states[step_id] = transition(current, StepStatus.PENDING)
+        current = new_states[step_id]
+    new_states[step_id] = transition(current, StepStatus.IN_PROGRESS)
+    return new_states
+
+
 def dependents_of(definition: ExperimentDefinition, step_id: str) -> list[str]:
     """直接依赖 step_id 的步骤（即 step_id 的下游一步）。"""
     return [step.step_id for step in definition.steps if step_id in step.depends_on]
@@ -85,23 +176,52 @@ def apply_skip_propagation(
     states: dict[str, StepStatus],
     skipped_step_id: str,
 ) -> dict[str, StepStatus]:
-    """将 skipped_step_id 置为 skipped，并把它全部直接/间接下游中「未到达终态」的步骤置为 blocked。
+    """受保护入口：跳过一个步骤并传播依赖失效。
 
-    规则：跳过不等于通过——下游不会自动 passed。已是终态（passed/skipped）的步骤不受影响。
-    返回新的状态字典（不修改入参）。
+    规则：
+    - 目标步骤已处于终态（passed/skipped）→ 拒绝（终态不可再转换，不可重复跳过）；
+    - 快照非法 → 整体拒绝；
+    - 直接/间接下游中未到达终态的步骤经状态机（pending/blocked/failed→blocked）置为
+      blocked；处于 in_progress 的下游无法合法置为 blocked → 整体拒绝（原子性，
+      不产生部分修改）；已是终态（passed/skipped）的下游不受影响、不被破坏；
+    - 跳过不等于通过：下游永远不会因跳过而自动 passed。
+    返回新状态字典（不修改入参）。
     """
-    new_states = dict(states)
-    new_states[skipped_step_id] = StepStatus.SKIPPED
+    _validate_snapshot(definition, states)
+    current = states.get(skipped_step_id)
+    if current is None:
+        raise InvalidStateSnapshot(f"步骤 {skipped_step_id} 不在实验 {definition.experiment_id} 中")
+    if current in (StepStatus.PASSED, StepStatus.SKIPPED):
+        raise IllegalTransition(
+            current, StepStatus.SKIPPED, "终态步骤不能再被跳过（passed/skipped 均为终态）"
+        )
 
-    pending_block = [skipped_step_id]
-    blocked: set[str] = set()
-    while pending_block:
-        current = pending_block.pop()
-        for dependent in dependents_of(definition, current):
-            if new_states.get(dependent) not in (StepStatus.PASSED, StepStatus.SKIPPED):
-                if dependent not in blocked:
-                    blocked.add(dependent)
-                    pending_block.append(dependent)
-    for step_id in blocked:
-        new_states[step_id] = StepStatus.BLOCKED
+    # 先计算全部需要置为 blocked 的下游，再统一应用（原子性：先全部校验，无异常才写入）
+    new_states = dict(states)
+    new_states[skipped_step_id] = transition(current, StepStatus.SKIPPED)
+
+    pending_visit = [skipped_step_id]
+    visited: set[str] = set()
+    to_block: list[str] = []
+    while pending_visit:
+        node = pending_visit.pop()
+        for dependent in dependents_of(definition, node):
+            if dependent in visited:
+                continue
+            visited.add(dependent)
+            dependent_state = new_states[dependent]
+            if dependent_state is StepStatus.IN_PROGRESS:
+                raise IllegalTransition(
+                    dependent_state,
+                    StepStatus.BLOCKED,
+                    f"下游步骤 {dependent} 正在执行，不能被依赖失效传播改为 blocked；"
+                    "请先完成、失败或跳过该步骤后重试",
+                )
+            pending_visit.append(dependent)
+            if dependent_state not in (StepStatus.PASSED, StepStatus.SKIPPED):
+                to_block.append(dependent)
+
+    for step_id in to_block:
+        if new_states[step_id] is not StepStatus.BLOCKED:
+            new_states[step_id] = transition(new_states[step_id], StepStatus.BLOCKED)
     return new_states

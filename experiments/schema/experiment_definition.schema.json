@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://zhidao-shixun.example/schemas/experiment-definition-1.0.json",
+  "$id": "https://zhidao-shixun.example/schemas/experiment-definition-1.1.json",
   "title": "智导实训实验定义",
-  "description": "实验定义规范 schema_version=1.0。版本策略：破坏性变更（删字段/改类型/收紧约束）升主版本（1.x→2.0）；新增可选字段升次版本（1.0→1.1）。加载器只接受其支持的版本；Python 端常量与校验见 server/app/experiments。",
+  "description": "实验定义规范 schema_version=1.1。版本策略：破坏性变更（删字段/改类型/收紧约束）升主版本（1.x→2.0）；新增可选字段升次版本（1.0→1.1）。1.0→1.1（2026-11-12）：新增步骤级可选字段 preconditions（操作前置条件），与 depends_on（步骤间依赖）相互独立。加载器只接受其支持的版本；Python 端常量与校验见 server/app/experiments。",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +19,7 @@
     "meta"
   ],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "const": "1.1" },
     "experiment_id": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9_-]{2,63}$",
@@ -161,7 +161,13 @@
           "maxItems": 10,
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
-          "description": "前置步骤 ID 列表；必须存在且不得成环（加载器语义校验）"
+          "description": "前置步骤 ID 列表；必须存在且不得成环（加载器语义校验）。仅表达步骤之间的依赖关系"
+        },
+        "preconditions": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "description": "操作前置条件：学生开始本步骤前必须满足的条件（环境就绪、文件存在、工具打开等）。与 depends_on 相互独立：depends_on 表达步骤间依赖，preconditions 描述本步骤自身的操作前置条件"
         },
         "common_errors": {
           "type": "array",

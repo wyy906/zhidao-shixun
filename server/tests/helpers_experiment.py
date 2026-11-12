@@ -16,6 +16,7 @@ def make_step(step_id: str = "s1", **overrides: Any) -> dict[str, Any]:
         },
         "verifier": {"type": "python_exit_code_zero", "params": {}},
         "depends_on": [],
+        "preconditions": ["代码编辑器已打开"],
         "common_errors": ["常见错误示例"],
         "recovery_hints": ["恢复建议示例"],
         "guide_hint": 1,
@@ -27,7 +28,7 @@ def make_step(step_id: str = "s1", **overrides: Any) -> dict[str, Any]:
 def make_valid_experiment(**overrides: Any) -> dict[str, Any]:
     """两个步骤的 python_web 实验：s1 ← s2（s2 依赖 s1）。"""
     data: dict[str, Any] = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "experiment_id": "py-web-demo",
         "title": "Python 网页实验（测试用）",
         "description": "用于单元测试的最小合法实验定义，不是正式实验内容",
