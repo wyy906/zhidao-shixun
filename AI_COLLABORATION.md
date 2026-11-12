@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十轮架构修订已提交：修复第九轮复审两项阻塞——①最终安装模式目录 READ_CONTROL 缺口：服务账户 ACE 由 0x00100080 改为 0x00120080（READ_CONTROL 显式，不依赖 owner 路径），N-A54 修正为成功前提成立、失败分支 N-A65；②文件 ACE 统一：FILE_READ_EA(0x8) 核对为不需要，最终模式 .env ACE 由历史 0x00120089 统一为 0x00120081，全文现行唯一文件模板=文件句柄掩码=有效权限；③Owner 硬前置：开发模式目录/文件 owner=运行账户、最终模式均=SYSTEM，启动时句柄上 Owner 硬检查 fail-closed，明确 OWNER RIGHTS 只作用于 owner；④最终安装五级目录逐级分析（Program Files 根/程序目录/ProgramData 根/受信任根+config/.env），每级明确 owner/DACL/服务账户有效权限/核验者/权限位；N-A65~N-A78；全部标注【未验证】；待 ChatGPT 第十轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十一轮架构修订已提交：Access Token 组 SID 有效权限闭环——①修订 1 完整令牌权限模型：访问检查按用户+组 SID 及 Attributes 计算，SE_GROUP_ENABLED 参与 Allow、deny-only 仅匹配 Deny ACE（Microsoft Learn 原文核对）；②修订 2 开发模式重核算场景 A-E，选方案 B：管理员提升令牌经 Administrators ACE 获 FILE_ALL_ACCESS → 允许运行但保护声明降级+审计，意外来源超限拒绝，标准/过滤令牌下批准声明成立；③修订 3 最终模式令牌硬条件（无 enabled Administrators/无受限 SID/SeChangeNotifyPrivilege enabled/AccessCheck==批准掩码/无备份还原特权），安装时+运行时双时点检查；④修订 4 双层启动校验：静态 DACL 模板比对 + 动态 AccessCheck(MAXIMUM_ALLOWED) granted 掩码比对，拒绝 GetEffectiveRightsFromAcl/CheckTokenMembership 作完整计算器；⑤修订 5 撤销第十轮"有效权限=批准掩码"无条件声明（条件化为 DACL 授权面），R-4B-7 细分六类主体、新增 R-4B-9；⑥修订 6 SeChangeNotifyPrivilege 列为运行环境硬前置；N-A79~N-A92；全部标注【未验证】；待 ChatGPT 第十一轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1181,6 +1181,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-12 | C-5 审计日志：最小化本地文件日志，仅元数据（request_id/会话 ID/时长/退出状态/清理状态），不记录代码、令牌、完整输出 | 采纳 |
 | 2026-11-12 | V2-04A 第三轮修订：镜像信任锚改为版本化锁定清单（executor_image_lock.json，批准前 digest=null、fail-closed，按 digest 拉取并核对，tag 仅参考）；清扫改为 API 层双标签过滤（zhidao-exec-managed=true + instance），running 容器绝不清扫，禁 prune；生命周期锁改 Windows 命名 Mutex（WAIT_ABANDONED 语义），废弃 O_EXCL；attach 协议明确化（tty=False/open_stdin=True、stdin 原始无帧头、输出 8 字节帧解复用，V2-04B 先协议探针再实现）；令牌 .env 显式 icacls ACL + 启动自检 fail-closed | 采纳 ChatGPT 第二轮复审三项阻塞项与附带建议，无降低 |
 | 2026-11-13 | V2-04A 第十轮修订：现行唯一权限模板定版——文件句柄/文件 ACE 统一 `0x00120081`（FILE_READ_EA 核对为不需要，撤销历史 0x00120089）；最终安装模式目录服务账户 ACE 显式含 READ_CONTROL（`0x00120080`，修复第九轮 0x00100080 缺口，GetSecurityInfo 才可运行）；两模式 DACL 同构 4 ACE，最终模式全部受控对象 owner=SYSTEM；Owner 一致性为启动硬检查（fail-closed）；最终安装五级目录逐级权限表 | 采纳 ChatGPT 第九轮复审两项阻塞项与澄清项，方案 B（辅助组件传句柄）维持弃用 |
+| 2026-11-13 | V2-04A 第十一轮修订：有效权限条件化——DACL 授权面 ≠ 令牌化有效权限；开发模式选方案 B（管理员提升令牌允许运行但防篡改声明降级+审计，标准/过滤令牌下批准声明成立）；最终模式令牌硬条件（无 enabled Administrators、无受限 SID、SeChangeNotifyPrivilege enabled、AccessCheck(MAXIMUM_ALLOWED)==批准掩码）+ 安装时/运行时双时点检查；启动校验升级为静态 DACL 模板比对 + 动态 AccessCheck granted 掩码比对双层；新增 R-4B-9 | 采纳 ChatGPT 第十轮复审结论（组 SID 未纳入权限计算）；已核对 Microsoft Learn SID Attributes 与 AccessCheck 原文；GetEffectiveRightsFromAcl/CheckTokenMembership 明确拒绝作完整有效权限计算器 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -1204,9 +1205,10 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | R-4B-1：容器逃逸残余风险依赖 Docker Desktop/WSL2 VM 边界 | 极端内核漏洞场景下隔离失效 | cap_drop ALL、no-new-privileges、非 root、无 socket/privileged 缩小攻击面；VM 边界残余风险接受并记录；镜像内无任何密钥 | 已记录（接受） |
 | R-4B-2：attach 双向流协议已明确（stdin 原始/输出帧解复用），但 docker-py 实际行为需实测确认 | SDK 抽象与协议预期不符会导致实现偏差 | V2-04B 首项任务为协议探针测试（stdout/stderr 分流+EOF 验证），探针通过后才实现执行器；不符则验证低层协议再选实现，绝不静默退回宿主机执行 | 待 V2-04B 实测 |
 | R-4B-4：镜像锁定清单 executor_image_lock.json 已真实提交（V2-04A 第四轮），当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest，两者都填）并更新清单；批准后重跑安全测试；部署脚本属 V2-04B 计划实现 | 待负责人审批 |
-| R-4B-5：.env 第十轮模板（现行唯一批准值）——文件句柄=文件 ACE=`0x00120081`（FILE_READ_DATA+FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE，FILE_READ_EA 已核对撤销）；目录句柄=`0x00120080`；目录 ACE：开发模式运行账户 `0x00100080`（owner=运行账户，READ_CONTROL 经 OWNER RIGHTS，owner 一致性为启动硬检查）/ 最终安装模式服务账户 `0x00120080`（owner=SYSTEM，READ_CONTROL 显式，不依赖 owner）；两模式 DACL 同构 4 ACE（OWNER RIGHTS 0x00020000 + 运行/服务账户 + SYSTEM/Administrators 0x001F01FF），SE_DACL_PROTECTED 关闭继承 + 逐级句柄校验 + 句柄上 GetSecurityInfo/属性/FileId/卷序列号核验闭环 TOCTOU，尚未 Windows 实机验证 | ACL/共享模式实际行为与设计不符时令牌保护弱于预期；ctypes 结构布局在 32/64 位下偏差；最终模式祖先链（ProgramData 默认 DACL）行为未实测 | V2-04B 按模板全量构造 + 有效权限逐位比对 + Owner 硬检查 + DACL 逐项比对 + N-A1~N-A78 共 78 项负向测试；任一不符拒绝启动；Administrators/SYSTEM 的 FILE_ALL_ACCESS 为明确接受的本机管理员/SYSTEM 信任边界 | 待 V2-04B 实测 |
-| R-4B-7：同用户进程（B）可读取 .env 密钥（同用户信任边界，Windows ACL 机制原理上无法阻止同 token 读取/进程注入/内存读取） | 同用户恶意进程可窃取 AI 密钥 | 本设计明确不宣称阻止同用户读取，仅保证其无法篡改/删除/替换 .env 或其 DACL；残余风险如实记录；完整隔离依赖后续独立服务账户/隔离部署（学校服务器部署前置条件，第二轮阻塞检查单） | 接受并记录；V2-07 前置条件 |
-| R-4B-8：开发模式（用户 profile 下）同用户进程可替换项目根/祖先目录/程序文件/启动入口（Windows 用户 profile 默认权限，第七轮威胁模型表"不能替换祖先"表述错误已撤销） | 被篡改的祖先可能影响下次启动加载的代码，仅靠 .env DACL 无法保护整个安装环境 | 开发模式如实标注同用户信任边界不宣称阻止；启动时路径链逐级校验（FileId/卷 ID/reparse 检查）失败即拒绝启动；完整防护依赖最终安装模式（Program Files + ProgramData 受控 ACL + 专用服务账户）列为 V2-07 前置条件，未实机验证前标注【未验证】 | 接受并记录（开发模式）；V2-07 前置 |
+| R-4B-5：.env 第十轮模板（现行唯一批准值）——文件句柄=文件 ACE=`0x00120081`（FILE_READ_DATA+FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE，FILE_READ_EA 已核对撤销）；目录句柄=`0x00120080`；目录 ACE：开发模式运行账户 `0x00100080`（owner=运行账户，READ_CONTROL 经 OWNER RIGHTS，owner 一致性为启动硬检查）/ 最终安装模式服务账户 `0x00120080`（owner=SYSTEM，READ_CONTROL 显式，不依赖 owner）；两模式 DACL 同构 4 ACE（OWNER RIGHTS 0x00020000 + 运行/服务账户 + SYSTEM/Administrators 0x001F01FF），SE_DACL_PROTECTED 关闭继承 + 逐级句柄校验 + 句柄上 GetSecurityInfo/属性/FileId/卷序列号核验闭环 TOCTOU，尚未 Windows 实机验证；**第十一轮条件化：上述有效权限为"DACL 授权面"结论，实际有效权限取决于进程 Access Token 组 SID（Administrators enabled → FILE_ALL_ACCESS），以 AccessCheck(MAXIMUM_ALLOWED) 动态证实为准，仅适用于批准令牌条件** | ACL/共享模式实际行为与设计不符时令牌保护弱于预期；ctypes 结构布局在 32/64 位下偏差；最终模式祖先链（ProgramData 默认 DACL）行为未实测；令牌组 SID 影响未实测 | V2-04B 按模板全量构造 + 有效权限逐位比对 + Owner 硬检查 + DACL 逐项比对 + 令牌分类检查 + AccessCheck(MAXIMUM_ALLOWED) granted 掩码比对 + N-A1~N-A92 共 92 项负向测试；任一不符拒绝启动；Administrators/SYSTEM 的 FILE_ALL_ACCESS 为明确接受的本机管理员/SYSTEM 信任边界 | 待 V2-04B 实测 |
+| R-4B-7：同用户进程（B）可读取 .env 密钥（同用户信任边界，Windows ACL 机制原理上无法阻止同 token 读取/进程注入/内存读取；**第十一轮细分**：标准令牌/UAC 过滤令牌=能读不能篡改【未验证】；管理员提升令牌=能读且能篡改 → R-4B-9） | 同用户恶意进程可窃取 AI 密钥 | 本设计明确不宣称阻止同用户读取，仅保证标准/过滤令牌下其无法篡改/删除/替换 .env 或其 DACL（提升管理员除外，见 R-4B-9）；残余风险如实记录；完整隔离依赖后续独立服务账户/隔离部署（学校服务器部署前置条件，第二轮阻塞检查单） | 接受并记录；V2-07 前置条件 |
+| R-4B-8：开发模式（用户 profile 下）同用户进程可替换项目根/祖先目录/程序文件/启动入口（Windows 用户 profile 默认权限，第七轮威胁模型表"不能替换祖先"表述错误已撤销；**第十一轮补注：提升管理员经 Administrators ACE 能力更强，同属信任边界**） | 被篡改的祖先可能影响下次启动加载的代码，仅靠 .env DACL 无法保护整个安装环境 | 开发模式如实标注同用户信任边界不宣称阻止；启动时路径链逐级校验（FileId/卷 ID/reparse 检查）失败即拒绝启动；完整防护依赖最终安装模式（Program Files + ProgramData 受控 ACL + 专用服务账户）列为 V2-07 前置条件，未实机验证前标注【未验证】 | 接受并记录（开发模式）；V2-07 前置 |
+| R-4B-9：开发模式管理员提升令牌（Administrators SID enabled）经 DACL 中 Administrators ACE 0x001F01FF 获得受控对象 FILE_ALL_ACCESS——开发模式防篡改/删除/替换声明对此类进程**不成立**（第十一轮新增；deny-only 过滤令牌不受影响） | 提升的管理员进程可篡改/删除/替换 .env 与受控目录 | 方案 B：允许运行但保护声明降级 + 审计"管理员令牌"；AccessCheck(MAXIMUM_ALLOWED) 启动检测 granted==FILE_ALL_ACCESS 且来源为 Administrators/SYSTEM 时标记降级，意外来源超限或 granted 缺失批准位 → 拒绝启动；最终安装模式此类令牌直接拒绝启动（N-A82/N-A91） | 接受并记录（Administrators 为威胁模型信任边界 C）；【未验证】 |
 | R-4B-6：清扫状态白名单（仅 exited/dead）与 force=false 非强制删除尚未 Docker 实测 | 误删 paused/created 等运行语义容器，或删除冲突处理不当 | 七项校验+四项删除前核验+force=false+失败不扩大范围；N-S1~N-S23 负向测试设计覆盖全部状态与竞态场景 | 待 V2-04B 实测 |
 | R-4B-3：Trae 本机未安装 Docker（已实测确认） | N13–N18/T5–T12 真实容器行为无法在本机验证 | mock/协议层测试本机可跑（N1–N12/T1–T4）；真实容器测试需负责人 Docker Desktop 环境，交付时如实标注运行环境 | 依赖负责人环境 |
 | 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
@@ -2325,3 +2327,134 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 **下一步：第十轮架构修订。** Trae 仅修订 `AI_COLLABORATION.md` 与必要时 `README.md`，修正最终安装模式目录 READ_CONTROL 缺口、文件 ACE 旧 mask、owner 前置条件及 N-A54/N-A65 起的测试设计。不得实现 Docker 执行器、FastAPI 执行 API、Python 运行接口或前端运行按钮；`executor_image_lock.json` 继续 pending/null；不得修改 `main` / `trae-dev`，不得创建或合并 PR，不得合并任何分支。
 
 **复审状态：** V2-04A 暂不批准；V2-04B 禁止启动。第十轮修订并经 ChatGPT 复审通过前维持该状态。
+
+### 2026-11-13｜Trae：V2-04A 架构第十一轮修订（Access Token 组 SID 有效权限闭环 / 开发模式方案 B / 最终模式令牌硬条件 / AccessCheck 双层校验 / 撤销第十轮过强声明 / N-A79~N-A92，docs-only）
+
+**前置说明**：ChatGPT 第十轮复审结论（暂不批准；当前权限推导仅依据用户 SID 对应 ACE，未计算进程 Access Token 中组 SID 对访问检查的影响——DACL 中 Administrators ALLOW 0x001F01FF 可能使含 enabled Administrators SID 的令牌获得 FILE_ALL_ACCESS）经项目负责人任务书传达；其复审记录尚未提交至仓库，本轮不代写、不覆盖，待 ChatGPT 自行入库。本轮已独立核对 Microsoft Learn 官方文档原文（2026-11-13 抓取）：`SID Attributes in an Access Token`、`AccessCheck function`（securitybaseapi.h）；其余语义按官方知识整理并标注【未验证】。
+
+**修订 1：完整 Access Token 权限模型（新增一节）**
+
+- **官方语义（已核对原文）**：访问检查把 DACL 中每条 ACE 的 SID 与令牌内的用户 SID + 全部组 SID 比对——**不是只看用户 SID**。SID 参与访问检查的方式由其 Attributes 决定：
+  - `SE_GROUP_ENABLED (0x0004)`：SID 启用，参与 Allow/Deny ACE 匹配；
+  - `SE_GROUP_USE_FOR_DENY_ONLY (0x0002)`：deny-only SID **仅匹配 Deny ACE，Allow ACE 一律忽略**；该属性与 ENABLED 互斥，且不可被 AdjustTokenGroups 重新启用；
+  - 无 ENABLED 且非 deny-only 的 SID 在访问检查中被**忽略**；
+  - `SE_GROUP_ENABLED_BY_DEFAULT (0x0001)`、`SE_GROUP_MANDATORY (0x0010)`（MANDATORY 组不可禁用）、`SE_GROUP_LOGON_ID (0xC0000000)`、`SE_GROUP_RESOURCE`——属性值【未验证：运行时核对】；
+  - UAC 过滤令牌：Administrators 等高权限 SID 以 **deny-only** 属性存在；提升令牌：**enabled**；服务进程不做 UAC 过滤——若服务账户是 Administrators 成员，其服务主令牌中 Administrators 为 **enabled**（该推断按官方知识整理【未验证】）。
+- **令牌状态处理表**：
+
+| Token 状态 | 访问检查处理要求 |
+|---|---|
+| 用户 SID 匹配 Allow ACE | 纳入权限计算（用户 SID 永远参与，AdjustTokenGroups 不可禁用） |
+| 普通启用组 SID 匹配 Allow ACE | 纳入权限计算（SE_GROUP_ENABLED） |
+| Administrators SID enabled | **必须纳入权限计算**——经 Administrators ACE 0x001F01FF 授予 FILE_ALL_ACCESS |
+| Administrators SID deny-only | 不得按普通 Allow 组 SID 处理：按官方规则仅匹配 Deny ACE，Allow ACE 忽略；本设计 DACL 无 Deny ACE → 不授予任何权限【未验证】 |
+| Administrators SID 不存在 | 不适用该组 ACE |
+| 其他启用组 SID | 同样必须纳入权限计算（若 DACL 中存在对应 ACE） |
+| 受限 SID / Restricted Token | 单独分析，不按普通令牌推断；本设计将 TokenRestrictedSids 非空列为未批准令牌条件 → fail-closed |
+| 服务账户令牌 | 以实际服务进程令牌为准（GetTokenInformation + AccessCheck），不以账户名称/账户组配置推断 |
+
+- **禁止推断规则**：①不得把"账户不是管理员成员"等同于"令牌中没有 Administrators SID"；②不得把"Administrators SID 存在"等同于"该 SID 参与 Allow 权限授予"——必须依据 SID Attributes 与 Windows 实际访问检查规则判断。
+
+**修订 2：开发模式重核算（场景 A–E）+ 方案选择 B**
+
+| 场景 | 令牌中 Administrators SID | Administrators Allow ACE 是否授予 | .env 有效权限 | 受控目录有效权限 | 保护声明 |
+|---|---|---|---|---|---|
+| A. 标准用户（非管理员成员） | 不存在 | 否 | `0x00120081` | `0x00120080` | 批准声明成立【未验证】 |
+| B. 管理员成员的 UAC 过滤令牌（日常桌面进程） | deny-only | **否**（Allow ACE 忽略，DACL 无 Deny ACE） | `0x00120081` | `0x00120080` | 成立【未验证】 |
+| C. 管理员提升令牌 | enabled | **是 → FILE_ALL_ACCESS (0x001F01FF)** | FILE_ALL_ACCESS | FILE_ALL_ACCESS | **防篡改/删除/替换声明不成立**（Administrators 信任边界） |
+| D. Administrators deny-only 令牌 | deny-only | 否 | 同 B | 同 B | 成立【未验证】 |
+| E. 其他额外启用组 SID | —（如组 G enabled） | DACL 中存在对应 ACE 才授予；受控链模板仅 4 ACE，无其他组 ACE → 受控对象上不改变有效权限；任何意外授权由 AccessCheck 检出（N-A84） | — | — | 意外授权 → 拒绝启动 |
+
+- **九个危险权限位逐项检查**：A/B/D 场景下 FILE_LIST_DIRECTORY(0x1)、FILE_ADD_FILE(0x2)、FILE_ADD_SUBDIRECTORY(0x4)、FILE_DELETE_CHILD(0x40)、DELETE(0x10000)、WRITE_DAC(0x40000)、WRITE_OWNER(0x80000)、FILE_WRITE_DATA(0x2)、FILE_APPEND_DATA(0x4) **均不可获得**（DACL 授权面 + deny-only 不参与 Allow）；C 场景下**全部可获得**（Administrators ACE 授予 FILE_ALL_ACCESS）。
+- **方案选择：方案 B（允许管理员运行，明确信任边界降级），并保留方案 A 的 fail-closed 元素**。理由：开发模式是单用户本机演示，运行者本人即管理员属常态（提升终端/IDE），拒绝运行不可用；Administrators 在威胁模型中本就是信任边界 C；对提升管理员宣称防篡改是虚假保证。**开发模式启动时令牌分类检查**（基于修订 4 层 2 AccessCheck）：
+  - granted == 批准掩码 → 正常启动，保护声明成立；
+  - granted == FILE_ALL_ACCESS 且超出部分经 Administrators/SYSTEM enabled SID 授予 → **允许启动 + 审计"管理员令牌，防篡改保护声明不适用"**，威胁模型按信任边界 C 列处理；
+  - granted 超出批准掩码但来源无法归属为 Administrators/SYSTEM（意外组授权）→ **拒绝启动**（fail-closed）；
+  - granted 缺少批准位 → 拒绝启动。
+- **明确声明**：开发模式"阻止篡改/删除/替换 .env"的保证**仅对场景 A/B/D（标准与过滤令牌）成立**；对场景 C（提升管理员）不成立且不宣称——不再保留相互矛盾的双重保证。
+
+**修订 3：最终安装模式重核算（令牌硬条件 + 安装/运行双时点职责）**
+
+- **批准令牌条件（全部满足才可启动，任一不满足 → fail-closed 拒绝启动 + 审计）**：
+  1. 进程令牌为专用服务账户的主令牌（不以账户名/SID 字符串/组配置推断）；
+  2. 令牌中 Administrators SID **不存在**，或存在但 **deny-only**（服务不适用 UAC，deny-only 实践中不出现；若出现按官方规则不参与 Allow，DACL 无 Deny ACE → 无授予）；
+  3. TokenRestrictedSids 为空（无受限令牌）；
+  4. SeChangeNotifyPrivilege 存在且 enabled（修订 6）；
+  5. AccessCheck(MAXIMUM_ALLOWED) 结果 == 批准掩码（目录 `0x00120080` / 文件 `0x00120081`），**无任何多余位**；
+  6. PrivilegeSet 未报告使用 SeBackupPrivilege/SeRestorePrivilege 等对象访问特权。
+- **安装时检查（管理员脚本职责）**：创建专用账户且**不加入 Administrators**（服务账户不是本机 Administrators 成员）；验证组成员关系并记录基线（Get-LocalGroupMember / whoami /groups）；应用 DACL 模板 + owner=SYSTEM；记录预期基线。安装时检查**不能替代**运行时检查。
+- **运行时检查（服务每次启动，对实际进程令牌）**：执行修订 4 全套令牌查询 + AccessCheck；服务账户组成员关系安装后变化（被加入 Administrators）→ 下次启动的新令牌含 enabled Administrators → 拒绝启动（N-A82/N-A91）；**不得**为了通过检查而静默删除或忽略 DACL 中的 ACE——模板比对失败即拒绝，且服务账户无 WRITE_DAC，无能力也无权限修改 DACL。
+- **如实记录的已知窗口**：组成员变化不影响**已在运行**的服务进程（令牌在服务登录时生成，重启前不变）——重启后拦截；该连续运行窗口不在本设计防御范围，标注【未验证/接受】，列为 V2-07 部署规范说明项。
+- **服务账户有效权限重核算**：受控对象 DACL 授权面 = `0x00120080`/`0x00120081`；标准服务令牌（非 Administrators 成员）中其余启用组（Everyone/Users/Authenticated Users 等）在受控链 DACL 中**无对应 ACE** → 有效权限 = DACL 授权面 = 批准掩码【未验证】；由 AccessCheck 动态证实（修订 4），不得仅凭 ACE 逐位证明宣称。
+
+**修订 4：实际有效权限验证方案（双层启动校验；层 2 本轮新增）**
+
+- **层 1（静态，第十轮已有）**：DACL 模板逐项比对（ACE 数、SID、mask、Flags、SE_DACL_PROTECTED、Owner）。
+- **层 2（动态，本轮新增）：基于实际进程令牌的 AccessCheck**——
+  1. `OpenProcessToken(GetCurrentProcess, TOKEN_QUERY|TOKEN_DUPLICATE)`【未验证】；
+  2. `GetTokenInformation`：TokenUser / TokenGroups（SID_AND_ATTRIBUTES 数组，官方文档已核对）/ TokenRestrictedSids / TokenPrivileges——完成修订 1 令牌分类；
+  3. `DuplicateToken(SecurityImpersonation)` → ClientToken——AccessCheck 官方要求：**必须是 impersonation token 且持有 TOKEN_QUERY**，否则 ERROR_ACCESS_DENIED（已核对原文）；
+  4. `GetSecurityInfo(句柄, OWNER|DACL)` → SD——SD 必须含 owner+group SID，否则 AccessCheck 报 `ERROR_INVALID_SECURITY_DESCR`（已核对原文）；
+  5. **GenericMapping**（文件对象，文件与目录同一映射）：GENERIC_READ→`0x00120089`（FILE_GENERIC_READ）、GENERIC_WRITE→`0x00120116`（FILE_GENERIC_WRITE）、GENERIC_EXECUTE→`0x001200A0`（FILE_GENERIC_EXECUTE）、GENERIC_ALL→`0x001F01FF`（FILE_ALL_ACCESS）——启动自检断言常量（N-A90）；DesiredAccess 必须经 MapGenericMask 去除 generic 位或使用 MAXIMUM_ALLOWED（已核对原文）；
+  6. `AccessCheck(SD, token, DesiredAccess=MAXIMUM_ALLOWED, GenericMapping, PrivilegeSet)` → GrantedAccess/AccessStatus——官方文档：**MAXIMUM_ALLOWED 返回安全描述符允许该客户端的最大权限**（即令牌化有效权限全集，含组 SID 影响）；NULL DACL 时 AccessStatus=TRUE（本设计 DACL 非空且 protected，不触发）；AccessCheck 自身不产生审计，由应用自行记录；
+  7. **granted 掩码与批准掩码比对**：相等 → 通过；多出 → 按修订 2/3 模式策略（开发降级或拒绝；最终拒绝）；缺少批准位或 AccessStatus=FALSE → 拒绝；任何调用失败 → 拒绝。
+- **明确拒绝的替代方案**：
+  - `GetEffectiveRightsFromAcl`：入参为 TRUSTEE（SID），**不含令牌组 SID/属性**，无法计算令牌化有效权限——不采用；
+  - `CheckTokenMembership`：仅回答"某 SID 是否 enabled"，可作 Administrators enabled 辅助检测，**不是**有效权限计算器；
+  - "用户 SID → 查对应 ACE → 合并 mask"的推导方式：本轮撤销其作为最终结论依据，仅保留为静态预检。
+- **输入令牌类型**：运行期 = 进程主令牌经 DuplicateToken 转 impersonation；测试可用 DuplicateTokenEx 构造标准/过滤/提升/受限变体（mock 层面构造 SID_AND_ATTRIBUTES 数据）。
+- **mock 可验**：granted 掩码比对逻辑、拒绝/降级分支、GenericMapping 断言、令牌分类逻辑。**需实机**：真实 OpenProcessToken/GetTokenInformation/AccessCheck 行为、UAC 过滤与提升令牌差异、服务账户令牌、MAXIMUM_ALLOWED 实际返回、PrivilegeSet 报告。调用者权限、impersonation 上下文、MAXIMUM_ALLOWED 与 Deny ACE 交互细节等前提**全部标注【未验证】**。
+- **严禁**把 mock 测试写成 Windows 内核访问检查的真实证明；也不能把组成员检查 API 当成完整有效权限计算器。
+
+**修订 5：第十轮历史声明修正（撤销/限定；历史条目不改写，冲突以本条为准）**
+
+| # | 被撤销/限定的旧声明（第十轮） | 新声明及适用条件 |
+|---|---|---|
+| 1 | 修订 1"逐位证明：服务账户有效目录权限 = 0x00120080，不含 LIST/ADD/DELETE/WRITE_*" | 重新限定为 **DACL 授权面**证明；实际有效权限 = DACL 授权面 × 令牌适用 SID；仅在修订 3 批准令牌条件下等于 `0x00120080`，并以 AccessCheck 动态证实【未验证】 |
+| 2 | 修订 2"文件有效权限 = 0x00120081（两模式）" | 同上条件化：批准令牌条件下成立 |
+| 3 | 修订 3/4 各表"有效权限"列 | 重新解读为"DACL 授权面"；动态有效权限以修订 4 层 2 为准 |
+| 4 | R-4B-7"同用户进程可读取 .env"单一表述 | 细分为六类主体（见下表） |
+| 5 | 开发模式"能阻止同用户篡改"的整体印象 | 仅对标准/过滤令牌成立；提升管理员不成立（R-4B-9） |
+
+- **R-4B-7 细分表（读取 .env 密钥与篡改能力，按主体令牌类型）**——本轮取代原单一"同用户"表述：
+
+| 主体 | 可读 .env 密钥？ | 可篡改/删除/替换 .env？ |
+|---|---|---|
+| 同用户标准令牌（A） | 能（Windows ACL 机制无法阻止同 token 读取/进程注入/内存读取） | 否（批准声明）【未验证】 |
+| 同用户 UAC 过滤令牌（B/D） | 能（同上） | 否【未验证】 |
+| 同用户管理员提升令牌（C） | 能 | **能——Administrators ACE 授予 FILE_ALL_ACCESS，防篡改声明不成立（→ R-4B-9）** |
+| 不同普通用户 | 否（DACL 无 ACE）【未验证】 | 否【未验证】 |
+| SYSTEM | 能 | 能（SYSTEM ACE，信任边界） |
+| 专用服务账户（最终模式） | 能（文件模板 FILE_READ_DATA） | 否【未验证】 |
+
+- **新增 R-4B-9**：开发模式管理员提升令牌（Administrators enabled）经 Administrators ACE 获得受控对象 FILE_ALL_ACCESS——开发模式防篡改声明对此类进程不成立。处置 = 方案 B：允许运行 + 保护声明降级 + 审计 + AccessCheck 检测（granted==FILE_ALL_ACCESS 且来源为 Administrators/SYSTEM 时标记降级；意外来源超限拒绝启动）；最终安装模式此类令牌**直接拒绝启动**。
+- R-4B-8 不变，补注：提升管理员下祖先替换能力更强（Administrators ACE 覆盖祖先默认 DACL 限制），同属 Administrators 信任边界，不与 R-4B-7/R-4B-9 混淆。
+- README 当前状态说明已同步（仅保留准确、简明的当前状态）。
+
+**修订 6：SeChangeNotifyPrivilege 确认为运行环境硬前置（补充检查）**
+
+- 设计**不**把 FILE_TRAVERSE ACE 当作可靠路径屏障（原则不变）；受控链 DACL 不授予服务/运行账户 FILE_TRAVERSE(0x20)。
+- **若令牌缺少该特权**：逐级相对打开会在父目录 traverse 检查处失败（ACCESS_DENIED）→ 启动失败——结果仍是 fail-closed，但属深层隐式失败。
+- **决定：列为运行环境硬前置**——启动时 GetTokenInformation(TokenPrivileges) 验证 `SeChangeNotifyPrivilege` 存在且 `SE_PRIVILEGE_ENABLED (0x2)`；缺失或查询失败 → 拒绝启动 + 审计。理由：默认"Bypass Traverse Checking"用户权利授予 Users 与服务账户，缺失即环境异常，显式 fail-closed 优于深层隐式失败；且路径打开失败本身 fail-closed（不变），不允许回退到未经核验的普通路径打开。
+- **保留未验证项（全部【未验证】）**：CreateFileW 打开受信任根、该句柄作为 NtCreateFile RootDirectory、FILE_OPEN_REPARSE_POINT、ctypes 结构布局、NTSTATUS 转换、32/64 位调用约定、FileId/卷序列号/Owner/DACL 的实际核验。不得把这些设计声明为已通过实机验证。
+
+**修订 7：负向测试 N-A79~N-A92（14 项，全部为设计未运行；严禁把 mock 测试写成内核访问检查的真实证明）**
+
+| # | 前提（令牌 SID+Attributes / DACL） | 操作 | 预期结果 | 拒绝启动 | 审计 | mock 可验 | 需实机 |
+|---|---|---|---|---|---|---|---|
+| N-A79 | 标准用户令牌：user SID + Users/Authenticated Users/Everyone enabled，无 Administrators SID；开发模式 DACL（4 ACE） | 启动层 2：AccessCheck(MAXIMUM_ALLOWED) | granted == 批准掩码（目录 0x120080/文件 0x120081）→ 正常启动 | 否（正常路径） | 是 | 是（构造 SID_AND_ATTRIBUTES + granted 数据） | 是 |
+| N-A80 | UAC 过滤令牌：Administrators **deny-only**，其余同 N-A79；同 DACL | AccessCheck | deny-only 仅匹配 Deny ACE（DACL 无）→ Administrators Allow ACE 不参与 → granted == 批准掩码 → 正常启动；若实现误按 enabled 计入 → 检出超限拒绝 | 视实现正确性 | 是 | 是 | 是 |
+| N-A81 | 管理员提升令牌：Administrators **enabled**；同 DACL | AccessCheck(MAXIMUM_ALLOWED) | granted == FILE_ALL_ACCESS → 开发模式按方案 B 允许启动 + 审计"保护声明降级"；最终模式同场景 → 拒绝 | 否（开发降级）/ 是（最终） | 是 | 是 | 是 |
+| N-A82 | 最终模式服务账户被误加入 Administrators（服务主令牌含 enabled Administrators） | 启动令牌硬条件检查 | 条件 2 违反 → 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A83 | deny-only 与 enabled 对照（同一 DACL、两个令牌） | 分别 AccessCheck | deny-only granted==批准掩码；enabled granted==FILE_ALL_ACCESS——差异实证（N-A80/N-A81 对照用例） | 视分支 | 是 | 否（需真实令牌语义） | 是 |
+| N-A84 | 令牌含其他 enabled 组 G；DACL 对 G 有额外 Allow ACE（模拟意外授权面） | AccessCheck | granted 超出批准掩码且来源非 Administrators/SYSTEM → 拒绝启动（证明不能只按用户 SID ACE 计算） | 是 | 是 | 是 | 是 |
+| N-A85 | GetTokenInformation(TokenGroups/TokenRestrictedSids/TokenPrivileges) 失败或返回不完整（含 SeChangeNotifyPrivilege 查询失败/缺失） | 启动令牌查询 | fail-closed 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A86 | AccessCheck granted 含额外 DELETE (0x10000) | granted 比对 | 超出批准掩码 → 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A87 | 额外 WRITE_DAC (0x40000) | granted 比对 | 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A88 | 额外 WRITE_OWNER (0x80000) | granted 比对 | 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A89 | 额外 FILE_DELETE_CHILD (0x40) | granted 比对 | 拒绝启动 | 是 | 是 | 是 | 是 |
+| N-A90 | GenericMapping 配置错误（如误用注册表/服务对象映射） | 启动自检断言映射常量 == 文件对象映射（0x120089/0x120116/0x1200A0/0x1F01FF） | 断言失败 → 拒绝启动；mock 验证 granted 随映射漂移 | 是 | 是 | 是 | 是 |
+| N-A91 | 服务账户安装后加入 Administrators，服务重启 | 运行时（每次启动）令牌检查 | 新令牌含 enabled Administrators → 拒绝启动（运行中旧进程窗口如实标注【未验证/接受】） | 是（下次启动） | 是 | 是 | 是 |
+| N-A92 | 令牌信息不完整/AccessCheck 结果不确定（AccessStatus=FALSE 原因不明、granted 为 0 等） | 任何不确定分支 | fail-closed 拒绝启动，**绝不退回仅按用户 SID 计算** | 是 | 是 | 是 | 是 |
+
+**范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；**未实现 AccessCheck/GetTokenInformation 任何业务代码**（修订 4 为设计，全部【未验证】）；`executor_image_lock.json` 保持原样（pending、digest 全 null）；未实现容器执行、未新增 subprocess、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未创建或合并 PR、未合并任何分支。验证 = 文档设计审查 + 官方文档核对 + 既有基线回归（238 passed）；修订 1–7 与 N-A79~N-A92 **全部未实机运行**；mock 可验项与 Windows 实机必须项已逐项标注，实测归 V2-04B。
