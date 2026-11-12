@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第七轮架构修订已提交；ChatGPT 第七轮复审暂不批准：最小只读 ACE 模板方向认可，但需纠正 FILE_TRAVERSE 对 SeChangeNotifyPrivilege 的描述，并解决项目根及以上祖先目录可由同用户进程替换的威胁模型矛盾；同时明确逐级无重解析路径打开与句柄共享模式。第八轮修订通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第八轮架构修订已提交：FILE_TRAVERSE/SeChangeNotifyPrivilege 语义修正（目录模板减为 3 ACE、保密边界改为文件 DACL）、A-E 目录层级×开发/最终安装双模式（撤销第七轮"不能替换祖先"错误表述，开发模式 C/D 标 R-4B-8 未阻止）、NtCreateFile 逐级相对打开无重解析方案、句柄共享模式定死（FILE_SHARE_READ 仅）；N-A33~N-A48；待 ChatGPT 第八轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1205,6 +1205,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | R-4B-4：镜像锁定清单 executor_image_lock.json 已真实提交（V2-04A 第四轮），当前 approval_status=pending、digest=null（未编造） | digest 未审批前执行功能 fail-closed 无法运行 | 需负责人审核批准 python:3.12-slim 的 linux/amd64 digest（manifest 顶层+平台子 digest，两者都填）并更新清单；批准后重跑安全测试；部署脚本属 V2-04B 计划实现 | 待负责人审批 |
 | R-4B-5：.env 第七轮最小只读模板（文件 0x00120089 仅读/目录 0x00100020 仅遍历，双 OWNER RIGHTS 0x00020000，SYSTEM/Administrators 0x001F01FF）+ 父目录 Authz 有效权限（泛型映射）+ 路径链检查 + 运行期持有句柄闭环 TOCTOU，尚未 Windows 实机验证 | ACL 实际行为与设计不符时令牌保护弱于预期 | V2-04B 按模板全量构造 + 句柄上逐项校验 + 周期重验实现，附 N-A1~N-A32 共 32 项正负向测试；任一不符拒绝启动；Administrators/SYSTEM 的 FILE_ALL_ACCESS 为明确接受的本机管理员/SYSTEM 信任边界 | 待 V2-04B 实测 |
 | R-4B-7：同用户进程（B）可读取 .env 密钥（同用户信任边界，Windows ACL 机制原理上无法阻止同 token 读取/进程注入/内存读取） | 同用户恶意进程可窃取 AI 密钥 | 本设计明确不宣称阻止同用户读取，仅保证其无法篡改/删除/替换 .env 或其 DACL；残余风险如实记录；完整隔离依赖后续独立服务账户/隔离部署（学校服务器部署前置条件，第二轮阻塞检查单） | 接受并记录；V2-07 前置条件 |
+| R-4B-8：开发模式（用户 profile 下）同用户进程可替换项目根/祖先目录/程序文件/启动入口（Windows 用户 profile 默认权限，第七轮威胁模型表"不能替换祖先"表述错误已撤销） | 被篡改的祖先可能影响下次启动加载的代码，仅靠 .env DACL 无法保护整个安装环境 | 开发模式如实标注同用户信任边界不宣称阻止；启动时路径链逐级校验（FileId/卷 ID/reparse 检查）失败即拒绝启动；完整防护依赖最终安装模式（Program Files + ProgramData 受控 ACL + 专用服务账户）列为 V2-07 前置条件，未实机验证前标注【未验证】 | 接受并记录（开发模式）；V2-07 前置 |
 | R-4B-6：清扫状态白名单（仅 exited/dead）与 force=false 非强制删除尚未 Docker 实测 | 误删 paused/created 等运行语义容器，或删除冲突处理不当 | 七项校验+四项删除前核验+force=false+失败不扩大范围；N-S1~N-S23 负向测试设计覆盖全部状态与竞态场景 | 待 V2-04B 实测 |
 | R-4B-3：Trae 本机未安装 Docker（已实测确认） | N13–N18/T5–T12 真实容器行为无法在本机验证 | mock/协议层测试本机可跑（N1–N12/T1–T4）；真实容器测试需负责人 Docker Desktop 环境，交付时如实标注运行环境 | 依赖负责人环境 |
 | 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
@@ -1860,6 +1861,121 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 **范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；`executor_image_lock.json` 保持原样（pending、digest 全 null、审批状态未动）；未实现容器执行、未新增 subprocess 路径、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未创建/执行任何 PR 或合并。验证 = 文档设计审查 + 既有基线回归（238 passed）；N-A22~N-A32 与此前所有 ACL/Docker 设计**均未实机运行**——mock 可验证（判定逻辑）与 Windows 实机必须（OS 权限行为）已逐项标注，全部实测归 V2-04B。
 
 
+
+### 2026-11-12｜Trae：V2-04A 架构第八轮修订（FILE_TRAVERSE 语义修正 / 目录层级与双模式信任边界 / 逐级无重解析打开 / 共享模式固定，docs-only）
+
+**修订 1：FILE_TRAVERSE 实际语义修正（响应第七轮阻塞项 1）**
+
+- **承认错误**：第七轮把目录 ACE 中的 `FILE_TRAVERSE (0x00100020)` 当作"普通用户不能访问路径"的屏障——这不成立。Windows 默认向所有用户授予 **SeChangeNotifyPrivilege（Bypass Traverse Checking）**，路径解析时**跳过**中间目录的 FILE_TRAVERSE 检查；因此缺少 FILE_TRAVERSE ACE **不能**阻止任何主体遍历路径到达 .env。
+- **保密性核心边界改为：`.env` 文件自身的 DACL + 打开时的有效访问检查**（文件 ACL 才决定能否读内容）；目录 ACL 的作用是**防创建/删除/替换/列目录/改控制**，不是防遍历。
+- **五种能力严格区分**（不再混用）：
+
+| 能力 | 由什么控制 | 模板下的结论 |
+|---|---|---|
+| ①遍历路径（traverse） | FILE_TRAVERSE + SeChangeNotifyPrivilege（默认 bypass） | **所有主体实际都能遍历**（无法靠 ACE 阻止，如实声明） |
+| ②列出目录内容 | FILE_LIST_DIRECTORY (0x1) on 目录 | 模板未授予任何非白名单主体 → 不能列出 |
+| ③打开 .env | ①bypass 后 + 文件 DACL 的打开检查 | 由文件 DACL 决定 |
+| ④读取 .env 内容 | 文件 DACL FILE_READ_DATA | 仅运行用户/SYSTEM/Administrators |
+| ⑤创建/删除/替换文件 | 目录 FILE_ADD_FILE/DELETE/FILE_DELETE_CHILD 等 | 模板未授予运行用户与其他用户 → 不能 |
+
+- **目录模板修正**：运行用户不再需要目录 ACE（①被 bypass，②~⑤全部不授予）——父目录模板从 4 条 ACE 减为 **3 条**：
+
+| 序 | 主体 SID | 类型 | Access Mask | 说明 |
+|---|---|---|---|---|
+| 1 | S-1-3-4（OWNER RIGHTS） | ALLOW | 0x00020000 | 仅 READ_CONTROL（owner=运行用户，仅可读安全描述符用于核验） |
+| 2 | S-1-5-18（SYSTEM） | ALLOW | 0x001F01FF | FILE_ALL_ACCESS |
+| 3 | S-1-5-32-544（Administrators） | ALLOW | 0x001F01FF | FILE_ALL_ACCESS |
+
+- 目录 ACL 仍必须禁止（对**一切非白名单主体**，含运行用户之外的同 token 进程之外的其他用户）：FILE_ADD_FILE、FILE_ADD_SUBDIRECTORY(0x4)、FILE_DELETE_CHILD、DELETE、WRITE_DAC、WRITE_OWNER 及一切写权限——模板本身不含这些 ACE；运行用户通过 owner+OWNER RIGHTS 仅保留 READ_CONTROL，**同样不拥有** ⑤ 类权限。
+- 文件模板（.env）不变：OWNER RIGHTS 0x00020000 / 运行用户 0x00120089 / SYSTEM 0x1F01FF / Administrators 0x1F01FF。
+
+**修订 2：目录层级 A–E 与两种部署模式（响应第七轮阻塞项 2，消除威胁模型矛盾）**
+
+**开发模式（当前单用户本地演示，项目位于用户 profile 下）**：
+
+| 层级 | owner | DACL 来源 | 运行用户/B（同用户）有效权限 | 受保护信任边界？ |
+|---|---|---|---|---|
+| A. `.env` 文件 | 运行用户 | 第八轮文件模板（3+1 ACE） | 读✓ 写✗ 删✗ 换DACL✗ | **是（强边界）** |
+| B. `.env` 直接父目录 | 运行用户 | 第八轮目录模板（3 ACE） | READ_CONTROL✓（核验用）创建✗ 删除✗ 替换✗ 列目录✗ | **是（强边界）** |
+| C. 项目根目录 | 运行用户 | 工具生成/默认（未按模板收紧） | **B 可创建/删除文件、可重命名/替换 C 内子目录** | **否——同用户信任边界，明确标注未被阻止** |
+| D. 项目根以上祖先（C:\Users\<user> 等） | 运行用户 | Windows 用户 profile 默认 | **B 完全控制（可重命名/替换/设重解析点）** | **否——同用户信任边界，明确标注未被阻止** |
+| E. 最终安装根 | 开发模式下不存在 | — | — | 仅最终安装模式定义 |
+
+- **如实结论（消除矛盾）**：开发模式下 B **可以**替换 C/D 及程序文件与启动入口——第七轮威胁模型表中"同用户不能替换父/祖先目录"的表述**错误，本轮撤销**；开发模式唯一强保护是 A/B 两级。下次启动时 D 被替换 → 启动校验（路径链逐级核验）失败 → 拒绝启动，但**运行期由被篡改祖先加载的程序本身不在 ACL 保护范围**——记为残余风险 R-4B-8。
+
+**最终安装模式（学校服务器部署前置，尚未实施，列为 V2-07 前置条件）**：
+
+| 层级 | 位置 | owner | DACL | 运行身份 |
+|---|---|---|---|---|
+| 程序目录 | `C:\Program Files\ZhidaoShixun\` | SYSTEM（经管理员安装） | 继承 Program Files 默认（Users 只读+执行，写入仅 Administrators/SYSTEM） | 服务以专用低权限服务账户运行（V2-07 定义） |
+| 配置目录 | `C:\ProgramData\ZhidaoShixun\config\` | SYSTEM | Administrators/SYSTEM 完全；服务账户仅读（文件模板同理，owner=服务账户） | 同上 |
+| 配置写入 | 仅管理员安装/初始化阶段 | — | 配置脚本以管理员运行 | 运行期只读 |
+| E. 安装根 | Program Files 父链 | SYSTEM | B（同用户）不可写、不可重命名/替换 | — |
+
+- 最终模式下 B 对 C/D/E 不可写、不可替换程序文件、不可改启动入口（**待实机验证后标注已验证**）；同用户读取密钥/攻击同用户进程的残余风险**仍然存在**（R-4B-7 不变）——安装目录保护**不**宣称解决同用户全部攻击。
+
+**威胁模型表重审（11 行 × A/B/C/D；开发模式 / 最终安装模式 分栏；不确定标【未验证】）**
+
+| 攻击能力 | A 普通其他用户 | B 同用户进程（开发） | B 同用户进程（最终安装） | C Administrators | D SYSTEM |
+|---|---|---|---|---|---|
+| 读取 .env | 否（文件 DACL 无 ACE） | **能（R-4B-7 边界）** | 能（服务账户同用户级边界） | 能 | 能 |
+| 修改 .env | 否 | 否（无写 ACE）【未验证-待实机】 | 否【未验证】 | 能 | 能 |
+| 删除 .env | 否 | 否（无 DELETE+句柄共享模式）【未验证】 | 否【未验证】 | 能 | 能 |
+| 替换 .env | 否 | 否（目录无 FILE_ADD_FILE+句柄独占）【未验证】 | 否【未验证】 | 能 | 能 |
+| 修改 .env DACL | 否 | 否（OWNER RIGHTS）【未验证】 | 否【未验证】 | 能 | 能 |
+| 替换直接父目录 B | 否 | 否（模板目录不可删/不可改）【未验证】 | 否【未验证】 | 能 | 能 |
+| 替换项目根目录 C | 否 | **能（R-4B-8，明确未阻止）** | 否（Program Files 链）【未验证】 | 能 | 能 |
+| 替换祖先目录 D | 否 | **能（R-4B-8，明确未阻止）** | 否（系统目录链）【未验证】 | 能 | 能 |
+| 替换程序文件 | 否 | **能（开发模式，R-4B-8）** | 否（Program Files）【未验证】 | 能 | 能 |
+| 修改启动入口 | 否 | **能（开发模式，R-4B-8）** | 否（服务注册表/计划任务受 SYSTEM 保护）【未验证】 | 能 | 能 |
+| 读取运行进程内存 | 否 | **能（R-4B-7，同用户进程注入/读内存无法靠 ACL 阻止）** | 能（同账户边界，V2-07 评估专用账户降险）【未验证】 | 能 | 能 |
+
+**修订 3：整条路径无重解析逐级打开方案（响应复审"不能只写定期检查"）**
+
+- **机制（NT 原生 API，逐级相对定位，全程不经路径字符串重开）**：
+  1. **打开受信任根**（受保护子树顶，开发模式=项目内收紧目录；最终模式=ProgramData\ZhidaoShixun）：`CreateFileW(固定绝对路径, dwDesiredAccess=READ_CONTROL|FILE_READ_ATTRIBUTES|SYNCHRONIZE(0x00120089), dwShareMode=FILE_SHARE_READ, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT)`——以 reparse 标志打开确保根本身不被 junction 跳转；打开后立即核验 owner/DACL（GetSecurityInfo by handle）+ 记录 `VolumeSerialNumber`+`FileIndex`（GetFileInformationByHandleEx FileIdInfo，128bit FileId）。
+  2. **逐级打开子目录**：使用 **NtCreateFile**（ntdll，OBJECT_ATTRIBUTES.RootDirectory=已验证父句柄，ObjectName=单级组件名，FILE_OPEN_REPARSE_POINT|FILE_OPEN（不追随）），DesiredAccess=READ_CONTROL|FILE_READ_ATTRIBUTES|SYNCHRONIZE——**每一级都从已验证父句柄相对定位**，路径字符串只用于组件名单级匹配，检查与打开同一句柄，消除字符串 TOCTOU。
+  3. **每级核验**：①reparse attribute 检查（FSCTL_GET_REPARSE_POINT / FileAttributeInfo：凡带 reparse tag 且非预期类型 → fail-closed）；②owner/DACL 与目录模板逐项比对；③卷序列号+FileId 与启动快照比对。
+  4. **最后一级 .env**：同法相对打开（第七轮文件模板校验 + 共享模式见修订 4），**读取配置只用该句柄**。
+  5. **运行期发现链替换**：定期（如 30s，可配置）从根句柄逐级重开重验（含 FileId/卷 ID 比对）；且 .env 主句柄持续持有（共享模式阻止删除/写入）。
+  6. **fail-closed 清单**：任何一级 reparse 异常、owner/DACL 不符、FileId/卷 ID 变化、句柄失效、权限无法计算、NtCreateFile 失败（含 STATUS_OBJECT_PATH_NOT_FOUND/ACCESS_DENIED/SHARING_VIOLATION）→ 拒绝启动或停止使用配置（健康端点反映），绝不降级为按路径重新打开。
+- **兼容性与测试方式（如实标注）**：NtCreateFile 为 ntdll 导出、内核对象语义由 Windows 内部文档描述，**尚未实测**；Python 侧经 ctypes 调用（V2-04B 实现）；若实机验证发现不可用或语义不符 → **重新设计传输/打开方式并提交复审**，不得退回按路径打开。N-A38/N-A39/N-A46/N-A47 覆盖逐级竞争与链替换。
+
+**修订 4：文件与目录句柄共享模式固定（CreateFileW 常量定死，不留编码阶段决定）**
+
+| 项 | .env 文件句柄 | 目录句柄（根与每级） |
+|---|---|---|
+| dwDesiredAccess | `0x00120089`（SYNCHRONIZE+READ_CONTROL+FILE_READ_DATA+FILE_READ_EA+FILE_READ_ATTRIBUTES） | `0x00120089`（同左；目录上等效于读属性+读控制+同步，无需 FILE_LIST_DIRECTORY） |
+| dwShareMode | `FILE_SHARE_READ (0x1)` **仅**——**不含 FILE_SHARE_WRITE (0x2)、不含 FILE_SHARE_DELETE (0x4)** | `FILE_SHARE_READ (0x1)` 仅 |
+| 允许 FILE_SHARE_READ | 是（其他进程可并发读；同用户 B 本就能读，不构成新增风险） | 是 |
+| 允许 FILE_SHARE_WRITE | **否**——他人后续以写权限打开将得到 sharing violation | 否 |
+| 允许 FILE_SHARE_DELETE | **否**——阻止删除/重命名：DeleteFile/MoveFile 需先以 DELETE access 打开目标，已存在无 FILE_SHARE_DELETE 的句柄时该打开失败 → 删除/重命名被 OS 拒绝 | 否（同理阻止目录重命名/删除） |
+| 已存在不兼容句柄 | 服务 CreateFile 返回 ERROR_SHARING_VIOLATION（32）→ **fail-closed 拒绝启动**（记审计：环境中有进程以写/删共享持有 .env，可能是攻击信号） | 同理拒绝启动 |
+| 打开失败/共享冲突/权限异常 | 一律 fail-closed 拒绝启动；运行期句柄失效 → 停止使用配置 | 同 |
+| 运行期读取方式 | **始终通过启动时已验证的同一句柄读取配置；绝不重新按路径打开 .env** | 目录链重验经已验证根句柄相对定位 |
+
+**修订 5：负向测试设计 N-A33~N-A48（16 项，全部为设计未运行；mock 可验证性/实机需求逐项标注）**
+
+| # | 前提 | 攻击/异常操作 | 预期结果 | 拒绝启动 | 审计 | mock 可验 | 需实机 |
+|---|---|---|---|---|---|---|---|
+| N-A33 | 普通用户 A 持默认 SeChangeNotifyPrivilege | 遍历受保护目录路径 | 能遍历（bypass traverse）——**如实预期**，保密性不依赖遍历阻止 | 否 | 否 | 否（OS 行为） | 是 |
+| N-A34 | A 已遍历到 .env 路径 | 尝试读取 .env 内容 | 文件 DACL 无 A 的 ACE → 打开/读取被 OS 拒绝 | 否 | 是（记录拒绝访问尝试，若可观测） | 判定逻辑可 mock | 是 |
+| N-A35 | 开发模式，B 同用户 | 尝试重命名/替换项目根 C | **成功（R-4B-8 明确未阻止）**；下次启动路径链校验失败 → 拒绝启动 | 是（下次启动） | 是 | 否 | 是 |
+| N-A36 | 开发模式，B 同用户 | 尝试替换祖先 D | 成功（R-4B-8）；下次启动拒绝 | 是（下次启动） | 是 | 否 | 是 |
+| N-A37 | 最终安装模式已实施 | B 尝试修改 Program Files 下程序文件 | 被 OS 拒绝（Users 只读） | 否 | 是 | 否 | 是 |
+| N-A38 | 链中某级目录被替换为 junction/reparse point | 逐级打开时 FileAttributeInfo/FSCTL 检测 | fail-closed 拒绝启动，绝不进入重解析目标 | 是 | 是 | 是（检测逻辑） | 是 |
+| N-A39 | 逐级打开期间另一进程竞争重命名某级 | NtCreateFile 返回错误或 FileId 与快照不符 | fail-closed 拒绝启动（不重试、不按路径回退） | 是 | 是 | 是 | 是 |
+| N-A40 | 服务已按句柄完成校验 | 攻击者尝试使服务经其他路径打开不同文件 | 服务无任何按路径重新打开 .env 的代码路径；读取仅经已验证句柄 | 否 | 是 | 是（代码审计断言无按路径打开） | 否 |
+| N-A41 | 服务已持有 .env 句柄（share=FILE_SHARE_READ） | B 请求删除（DeleteFile） | OS 拒绝（sharing violation，无 FILE_SHARE_DELETE） | 否 | 是 | 否 | 是 |
+| N-A42 | 同上 | B 请求以写权限打开 .env | OS 拒绝（sharing violation，无 FILE_SHARE_WRITE） | 否 | 是 | 否 | 是 |
+| N-A43 | B 先以写/删共享持有 .env | 服务随后启动 CreateFile | ERROR_SHARING_VIOLATION → 拒绝启动 + 审计告警 | 是 | 是 | 否 | 是 |
+| N-A44 | 文件句柄共享模式实现含 FILE_SHARE_WRITE/DELETE（偏离模板） | 启动自检/代码审计 | 实现校验断言失败 → 拒绝启动（实现即拒绝，防编码期偏离） | 是 | 是 | 是 | 否 |
+| N-A45 | 目录句柄共享模式偏离模板 | 同上 | 同上 | 是 | 是 | 是 | 否 |
+| N-A46 | 运行期祖先目录被重命名/替换（最终模式下尝试被 OS 拒绝；开发模式可能成功） | 定期重验路径链 | FileId/卷 ID/名称不符 → 停止使用配置（健康端点反映），重启拒绝启动 | 是（重启时） | 是 | 是 | 是 |
+| N-A47 | 运行期某级目录 FileId 或卷序列号与启动快照不一致（同设备替换攻击） | 定期重验 | 不一致 → 停止使用配置 + 审计；重启拒绝 | 是（重启时） | 是 | 是 | 是 |
+| N-A48 | 权限计算失败/链检查异常/NtCreateFile 失败 | 任意环节异常 | fail-closed（拒绝启动或停止使用配置），绝不降级按路径打开 | 是 | 是 | 是 | 是 |
+
+**范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，零代码改动；`executor_image_lock.json` 保持原样（pending、digest 全 null、审批状态未动）；未实现容器执行、未新增 subprocess、未把 Docker SDK 放入业务进程、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-05/06/07、未修改 main / trae-dev、未合并任何分支。验证 = 文档设计审查 + 既有基线回归（238 passed）；N-A33~N-A48 与全部 ACL/打开/共享模式设计**均未实机运行**（mock 可验项已逐项标注），实测归 V2-04B。
 
 ### 2026-11-12｜角色：ChatGPT｜V2-04A 第七轮架构复审：方向认可，仍有两项阻塞
 
