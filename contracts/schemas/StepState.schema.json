@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract_version": "0.1.0",
+  "$defs": {
+    "GuideLevel": {
+      "description": "指导颗粒度四级（AI_COLLABORATION.md §3）。",
+      "enum": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "title": "GuideLevel",
+      "type": "integer"
+    },
+    "StepStatus": {
+      "description": "实验步骤状态机（V2-03 起由引擎驱动）。",
+      "enum": [
+        "pending",
+        "in_progress",
+        "passed",
+        "failed",
+        "blocked",
+        "skipped"
+      ],
+      "title": "StepStatus",
+      "type": "string"
+    }
+  },
+  "description": "实验步骤当前状态（引擎状态机的对外表达）。",
+  "properties": {
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "experiment_id": {
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "step_id": {
+      "title": "Step Id",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/StepStatus"
+    },
+    "attempts": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Attempts",
+      "type": "integer"
+    },
+    "guide_level": {
+      "$ref": "#/$defs/GuideLevel",
+      "default": 1
+    },
+    "last_feedback": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Feedback"
+    }
+  },
+  "required": [
+    "experiment_id",
+    "step_id",
+    "status"
+  ],
+  "title": "StepState",
+  "type": "object"
+}

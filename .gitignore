@@ -1,0 +1,32 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# ===== 环境与密钥（真实 .env 禁止提交）=====
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite3
+
+# ===== Node / 前端 =====
+node_modules/
+dist/
+*.local
+
+# ===== IDE / 系统 =====
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+
+# ===== 日志与临时文件 =====
+logs/
+*.log

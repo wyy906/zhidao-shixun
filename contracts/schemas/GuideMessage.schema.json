@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract_version": "0.1.0",
+  "$defs": {
+    "GuideLevel": {
+      "description": "指导颗粒度四级（AI_COLLABORATION.md §3）。",
+      "enum": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "title": "GuideLevel",
+      "type": "integer"
+    },
+    "UiTarget": {
+      "description": "屏幕目标 / 控件定位。坐标为屏幕像素，标注层（V2-06）可直接使用。\n\nconfidence 低于阈值（由消费端定义）时不得做精确标注，只能降级为文字指导。",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "title": "Y",
+          "type": "integer"
+        },
+        "width": {
+          "minimum": 1,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "minimum": 1,
+          "title": "Height",
+          "type": "integer"
+        },
+        "label": {
+          "description": "人类可读名称，如「新建查询按钮」",
+          "title": "Label",
+          "type": "string"
+        },
+        "control_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "控件类型提示，如 Button / MenuItem",
+          "title": "Control Type"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "label"
+      ],
+      "title": "UiTarget",
+      "type": "object"
+    }
+  },
+  "description": "指导消息：四级颗粒度 + 可选标注目标（二级指导需带 targets）。",
+  "properties": {
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "step_id": {
+      "title": "Step Id",
+      "type": "string"
+    },
+    "level": {
+      "$ref": "#/$defs/GuideLevel"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "content": {
+      "title": "Content",
+      "type": "string"
+    },
+    "targets": {
+      "items": {
+        "$ref": "#/$defs/UiTarget"
+      },
+      "title": "Targets",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "step_id",
+    "level",
+    "title",
+    "content",
+    "created_at"
+  ],
+  "title": "GuideMessage",
+  "type": "object"
+}

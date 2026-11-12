@@ -17,49 +17,83 @@
 
 ## 当前状态
 
-**V2 正在独立重建，尚未达到可运行/可部署状态。** 不得编造尚未实现的启动命令、端口或默认账号。首个可运行版本验收后，Trae 必须补齐下面的实际步骤。
+**V2-02 基础工程骨架已完成，并已在本机（Windows）实际验证**：后端健康检查、前端构建与启动、桌面助手启动、契约与后端测试全部通过（证据见 AI_COLLABORATION.md 交接记录）。业务功能（实验、AI 指导、标注）尚未实现，从 V2-03 开始逐步开发。
+
+仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
+
+## 目录结构
+
+```
+contracts/   跨端统一数据契约（独立 Python 包 + JSON Schema 基线，web/desktop 不依赖 server 内部模块）
+server/      后端 FastAPI（健康检查、配置、统一错误响应、执行器接口占位）
+web/         前端 Vue 3 + Vite + TypeScript（最小页面，显示后端连接状态）
+desktop/     Windows 助手 PySide6（最小窗口：连接状态 / 暂停 / 停止）
+experiments/ 实验定义 JSON（V2-03 提供规范；当前为空，内容由用户导入）
+scripts/     安装与启动脚本（Windows PowerShell）
+docs/        设计文档与决策记录
+tests/       根级测试（契约模型校验、Schema 漂移检测）
+```
+
+## 环境要求
+
+- Windows 10/11（桌面助手仅支持 Windows）
+- Python 3.11+（本仓库在 3.13.14 验证）
+- Node.js 20+（本仓库在 26.13.0 验证）
 
 ## 获取代码（Windows PowerShell）
 
 ~~~powershell
 git clone https://github.com/wyy906/zhidao-shixun.git
 cd zhidao-shixun
-git fetch origin
 git switch feat/zhidao-shixun-v2-rebuild
 ~~~
 
-已有仓库：
+## 安装（已实际验证）
 
 ~~~powershell
-git fetch origin
-git switch feat/zhidao-shixun-v2-rebuild
-git pull origin feat/zhidao-shixun-v2-rebuild
+# 需要代理时加 -Proxy 参数，例如 -Proxy "http://127.0.0.1:10808"
+./scripts/setup-dev.ps1
 ~~~
 
-## 普通用户运行方式
+脚本会创建根目录 `.venv`，安装 contracts（可编辑）+ server + desktop 的 Python 依赖，并执行 web 的 `npm install`。
 
-项目完成首个可运行版本后，本节必须写成普通用户照着做就能运行的步骤，目标是：
-1. 安装必要环境（只列真正需要的依赖）。
-2. 下载项目。
-3. 双击启动脚本，或复制一条命令启动。
-4. 打开浏览器访问本地地址。
-5. 如需外部软件指导，再启动 Windows 桌面助手。
+## 当前可运行版本（V2-02 骨架，均已实测）
 
-## 当前可运行版本（待开发后填写）
+| 组件 | 启动命令 | 验证方式 |
+|---|---|---|
+| 后端 | `./scripts/start-server.ps1`（默认 8000 端口，`-Port` 可改） | `curl http://127.0.0.1:8000/health` 返回 `{"status":"ok",...}` |
+| 前端 | `./scripts/start-web.ps1` | 浏览器访问 http://localhost:5173，页面显示「后端连接正常」 |
+| 桌面助手 | `./scripts/start-desktop.ps1` | 窗口出现；`-Check` 仅探测后端；`-Smoke` 启动后 1.5 秒自动退出 |
+| 测试 | `.venv\Scripts\python.exe -m pytest` | 20 个测试（契约模型 / Schema 漂移 / 配置 / 执行器 / 健康检查） |
+| 前端构建 | `npm run build`（web/ 目录内） | vue-tsc 类型检查 + vite 构建通过 |
 
-- 状态：开发中。
-- Web 前端启动命令：待实现后填写。
-- 后端启动命令：待实现后填写。
-- Windows 助手启动方式：待实现后填写。
-- 本地访问地址：待实现后填写。
-- 测试账号：如确有需要再填写，禁止提交真实密码或密钥。
+前后端端口说明：
+- 后端默认 8000；前端代理目标默认 http://127.0.0.1:8000。
+- 8000 被占用时：`./scripts/start-server.ps1 -Port 8100`，并对应使用 `./scripts/start-web.ps1 -ApiTarget http://127.0.0.1:8100`、`./scripts/start-desktop.ps1 -ApiTarget http://127.0.0.1:8100`。
+
+## 配置
+
+- 环境变量示例见根目录 [.env.example](./.env.example)；复制为 `.env` 后修改。全部变量使用 `ZD_` 前缀。
+- 项目**不内置任何默认账号 / 密码 / 密钥**；真实 `.env` 已被 .gitignore 忽略，禁止提交。
+
+## 本机已知问题（Windows 开发注意）
+
+1. **Smart App Control 会拦截未签名原生模块**（本机策略已开启）。rollup 原生二进制被拦截导致 `vite build` 失败，已在 web/package.json 通过 `rollup → @rollup/wasm-node` 依赖别名解决（WASM 构建，无原生模块；构建速度略慢）。
+2. **npm 11 的 install-scripts 安全特性**会提示 esbuild 的 postinstall 未批准；esbuild.exe 本体随平台包安装，不影响构建，可忽略提示。
+3. **PowerShell 5.1 编码**：仓库内所有 .ps1 脚本均使用 ASCII 英文注释，避免中文注释在 GBK 代码页下破坏脚本解析。自行新增 .ps1 时注意同样问题（保存为 UTF-8 with BOM 或只用 ASCII）。
+
+## 尚未实现 / 待验证
+
+- 业务功能（实验任务、AI 指导、屏幕标注、Docker 沙箱执行）尚未实现，当前为骨架。
+- Docker 沙箱执行器：接口与安全基线已定义并测试，容器实现在 V2-04（见 AI_COLLABORATION.md 决策 D-1）。
+- 生产部署、HTTPS、多用户并发：未做。
 
 ## 部署说明
 
 首期优先保证 Windows 本地开发和演示。后续补充服务器部署、环境变量配置、数据库初始化、升级和备份说明。
 
-**维护要求：** 启动方式、依赖、端口、配置项或部署方式发生变化时，必须同步更新本 README。所有命令必须在干净环境中实际验证后才能写成“可用”。
+**维护要求：** 启动方式、依赖、端口、配置项或部署方式发生变化时，必须同步更新本 README。所有命令必须在干净环境中实际验证后才能写成"可用"。
 
 ## 项目协作
 
-[AI_COLLABORATION.md](./AI_COLLABORATION.md)：ChatGPT、Trae 与项目负责人共用的项目方向、开发指令、进度和交接记录。开始工作前必须先阅读。
+[AI_COLLABORATION.md](./AI_COLLABORATION.md)：ChatGPT、Trae 与项目负责人共用的项目方向、开发指令、进度和交接记录（唯一协作文档）。开始工作前必须先阅读。

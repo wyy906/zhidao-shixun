@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract_version": "0.1.0",
+  "$defs": {
+    "ContractSource": {
+      "description": "状态来源端。",
+      "enum": [
+        "server",
+        "web",
+        "desktop"
+      ],
+      "title": "ContractSource",
+      "type": "string"
+    },
+    "ScreenState": {
+      "description": "一次屏幕 / 页面感知快照。由 desktop 感知适配器或 web 实验端上报。",
+      "properties": {
+        "schema_version": {
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "title": "Captured At",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ContractSource"
+        },
+        "window_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Window Title"
+        },
+        "process_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Process Name"
+        },
+        "targets": {
+          "items": {
+            "$ref": "#/$defs/UiTarget"
+          },
+          "title": "Targets",
+          "type": "array"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "状态补充描述；禁止包含敏感信息",
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "captured_at",
+        "source"
+      ],
+      "title": "ScreenState",
+      "type": "object"
+    },
+    "UiTarget": {
+      "description": "屏幕目标 / 控件定位。坐标为屏幕像素，标注层（V2-06）可直接使用。\n\nconfidence 低于阈值（由消费端定义）时不得做精确标注，只能降级为文字指导。",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "title": "Y",
+          "type": "integer"
+        },
+        "width": {
+          "minimum": 1,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "minimum": 1,
+          "title": "Height",
+          "type": "integer"
+        },
+        "label": {
+          "description": "人类可读名称，如「新建查询按钮」",
+          "title": "Label",
+          "type": "string"
+        },
+        "control_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "控件类型提示，如 Button / MenuItem",
+          "title": "Control Type"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "label"
+      ],
+      "title": "UiTarget",
+      "type": "object"
+    }
+  },
+  "description": "验证请求。actual 为验证器约定的实际结果载荷（命令输出、查询结果、文件状态等）。",
+  "properties": {
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "experiment_id": {
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "step_id": {
+      "title": "Step Id",
+      "type": "string"
+    },
+    "actual": {
+      "additionalProperties": true,
+      "title": "Actual",
+      "type": "object"
+    },
+    "screen": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScreenState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "experiment_id",
+    "step_id"
+  ],
+  "title": "VerifyRequest",
+  "type": "object"
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract_version": "0.1.0",
+  "$defs": {
+    "VerifyOutcome": {
+      "description": "验证三态：成功 / 失败 / 不确定（不允许只凭大模型口头判断标记成功）。",
+      "enum": [
+        "passed",
+        "failed",
+        "uncertain"
+      ],
+      "title": "VerifyOutcome",
+      "type": "string"
+    }
+  },
+  "description": "验证结果：三态 + 可复核证据。",
+  "properties": {
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "step_id": {
+      "title": "Step Id",
+      "type": "string"
+    },
+    "outcome": {
+      "$ref": "#/$defs/VerifyOutcome"
+    },
+    "confidence": {
+      "default": 1.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "feedback": {
+      "title": "Feedback",
+      "type": "string"
+    },
+    "evidence": {
+      "additionalProperties": true,
+      "description": "可复核证据：命令输出、查询结果、文件状态等",
+      "title": "Evidence",
+      "type": "object"
+    }
+  },
+  "required": [
+    "step_id",
+    "outcome",
+    "feedback"
+  ],
+  "title": "VerifyResult",
+  "type": "object"
+}

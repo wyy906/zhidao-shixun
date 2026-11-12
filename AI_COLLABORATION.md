@@ -218,7 +218,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 |---|---|---|---|---|
 | V2-00 | 新分支与协作机制建立 | 已完成 | 分支存在；协作文档和 README 已提交 | ChatGPT |
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
-| V2-02 | V2基础工程骨架 | 未开始（指令已下达） | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
+| V2-02 | V2基础工程骨架 | 待审查 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 未开始 | 规范化 JSON Schema、Python/MySQL任务可结构化表达、验证器白名单 | Trae |
 | V2-04 | Python网页实验闭环 | 未开始 | 编辑、Docker隔离运行、验证、步骤推进；禁止宿主机直接执行不可信代码 | Trae |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
@@ -233,6 +233,49 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 ---
 
 ## 9. 最近交接记录（倒序追加，不删除旧记录）
+
+### 2026-11-12｜Trae：V2-02 基础工程骨架完成，全部本机实测
+
+**本次目标：**
+- 按 §7 执行 V2-02：建立 server/web/desktop/experiments/scripts/tests 骨架、版本化跨端契约、基础测试与安全配置；实际运行验证并如实记录。
+
+**实际完成：**
+- 目录与依赖策略：新增顶层 `contracts/`（独立可安装 Python 包 `zhidao-contracts`，含 JSON Schema 导出与漂移检测）；根级 .gitignore / .env.example（全 ZD_ 前缀，无任何密钥/默认凭据）；Node 用 package-lock.json 锁定，Python 用上限版本区间（Python 3.13.14 / Node 26.13.0 验证）。
+- 跨端契约：`CONTRACT_VERSION="0.1.0"` + 五个核心模型 ScreenState / StepState / VerifyRequest / VerifyResult / GuideMessage（含 UiTarget、四级 GuideLevel、验证三态 VerifyOutcome）；Schema 基线导出至 contracts/schemas/*.json；契约变更通过契约测试强制同步。
+- server：FastAPI 最小入口（/health、/api/v1/contract/version）、pydantic-settings 配置（ZD_ 前缀）、统一错误响应 {"error":{code,message,details}}、日志初始化、Docker 执行器接口与安全基线占位（D-1：禁网/只读/非 root/资源限制不可关闭，Docker 不可用时显式拒绝，无宿主机回退路径）。
+- web：Vue 3 + Vite 6 + TS 最小页面（显示后端连接状态与契约版本），dev 代理目标可经 ZD_API_PROXY_TARGET 配置。
+- desktop：PySide6 包 zhidao_desktop 最小窗口（后端连接状态 / 暂停感知 / 停止助手），入口支持 --smoke / --check；仅 HTTP + 共享契约，不依赖 server 内部模块。
+- scripts：setup-dev / start-server / start-web / start-desktop（PowerShell，ASCII 英文注释避免 GBK 解析问题；后端/桌面支持 -ApiTarget）。
+- 实验目录 experiments/ 为空属预期（用户后期导入，符合「无内置演示数据」要求）。
+
+**修改文件：**
+- 新增约 50 个文件：contracts/（6 源文件 + 5 Schema）、server/app/**（main/core/api/services/executor/engine 占位）+ 3 个测试、web/（Vite+TS 工程 + 最小页面）、desktop/zhidao_desktop/**、tests/contracts/ 2 个测试、scripts/ 4 个、根级 .gitignore / .env.example / pytest.ini / README.md 更新、experiments/README.md。
+
+**验证命令与结果（本机 Windows 实测，全部通过）：**
+- `.venv\Scripts\python.exe -m pytest` → **20 passed**（契约模型 7、Schema 漂移 3、配置 2、执行器 4、健康检查 4）。
+- `scripts/start-server.ps1 -Port 8100` + `curl /health` → HTTP 200 `{"status":"ok",...,"contract_version":"0.1.0"}`；`/api/v1/contract/version` 返回 5 模型清单；未知路径返回统一 404 错误结构。
+- `scripts/start-desktop.ps1 -Check` → 后端已连接；`-Smoke` → **窗口真实启动**，1.5 秒自动退出，退出码 0。
+- `npm run build`（web/）→ vue-tsc 类型检查 + vite 构建通过（13 modules）；`npm run dev` → 页面 HTTP 200，经代理访问 /health 返回 V2 响应。
+
+**本机环境问题与解决（供后续阶段参考）：**
+- 本机 8000 端口被一个遗留 python 进程占用（非 V2 服务，未处理），V2 验证改用 8100；脚本已支持 -Port / -ApiTarget。
+- **Windows Smart App Control（已开启）拦截未签名原生模块**：rollup 原生 .node 无法加载导致 vite build 失败；通过 package.json 依赖别名 `rollup → npm:@rollup/wasm-node@^4.68.2`（WASM 构建）解决。与旧项目 TASK_BOARD R-02 记录的 SQLAlchemy C 扩展被拦截属同一机器策略。
+- npm 11 install-scripts 特性提示 esbuild postinstall 未批准：不影响构建（esbuild.exe 随平台包安装），已记录。
+- .ps1 中文注释在 PowerShell 5.1 GBK 代码页下破坏解析（UTF-8 无 BOM）：所有脚本已改为 ASCII 英文注释。
+
+**未完成 / 已知问题：**
+- V2-02 为骨架：无业务功能、无数据库模型、无 Docker 容器执行（V2-03/V2-04 交付）；执行器 run() 现阶段显式抛 DockerUnavailableError（有测试覆盖该行为）。
+- 依赖策略为版本区间（README 已记录验证版本）；未做 pip 精确锁定（避免跨平台差异，如 ChatGPT 认为需要可再加）。
+
+**需要对方处理或确认：**
+- ChatGPT 审查 V2-02（看板已标"待审查"）；确认依赖锁定策略是否需要升级为精确锁定。
+- 负责人：§11 中「8000 端口遗留进程」是否需要处理；仓库 public/private 决策仍未定。
+
+**下一步建议：**
+- V2-03：实验任务与步骤数据模型、规范化 JSON Schema（D-2）、验证器白名单注册机制；contracts 契约随之扩展。
+
+**关联提交：**
+- 本文件同批次提交（V2-02 骨架 + 文档），SHA 见 git log。
 
 ### 2026-11-12｜ChatGPT：V2-01 审查通过，确定关键技术决策并启动 V2-02
 
@@ -334,6 +377,9 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | 2026-11-12 | D-2：实验定义采用全新规范化 JSON Schema | 参考旧 experiment_packs 的步骤组织思想，但增加 schema_version、前置条件、预期状态、白名单验证器、恢复建议等字段 |
 | 2026-11-12 | D-3：不迁移旧 sandbox_manager 服务 | V2 内重新实现最小 Docker 执行接口；旧代码仅作安全设计参考 |
 | 2026-11-12 | V2-01 审查通过，启动 V2-02 | 目录结构和重建边界符合项目方向；补充跨端契约版本化与桌面端最小采集要求 |
+| 2026-11-12 | 跨端契约以独立包 contracts/（zhidao-contracts）承载 | 满足审查要求：版本化、desktop 不依赖 server 内部模块；JSON Schema 基线 + 漂移检测测试 |
+| 2026-11-12 | web 构建使用 rollup→@rollup/wasm-node 依赖别名 | 本机 Windows Smart App Control 拦截未签名原生 .node；WASM 回退保证构建可复现（与旧 R-02 同因） |
+| 2026-11-12 | .ps1 脚本一律 ASCII 英文注释 | PowerShell 5.1 在 GBK 代码页读 UTF-8 无 BOM 脚本时中文注释破坏解析（已实测复现） |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -346,14 +392,15 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | 不同软件控件接口差异大 | 影响识别和定位准确率 | 分层接入，必要时专用适配器 | 待验证 |
 | GitHub 仓库当前为 public；旧分支 trae-dev 据盘点含 demo_shots 个人桌面截图及弱默认凭据 | 任何人都可能读取公开分支内容；删除文件也不等于从 Git 历史中清除 | V2 不迁移截图/凭据；项目负责人需决定是否将仓库改为 private，或先清理旧分支及历史中的敏感内容；未处理前不要再提交个人数据 | 需负责人处理 |
 | 视觉模型可能误判 | 可能产生错误指导 | 置信度、标准流程约束、结果验证 | 待实现 |
-| Python不可信代码执行 | 可能影响运行环境安全 | 独立沙箱/受限子进程设计 | 待设计 |
+| 本机 8000 端口被遗留 python 进程占用（非 V2 服务，路径 .workbuddy，未处理） | V2 按默认端口启动会冲突 | V2 支持 -Port / -ApiTarget 参数；验证用 8100 | 待负责人决定是否清理 |
 | 截图可能包含隐私 | 数据泄露风险 | 本地优先、最小采集、脱敏和告知 | 待实现 |
 | 多方同时修改协作文档 | 可能发生覆盖 | 先拉取、合并最新内容、再提交 | 持续遵守 |
 | 本机 git 将 github.com 重写到 ghfast.top 镜像且镜像不可达 | fetch/push 失败 | 命令级 `-c http.proxy=http://127.0.0.1:10808 -c http.sslBackend=openssl -c url...insteadOf` 覆盖；不改全局配置 | 已验证可用 |
 | Windows schannel 证书吊销检查失败（CRYPT_E_REVOCATION_OFFLINE） | git/curl 经代理访问 GitHub 报 TLS 错误 | git 切 openssl 后端（命令级 -c） | 已验证可用 |
-| Docker 沙箱尚未实现 | 不可信代码执行可能影响宿主机 | V2-02 定义接口，V2-04 实现容器隔离；Docker 不可用时拒绝执行 | 待实现 |
+| Windows Smart App Control 拦截未签名原生模块 | rollup 原生 .node 加载失败 | web 构建改用 @rollup/wasm-node（V2-02 已解决并记录）；后续引入 C 扩展类依赖时需复检 | 已解决（持续注意） |
+| Docker 沙箱尚未实现 | 不可信代码执行可能影响宿主机 | V2-02 已定义执行器接口与安全基线（含测试），V2-04 实现容器隔离；Docker 不可用时拒绝执行 | 接口已定义 |
 | 规范化实验 JSON Schema 尚未实现 | 实验步骤与验证器可能不一致 | V2-03 定义 schema_version、字段约束和验证器白名单 | 待实现 |
-| 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 建立版本化共享契约并增加兼容性测试 | 待实现 |
+| 跨端契约尚未建立 | Web/server/desktop 可能发生字段漂移 | V2-02 已建立 contracts/（版本 0.1.0，5 模型）+ Schema 漂移检测测试 | V2-02 已建立 |
 
 ---
 
