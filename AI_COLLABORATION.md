@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十六轮架构修订已提交：首次打开信任根证明边界最小纠偏——①撤销第十五轮"FileId 必然不同/模板匹配独立证明身份/FileId 独立完成首次授权"三个未经证明的必然性表述（第十五轮条目就地标注修正），定版准确表述：FileId 仅用于比较两个已取得句柄是否指向同一文件，不作为首次绝对路径打开的独立授权依据；②明确首次信任根来源：最终安装模式由安装/部署阶段带外条件建立（受控安装位置 + 管理员安装程序核验并应用 Program Files/ProgramData 各级目录权限模板 + 专用非管理员服务账户 + 安装时逐级核验祖先 Owner/DACL/写删权限位；运行期启动检查——非授权主体可替换祖先或安装根 → 拒绝启动），运行期逐级核验层重定义为"配置一致性核验"，FileId 仅作句柄间身份一致性比较；③开发模式明示降低保证等级（不承诺抵御同用户恶意进程/本机管理员/祖先替换者，R-4B-7/8/9 不变），不得推广为最终模式保证；④保留方案 A′ 全部参数（NtCreateFile + FILE_DIRECTORY_FILE/FILE_NON_DIRECTORY_FILE + OBJ_CASE_INSENSITIVE|OBJ_DONT_REPARSE 加固标志（组合契约仍 unresolved）+ RootDirectory 逐级相对 + fail-closed + Docker 隔离 D-1）；不新增测试编号、不重跑既有测试；待 ChatGPT 第十六轮最终独立复审） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 已获 ChatGPT 第十六轮复审批准；**V2-04B 阶段 A 已完成：Windows 实机环境盘点与 NTFS 门禁报告（可复现脚本 scripts/ntfs_gate_check.py）——19 PASS / 0 FAIL / 0 BLOCKED**：①方案 A′ 主路径实机验证成功（NtCreateFile+FILE_DIRECTORY_FILE+OBJ_DONT_REPARSE+绝对 \??\ 路径→STATUS_SUCCESS；RootDirectory 相对打开文件/子目录→成功；OBJ_DONT_REPARSE 终末+中间级 junction→恰返回 0xC000050B；无标志对照→junction 被跟随且 FileId 一致；DOS 盘符映射不触发；FileId/卷序列号同一性 same=True）；②删除双授权路径实证（文件 deny DELETE 不阻止删除；父目录 FILE_DELETE_CHILD 单独授予→空 DACL 子文件经父路径删除成功——R-4B-11 转为实测证据；icacls 无法授予 DC，需 PowerShell FileSystemAccessRule）；③共享模式对照 ERROR_SHARING_VIOLATION(32) 与 DACL 拒绝明确区分；④ctypes 结构实测（US=16/OBJA=48/IOSB=16/FILE_ID_INFO=24B）；⑤GetSecurityInfo by handle 成功；⑥令牌实证：UAC 过滤令牌（Administrators deny-only、Medium IL）；⑦Docker 未安装→Docker 相关门禁全部 BLOCKED（不得冒充 PASS），阶段 C 真实 Docker 集成测试待环境；安装阶段带外信任根建立=NOT TESTED；pytest 238 passed 基线不变。阶段 B（Docker 执行器核心实现）按门禁结果推进，其"已验证"声明必须等待真实 Docker 环境） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1187,6 +1187,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-13 | V2-04A 第十四轮修订：目录打开 Reparse 防护最终裁决——确认 FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT 不在官方兼容清单（阻塞成立）；定版方案 A′：CreateOptions 仅 FILE_DIRECTORY_FILE + Attributes 增设 OBJ_DONT_REPARSE (0x1000)（官方明示安全场景防 reparse 跟随、遇即返回 STATUS_REPARSE_POINT_ENCOUNTERED），弃用"打开 reparse 对象本身再核 tag"旧设计（终末 reparse 已被跟随时 tag 检查失明）；维持不采用 CreateFileW+BACKUP_SEMANTICS；方案 A′ 全部实机行为【未验证】 | 采纳 ChatGPT 第十三轮复审关键问题；已核对 NtCreateFile 兼容清单原文与 ntdef OBJECT_ATTRIBUTES 的 OBJ_DONT_REPARSE 原文；设计层参数闭环成立，实机验证缺失仍为事实性未完成项，V2-04A 是否批准交第十四轮复审 |
 | 2026-11-13 | V2-04A 第十五轮修订：最终安全边界裁决选结论 B（官方依据不完整的有界本地演示方案）——OBJ_DONT_REPARSE 降级为加固标志（Moderator 判定组合契约 unresolved）；安全闭环改由打开后逐级核验层独立兜底（reparse 跟随落点 FileId 必异或模板不符 → 拒绝启动）；保证三分法 + 限 Windows 10/11 + NTFS + 固定部署位置、不承诺跨版本；STATUS_REPARSE_POINT_ENCOUNTERED=0xC000050B（Moderator 答复，非产品文档）；核验顺序=模板/Owner 比对→卷/FileId 同一性；不推翻方案 A′ 参数；实机矩阵移至 V2-04B 前置门禁；建议 V2-04A 进入最终复审 | 采纳 ChatGPT 第十四轮复审两个问题；已核对两份 Microsoft External Staff Moderator 答复原文（官方托管 Q&A，非产品文档，全部如实标注层级）；Docker 沙箱维持不可信代码主要隔离边界（D-1），批准后 V2-04B 可启动 |
 | 2026-11-13 | V2-04A 第十六轮修订：首次打开信任根证明边界最小纠偏——撤销"FileId 必然不同/模板匹配独立证明身份/FileId 独立完成首次授权"必然性表述（第十五轮条目就地修正），定版"FileId 仅用于句柄间身份一致性比较、不作首次打开独立授权依据"；明确首次信任根由安装/部署阶段带外条件建立（受控安装位置 + 管理员核验应用权限模板 + 专用非管理员服务账户 + 逐级核验祖先 + 运行期拒绝可替换祖先/根的启动）；开发模式明示降低保证等级、不得推广至最终模式；保留方案 A′ 全部参数 | 采纳 ChatGPT 第十五轮复审（FILE_ID_INFO 不能单独证明路径授权）；不新增测试编号、不重跑既有测试；不推翻方案 A′，OBJ_DONT_REPARSE 组合契约维持 unresolved 标注 |
+| 2026-11-13 | **V2-04B 阶段 A 完成（V2-04A 已获批准）**：Windows 实机环境盘点（Win11 26300/NTFS/无 Docker/Python 3.13.14/UAC 过滤令牌）+ NTFS 门禁 19 PASS/0 FAIL/0 BLOCKED（可复现脚本 scripts/ntfs_gate_check.py）——方案 A′ 主路径、RootDirectory 相对打开、OBJ_DONT_REPARSE 三态（0xC000050B 实证）、FileId 同一性、删除双授权路径（R-4B-11 实测证据）、共享模式错误分类、ctypes 结构（FILE_ID_INFO=24B）全部实测通过；Docker 相关=BLOCKED（未安装，不得冒充 PASS）；安装阶段信任根建立=NOT TESTED | 阶段 A 按 V2-04B 任务书执行，全部 PASS 项有真实执行证据可复现；icacls 无法授予 FILE_DELETE_CHILD（安装程序需 PowerShell/.NET）；pytest 238 passed 基线不变；Docker 执行器实现进入阶段 B，其集成测试在具备 Docker Desktop 前保持 BLOCKED |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -2958,3 +2959,59 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 NtCreateFile / FILE_DIRECTORY_FILE、FILE_NON_DIRECTORY_FILE / OBJ_CASE_INSENSITIVE|OBJ_DONT_REPARSE（加固标志，官方组合契约仍标记 unresolved）/ RootDirectory 逐级相对打开 / fail-closed / Docker 隔离执行不可信 Python 代码（D-1）——全部保留；逐级核验层的角色重定义为"运行期配置一致性核验"（Owner/DACL 模板 + 拒绝位），其有效性叠加于带外信任根之上，非独立授权证明。
 
 **范围与验证确认**：仅修改 AI_COLLABORATION.md 与 README.md；未新增测试编号、未重跑既有测试；`executor_image_lock.json` 保持 pending/null；未实现任何业务代码；不修改 main/trae-dev、不创建/合并 PR、不合并任何分支、不启动 V2-04B；全部实机项维持【未验证】状态并保留于 V2-04B 前置门禁清单。
+
+### 2026-11-13｜Trae：V2-04B 第一阶段（阶段 A：Windows 实机环境盘点与 NTFS 门禁报告，含可复现验证脚本 scripts/ntfs_gate_check.py）
+
+**前置说明**：V2-04A 已由 ChatGPT 第十六轮独立复审批准（批准记录经项目负责人任务书传达，ChatGPT 批准条目待其自行入库，Trae 不代写）。进入 V2-04B，按批准方案 A′（有界采用）推进。本阶段 = 阶段 A（环境盘点 + 实机门禁），交付可复现验证脚本与门禁报告；阶段 B（Docker 执行器核心实现）按门禁结果推进。
+
+**1. 实机环境信息（4.1，实测采集）**
+
+- Windows 11，NT 内核版本 10.0.26300（CurrentBuild 26300，UBR 9974）；
+- 文件系统：C: 卷 **NTFS**（GetVolumeInformationW 实测）；
+- Docker Desktop / Docker Engine：**未安装**（`docker` 命令不存在）→ Docker 相关门禁项全部 BLOCKED；
+- Python：3.13.14（仓库 .venv）；
+- 当前用户：desktop-sph874s\wyy，**UAC 过滤令牌**（非提升；Administrators SID 存在但 deny-only；Medium Mandatory Level）——T002 实测记录，为第十一轮令牌分类（Administrators deny-only 不参与 Allow）提供本机实证。
+
+**2. NTFS 实机门禁报告（4.2 矩阵；脚本 `scripts/ntfs_gate_check.py` 可复现；本机实测 19 PASS / 0 FAIL / 0 BLOCKED / 0 NOT TESTED）**
+
+| 门禁项 | 对应 V2-04A 验证项 | 结果 | 实测证据（关键值） |
+|---|---|---|---|
+| ctypes 结构布局（x64） | 第 9 轮 ctypes 前置 | **PASS** | UNICODE_STRING=16B、OBJECT_ATTRIBUTES=48B、IO_STATUS_BLOCK=16B、FILE_ID_INFO=**24B**（SDK 中 FILE_ID_128 8 字节对齐，第 15 轮曾按 20B 假设——实测修正为 24B，传 20B 缓冲导致 API 越界写） |
+| 卷/文件系统 | —— | **PASS** | C: = NTFS |
+| 令牌类型实证 | 第 11 轮令牌分类 | **PASS** | elevated=False、Administrators deny-only=True（UAC 过滤令牌实证） |
+| 测试 junction 创建 | —— | **PASS** | mklink /J 成功（仅临时目录内） |
+| **方案 A′ 目录主路径** | N-A112（CreateOptions 按第 14 轮修订） | **PASS** | NtCreateFile(FILE_OPEN, ShareAccess=FILE_SHARE_READ, CreateOptions=FILE_DIRECTORY_FILE, Attributes=OBJ_CASE_INSENSITIVE\|OBJ_DONT_REPARSE=0x1040, 绝对 `\??\C:\...` 路径, DesiredAccess=0x00120080) → STATUS_SUCCESS |
+| 对照：无 OBJ_DONT_REPARSE 目录打开 | —— | **PASS** | STATUS_SUCCESS |
+| **方案 A′ 文件相对打开** | N-A113/N-A113 参数 | **PASS** | RootDirectory=已验证目录句柄 + 相对名 + FILE_NON_DIRECTORY_FILE + DesiredAccess=0x00120081 → STATUS_SUCCESS |
+| **RootDirectory 相对打开（子目录）** | N-A113 | **PASS** | 相对名 "sub" + FILE_DIRECTORY_FILE → STATUS_SUCCESS |
+| **FileId/卷序列号同一性** | N-A113/FileId 核验（第 16 轮角色重定义） | **PASS** | 同一文件经相对/绝对两条路径打开 → VolumeSerialNumber+FileId 完全一致（same=True）；FileId 仅作句柄间身份比较——实证其同一性比较有效性 |
+| **OBJ_DONT_REPARSE：终末 junction** | N-A114 | **PASS** | 打开失败，返回恰为 **0xC000050B**（与 Moderator 答复值一致） |
+| **OBJ_DONT_REPARSE：中间级 junction（RootDirectory 相对）** | N-A114 | **PASS** | "junc\\marker.txt" 相对打开失败，返回 0xC000050B——中间级覆盖实证 |
+| 对照：无标志时 junction 被跟随 | N-A114 对照 | **PASS** | 打开成功，且被打开对象 FileId == junction 目标自身 FileId（跟随实证 + 身份一致） |
+| **DOS 盘符映射** | 第 15 轮修订 2 实机必测项 | **PASS** | `\??\C:` 前缀在 OBJ_DONT_REPARSE 下正常解析（盘符映射不触发 0xC000050B） |
+| GetSecurityInfo by handle | 第 10/12 轮 READ_CONTROL 路径 | **PASS** | 句柄上读取 Owner+DACL 成功（ace_count=3；本机用户目录） |
+| 删除正向路径 | N-A123 正向对照 | **PASS** | 文件 DELETE 授权 → DeleteFileW 成功 |
+| 共享模式对照 | N-A122/N-A123 负向 D | **PASS** | 持有句柄（无 FILE_SHARE_DELETE）→ DeleteFileW → **ERROR_SHARING_VIOLATION(32)**，与 DACL 拒绝明确区分（第十三轮错误分类表实证） |
+| **文件 DACL deny DELETE × 父目录授权路径** | R-4B-11（N-A123/N-A105） | **PASS** | 文件 deny DELETE 后删除**仍成功**（deleted=1）——实证"父目录 FILE_DELETE_CHILD 是独立授权路径，文件 DACL 单独 deny 不能阻止删除"，R-4B-11 由威胁模型推断转为**实测证据** |
+| **父目录 FILE_DELETE_CHILD 单独授权** | N-A105/N-A123 负向 C | **PASS** | 目录仅授 FILE_DELETE_CHILD(0x40)+FILE_ADD_FILE(0x2)（icacls **无法授予 DC**，经 PowerShell FileSystemAccessRule DeleteSubdirectoriesAndFiles 精确授予）→ 空 DACL 子文件经父路径删除成功 |
+| 句柄关闭与清理 | 第 13 轮资源释放 | **PASS** | 全部句柄 CloseHandle、临时目录（含 junction）清除成功 |
+| pytest 基线回归 | —— | **PASS** | 238 passed / 0 failed（脚本为新增工具，不影响既有测试） |
+
+**实现过程发现（真实工程发现，全部如实记录）**：
+1. **NtCreateFile 参数序与 Win32 CreateFile 不同**：CreateDisposition 在 CreateOptions 之前——误序时 0x1(FILE_DIRECTORY_FILE) 恰好被解释为 FILE_OPEN 掩盖错误、0x40(FILE_NON_DIRECTORY_FILE) 触发 STATUS_INVALID_PARAMETER(0xC000000D)；已修正并经实测验证。
+2. **GetSecurityInfo 第 7 参为 ppSacl(PACL*)**：误按 4 字节 ULONG 缓冲传入 → API 写 8 字节指针越界 → 堆损坏（0xC0000374）；已修正（argtypes 全部 PACL*）。其分配的缓冲在本机不可安全 LocalFree（一次性工具中不释放，泄漏可忽略）——该观察记录备考。
+3. **FILE_ID_INFO 实际 24 字节**（非 20）：传小缓冲导致越界写与 T030 失败；修正后 T030 PASS。
+4. **icacls 字母表不含 DC**：FILE_DELETE_CHILD 无法经 icacls 授予，需 PowerShell/.NET FileSystemAccessRule——对最终安装模式安装程序实现有直接影响（安装脚本不能用 icacls 配置目录模板中的 DC 位）。
+5. **0xC000050B 实际返回**：STATUS_REPARSE_POINT_ENCOUNTERED 终末与中间级均实测返回该值（此前仅 Moderator 答复值，现为实机证据）。
+6. **T072 实测推翻"T072 预期 5"**：文件 deny DELETE 不阻止删除（父路径）——与第十五轮 Q&A Moderator 与第十三轮矩阵预测一致。
+
+**3. 门禁判定（4.4）**
+
+- **PASS（有实际执行证据）**：上表全部 NTFS/ctypes/删除路径/共享模式/身份核验项（19 项）——方案 A′ 的运行期逐级核验技术路线在本机（Win11 26300 + NTFS + UAC 过滤令牌）**实测可行**；OBJ_DONT_REPARSE 组合契约虽然官方标注 unresolved，实机行为与文档语义一致。
+- **BLOCKED（环境不具备）**：全部 Docker 相关项（Engine 检测/镜像 digest/容器安全参数/无网络/非 root/只读根/资源限制/超时终止/容器清理/输出限制）——本机未安装 Docker Desktop；**不得以 BLOCKED 冒充 PASS**，Docker 隔离执行器的一切"已验证"声明必须等待具备 Docker Desktop 的环境实测。
+- **NOT TESTED（尚未执行）**：最终安装模式的安装阶段带外信任根建立（管理员安装程序核验 Program Files/ProgramData 模板、专用非管理员服务账户创建、DC 位精确授予）——需要部署环境与安装流程，本阶段无法执行；祖先链权限模板核验的实际部署项同属此类（脚本 T060 仅验证了"句柄上读取 Owner/DACL"这一核验能力）。
+- **阶段 A 门禁结论**：NTFS 关键门禁全部 PASS，无 FAIL；Docker BLOCKED 不阻塞阶段 B 开发（任务 4.4 允许实现与失败项无关的隔离执行器基础模块），但阶段 C（真实 Docker 集成测试）在具备 Docker Desktop 环境前保持 BLOCKED，不得用 mock 冒充真实验证。
+
+**4. 范围与验证确认**
+
+本阶段 commit 包含：`scripts/ntfs_gate_check.py`（新增，可复现门禁脚本，仅操作 %TEMP% 下自建临时目录，清理完整）、AI_COLLABORATION.md（本条目）、README.md（状态行）。pytest 238 passed 基线不变。`executor_image_lock.json` 保持 pending/null 未动。未修改 main/trae-dev、未创建/合并 PR、未合并任何分支、未实现 Docker 执行器业务代码（阶段 B 范围）。所有 Docker 相关结论均为 BLOCKED，未宣称任何 Docker 安全行为已验证。
