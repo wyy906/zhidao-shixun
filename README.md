@@ -73,19 +73,19 @@ git switch feat/zhidao-shixun-v2-rebuild
 - 后端默认 8000；前端代理目标默认 http://127.0.0.1:8000。
 - 8000 被占用时：`./scripts/start-server.ps1 -Port 8100`，并对应使用 `./scripts/start-web.ps1 -ApiTarget http://127.0.0.1:8100`、`./scripts/start-desktop.ps1 -ApiTarget http://127.0.0.1:8100`。
 
-## Docker 环境准备（阶段 C 前置；截至 2026-11-13 本机尚未安装）
+## Docker 环境准备（阶段 C 前置）
 
-安装完成后按顺序核验，全部通过即可解锁真实执行（无需改代码）：
+**2026-11-13 实测更新：步骤 1–4 已完成**——Docker Desktop 29.9.3（WSL2 后端，linux/amd64）已安装并常驻运行；`docker` SDK 已装入 .venv；执行服务 healthz 已实测返回 `"engine_available": true, "engine": {"version": "29.9.3"}`；`python:3.12-slim` 已预拉取（RepoDigest `sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b`）。
 
-1. 安装 Docker Desktop for Windows（启用 WSL2 后端）并启动。
-2. 验证引擎：`docker version` 输出应同时包含 Client 与 Server 段。
-3. 安装执行服务依赖：`.venv\Scripts\pip install docker`（docker SDK，仅执行服务进程使用）。
-4. 重启执行服务：`./scripts/start-executor-service.ps1`，此时 `curl http://127.0.0.1:8101/healthz` 应返回 `"engine_available": true`。
-5. 预拉取镜像并取 digest 供审批：
-   `docker pull python:3.12-slim` 然后 `docker image inspect python:3.12-slim --format "{{json .RepoDigests}}"`，
-   把 manifest digest 填入 `executor_image_lock.json`（需负责人审批，当前 approval_status=pending、digest=null）。
+1. ~~安装 Docker Desktop for Windows（WSL2 后端）并启动~~ ✅
+2. ~~验证引擎：`docker version`~~ ✅（Client/Server 均 29.9.3）
+3. ~~安装执行服务依赖 `docker` SDK~~ ✅（已加入 server/requirements.txt）
+4. ~~重启执行服务验证 healthz~~ ✅（engine_available=true）
+5. ~~预拉取镜像并取 digest~~ ✅（见上，**等待负责人审批**：把该 digest 填入 `executor_image_lock.json`，当前 approval_status=pending、digest=null）
 6. 审批通过后，主 API `GET /api/v1/executor/status` 应返回 `"docker_environment_ready": true`，工作台运行按钮自动解除禁用。
-7. 阶段 C：运行真实集成测试（容器安全参数实测、验证闭环终态实测），并如实记录结果。
+7. 阶段 C：运行真实集成测试（容器安全参数实测、验证闭环终态实测），并如实记录结果。**待办**。
+
+注意：Docker Desktop 需保持运行（若退出，开始菜单重新打开即可；首次以本会话经验——它不会常驻在命令行子进程里，需独立启动）。
 
 ## 配置
 
@@ -101,10 +101,9 @@ git switch feat/zhidao-shixun-v2-rebuild
 ## 尚未实现 / 待验证
 
 - 业务功能（AI 指导、屏幕标注、登录会话）尚未实现。
-- 主业务 API 已接入独立执行服务并完成步骤进度闭环（V2-04C/D/E，全量 315 项测试通过 + 本机无 Docker 实机冒烟与浏览器实测验证诚实 fail-closed），但**当前尚未能真正运行 Python 代码**：真实执行需 Docker Desktop 就绪 + executor_image_lock.json 批准 digest（阶段 C）；容器安全参数在真实 Docker Engine 上生效、docker-py 实际行为均为未验证项（见 AI_COLLABORATION.md 决策 D-1 与 V2-04 条目）。
+- **Docker 环境已就绪（2026-11-13 实测）**：Docker Desktop 29.9.3（WSL2）运行中、SDK 已装、执行服务 healthz 返回 `engine_available=true`、`python:3.12-slim` 已预拉取。**真实 Python 执行仍被 fail-closed 门禁阻断**：executor_image_lock.json 尚待负责人审批 digest（pending/null）；审批后即可进入阶段 C 真实集成测试。容器安全参数实测、验证闭环终态行为仍为待验证项（见 AI_COLLABORATION.md 决策 D-1 与 V2-04 条目）。
 - 实验运行与步骤提交接口为开发/受控测试模式（页面输入 `ZD_DEV_API_TOKEN`，仅存于浏览器本地，非用户认证体系）；步骤进度为进程内存态（服务重启即重置，已在界面标注）；多用户部署前必须补认证、会话授权与配额（V2-07 前置条件）。
 - 代码编辑器为 textarea，Monaco 编辑器待接入。
-- executor_image_lock.json：approval_status=pending、digest=null，需负责人批准镜像 digest 后执行功能方可运行（当前 fail-closed 拒绝一切执行）。
 - 生产部署、HTTPS、多用户并发：未做。
 
 ## 部署说明

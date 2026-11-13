@@ -3148,3 +3148,17 @@ NtCreateFile / FILE_DIRECTORY_FILE、FILE_NON_DIRECTORY_FILE / OBJ_CASE_INSENSIT
 3. 如实记录：负责人已确认计划安装（尚无完成时间承诺），安装完成后的第一时间可按清单逐项实测解锁阶段 C。
 
 **待办提醒**：安装就绪后，阶段 C 首批实测项为容器安全参数（network none/read_only/tmpfs/cap_drop/no-new-privileges/nano_cpus/pids_limit）、docker-py logs/wait/kill 实际行为（R-4B-2/R-4B-6）、digest 校验链路；届时 ChatGPT 对 V2-04B~E 的复审可一并依据真实测试证据进行。
+
+### 2026-11-13｜Trae：Docker 环境实测就绪（阶段 C 前置完成）——engine_available=true 实证、镜像已预拉取、digest 待负责人审批
+
+**实测证据链（全部真实执行）**：
+1. Docker Desktop 29.9.3 安装确认（Client windows/amd64 + Server linux/amd64，WSL2 后端，containerd v2.4.2/runc 1.5.2）。
+2. **启动问题定位与解决**：首次经命令行 `Start-Process` 启动的 Docker Desktop 会随命令作业对象结束而被连带终止（日志无任何 crash/fatal，启动本身完全正常）——改用 WMI `Win32_Process.Create` 独立启动后常驻（PID 36580，pipe 5s 就绪）。此经验已写入 README（Docker Desktop 不能作为命令行子进程启动）。
+3. `docker` SDK 装入 .venv（pip.exe 被 Application Control 拦截，改用 `python -m pip`），SDK 真实 ping OK；已加入 `server/requirements.txt`（docker>=7.1,<8，注明仅执行服务进程使用）。
+4. **执行服务 healthz 实测**：`{"engine_available": true, "engine": {"version": "29.9.3"}, "image_digest_locked": false, "docker_integration_tests": "BLOCKED"}`——R-4B-2/R-4B-6 的"待实测"状态从环境不可测变为**环境就绪待测**。
+5. `python:3.12-slim` 预拉取成功，**RepoDigest: `sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b`**（`docker image inspect` RepoDigests 实读）。
+6. 全量测试回归：**314 passed + 1 skipped**（无 SDK 容错测试按设计自动跳过，该测试本机不再适用）。
+
+**未做且不得宣称**：executor_image_lock.json **保持 pending/null 未动**——digest 审批是负责人专属决策（R-4B-4），AI 不自行批准；容器安全参数实测、真实执行、验证闭环终态全部**待 digest 审批后的阶段 C**。
+
+**下一步**：①负责人审批 digest → 填入 executor_image_lock.json（approval_status=approved）→ 重启执行服务 → `docker_environment_ready=true`、前端解禁；②阶段 C 真实集成测试（安全参数逐项实测 + 端到端运行 + 验证闭环终态）；③测试证据供 ChatGPT 对 V2-04B~E 复审。
