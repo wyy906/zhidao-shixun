@@ -44,3 +44,28 @@ powershell -ExecutionPolicy Bypass -File desktop\build_windows.ps1 -Zip
 - 产物**未签名**。若目标机启用了 Smart App Control / WDAC，未签名 exe 会被
   应用控制策略拦截，需要先用组织代码签名证书签名再分发。
 - `dist/`、`build/` 已在 `.gitignore` 中，构建产物不入库。
+
+### 便携版分发（Smart App Control 环境可用）
+
+若目标机启用了 Smart App Control，未签名的 PyInstaller exe 会被拦截。
+可使用便携版：复制**签名版 Python 运行时** + 依赖 + 源码，由 `start.bat` 启动。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File desktop\build_portable.ps1
+# 需要 zip 分发包时：
+powershell -ExecutionPolicy Bypass -File desktop\build_portable.ps1 -Zip
+```
+
+产物：
+
+- `desktop/dist/ZhidaoPortable/start.bat`（目录约 **730 MB**）
+- 可选 `desktop/dist/ZhidaoPortable-win64.zip`（约 **273 MB**）
+
+说明：
+
+- 启动器为 `runtime\pythonw.exe`（复制自本机已签名 Python 3.13），
+  因此不会被 Smart App Control 当作未签名程序拦截；`app/` 下是桌面端源码。
+- 已在 Windows 11 + Smart App Control 开启状态下验证：主窗口、UIA 控件、
+  关闭主窗口后进程保活均正常。
+- 仍不包含任何密钥；配置读取 `~/.zd_shixun/desktop_config.json`。
+- 仅支持 Windows x64；体积较大，适合内部演示与受控分发。

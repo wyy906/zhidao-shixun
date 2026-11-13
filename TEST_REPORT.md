@@ -29,7 +29,7 @@
 | 独立 Linux 生产环境验收 | **尚未通过**（未在独立生产节点执行，且 AppArmor/gVisor/正式 digest 等未覆盖） |
 | 桌面端 GUI / UIA / 悬浮层（R-06） | **主路径 PASS + 绿色目标框端到端 PASS**（2026-11-13 本机 Windows 11 实机点验）；托盘恢复链路已验证有效、真实双击最终确认仍需人工（见 §15） |
 | MVP 演示闭环（M1） | **通过**（2026-11-13 本机：教师导入 → 学生运行代码/报告 → 教师统计；含真实 Docker 沙箱与前端界面，见 §16） |
-| 桌面端打包（M3） | **构建 PASS**；本机运行验证 **BLOCKED**（Smart App Control 拦截未签名 exe，见 §17） |
+| 桌面端打包（M3） | **PASS（便携版）**：PyInstaller exe 仍被 Smart App Control 拦截；签名 Python 便携包已实机启动并通过 UIA/关窗保活（见 §17.6） |
 | 可信度验证（M2） | **通过**（验证器接入适配器；错误诊断接真实模型，真实调用 7.3s；后端 139 项测试通过，见 §18） |
 
 ## 2. 结论摘要
@@ -922,9 +922,38 @@ attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通�
 
 ### 17.5 结论边界
 
-- 本次证明了“可重复构建出完整 onedir 分发包”，**未证明**该 exe 在启用应用控制策略的
-  Windows 上可执行。
+- 本次证明了“可重复构建出完整 onedir 分发包”；该 **PyInstaller exe** 在启用应用控制策略的
+  Windows 上**不可执行**（§17.3）。
+- 便携版（§17.6）已在本机 Smart App Control 开启状态下实机启动并完成 UIA/保活验证，
+  作为受控分发方案；两者的产物与验证结论需分开表述。
 - 未做多版本 Windows、无 Python 环境的干净机、多显示器/高 DPI 下的打包产物验证。
+
+### 17.6 补充：便携分发版 —— 实机 PASS
+
+为解决 Smart App Control 拦截未签名 exe 的问题，新增便携分发方案：
+
+- 构建脚本：`desktop/build_portable.ps1`；启动器：`desktop/packaging/run.py` +
+  `desktop/packaging/start.bat`。
+- 组成：复制本机**已签名**的 Python 3.13 运行时（`pythonw.exe`、DLLs、标准库）+
+  `pip --target` 安装的桌面依赖 + `desktop/src` 源码。
+- 产物：`desktop/dist/ZhidaoPortable/`（**730.4 MB**）与
+  `ZhidaoPortable-win64.zip`（**272.8 MB**）；`dist/` 已被 `.gitignore` 排除。
+- 构建自检：便携运行时执行 `portable-import-ok`（PySide6 / pywinauto / comtypes /
+  mss / PIL / httpx / `ui.main_window` 全部可导入）。
+
+实机验证（Windows 11，Smart App Control 仍为开启状态）：
+
+| 项 | 结果 |
+|---|---|
+| 启动方式 | `runtime\pythonw.exe run.py`（WMI 常驻启动） |
+| 进程 | pid 10544，持续存活 |
+| 主窗口 | 标题 `智导实训助手`，`Responding=True`，600×785 |
+| 窗口数量 | 2（主窗口 + 全屏悬浮层，符合设计） |
+| 关键控件 | `▶ 开始观察`、`🔄 立即刷新`、`⚙ 设置`、三个悬浮层开关均存在 |
+| 关窗保活 | 关闭主窗口后进程仍存活（托盘模式） |
+
+> 结论：**M3 以便携版完成实机验证**。PyInstaller exe 仍受环境策略限制，未被宣称为可执行；
+> 便携版已在 SAC 开启的 Windows 11 上实际启动并完成 UIA 冒烟。
 
 ## 18. 第十八轮：可信度验证（M2，2026-11-13）
 

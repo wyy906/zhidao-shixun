@@ -16,7 +16,7 @@
 | 独立 Linux 生产节点验收 | **尚未验收** |
 | 桌面端 GUI / UIA / 悬浮层（R-06） | **主路径 PASS + 绿色目标框端到端 PASS**（2026-11-13 Windows 11 实机点验）；托盘恢复链路有效、真实双击需人工最终确认 |
 | MVP 演示闭环（M1） | **通过**（2026-11-13 本机：教师导入 → 学生代码运行/报告 → 教师统计；前端界面 PASS；见 `TEST_REPORT.md` §16） |
-| 桌面端打包（M3） | **构建 PASS**（onedir 268.4 MB + zip 105.6 MB）；本机启动被 Smart App Control 拦截，待代码签名或受控机验证（见 §17） |
+| 桌面端打包（M3） | **PASS（便携版）**：签名 Python 便携包 730.4 MB（zip 272.8 MB），已在 SAC 开启的 Win11 启动并通过 UIA/保活；PyInstaller exe 仍被策略拦截（见 §17） |
 | 可信度验证（M2） | **通过**：验证器接入适配器；诊断接真实模型（7.3s）；139 项后端测试通过（见 §18） |
 
 > 下文历史记录中的“151 项”“真实隔离尚未验证”“S-01~S-15 全部未执行”等表述，
@@ -299,15 +299,17 @@
 - 详细记录见 `TEST_REPORT.md` §16。
 - 边界：本机演示拓扑，**不等于生产验收**；中继与临时证书 SAN 不应进入生产部署。
 
-## M3 桌面端打包：构建通过，运行验证被环境策略阻塞（2026-11-13）
+## M3 桌面端打包：便携版实机通过（2026-11-13）
 
 - 工具链：Python 3.13.14 + PyInstaller 6.22.3 + PySide6 6.12.0，onedir + windowed。
-- 产物：`desktop/dist/ZhidaoShixun/`（268.4 MB）与 `ZhidaoShixun-win64.zip`（105.6 MB）；
+- PyInstaller 产物：`desktop/dist/ZhidaoShixun/`（268.4 MB）与 `ZhidaoShixun-win64.zip`（105.6 MB）；
   脚本 `desktop/build_windows.ps1`，构建依赖 `desktop/requirements-build.txt`。
-- 本机开启 Smart App Control，未签名 exe 被拦截（CodeIntegrity 3077/3033，Policy ID 已记录），
-  直接启动 / Start-Process / 资源管理器均失败；**未完成实机启动验证，不得写成通过**。
-- 解除方式：组织代码签名证书签名（推荐），或在受控测试机关闭 Smart App Control（安全降级，不建议）。
-- 详细记录见 `TEST_REPORT.md` §17。
+- 本机开启 Smart App Control，**PyInstaller 未签名 exe 被拦截**（CodeIntegrity 3077/3033），
+  该路径未完成实机启动验证，不得写成通过。
+- **便携版绕过该限制并验证通过**：`desktop/build_portable.ps1` 使用本机已签名 Python 运行时，
+  产物 `desktop/dist/ZhidaoPortable/`（730.4 MB，zip 272.8 MB）；在 SAC 开启的 Windows 11 上
+  实际启动，主窗口、关键控件、关窗后托盘保活均 PASS（pid 10544）。
+- 详细记录见 `TEST_REPORT.md` §17.3 / §17.6。
 
 ## M2 可信度验证：通过（2026-11-13）
 

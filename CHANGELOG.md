@@ -1,5 +1,21 @@
 # 更新记录
 
+## 2026-11-13 — 阶段 4：桌面端便携分发版实机通过（M3 补充）
+
+### 新增
+
+- `desktop/build_portable.ps1`：复制已签名 Python 3.13 运行时 + 依赖 + 源码，生成便携分发目录。
+- `desktop/packaging/run.py`、`desktop/packaging/start.bat`：便携版启动器。
+- `desktop/README.md`：便携版构建、体积与适用场景说明。
+
+### 验证
+
+- 产物 `desktop/dist/ZhidaoPortable/`（730.4 MB，zip 272.8 MB），不入库。
+- 在 **Smart App Control 开启**的 Windows 11 上实际启动成功：主窗口 `智导实训助手`、
+  `▶ 开始观察` / `🔄 立即刷新` / 三个悬浮层开关存在，关闭主窗口后进程继续存活（托盘模式）。
+- PyInstaller 未签名 exe 仍被 SAC 拦截；该路径结论不变，继续保留“未执行”记录。
+- 详细记录：`TEST_REPORT.md` §17.6。
+
 ## 2026-11-13 — 阶段 4：可信度验证（M2）通过
 
 ### 改进
