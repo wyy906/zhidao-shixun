@@ -24,12 +24,19 @@ class DockerSdkDriver(ContainerDriver):
     def __init__(self) -> None:
         try:
             import docker  # 惰性导入：业务进程不导入本模块即可不加载 SDK
-        except ImportError as exc:  # pragma: no cover - 未安装 SDK 时
-            raise DockerUnavailableError("docker SDK 未安装，无法驱动容器执行") from exc
+        except ImportError:
+            # docker SDK 未安装（如开发机无 Docker Desktop）：允许构造本驱动，
+            # engine_info() 返回 None 如实报告"引擎不可用"，执行服务因此可以启动
+            # 并在 /healthz 中诚实报告；执行仍 fail-closed（绝不宿主机回退）。
+            self._sdk = None
+            self._client = None
+            return
         self._sdk = docker
         self._client = docker.from_env()
 
     def engine_info(self) -> Mapping[str, str] | None:
+        if self._client is None:
+            return None
         try:
             self._client.ping()
             version = self._client.version()
@@ -48,6 +55,10 @@ class DockerSdkDriver(ContainerDriver):
         return digests[0].split("@", 1)[1]
 
     def run(self, spec: ContainerSpec) -> DriverRunResult:
+        if self._client is None:
+            raise DockerUnavailableError(
+                "docker SDK 未安装，无法驱动容器执行（fail-closed，无宿主机回退）"
+            )
         from requests.exceptions import ReadTimeout  # docker SDK 依赖 requests
 
         container = None

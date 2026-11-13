@@ -43,28 +43,40 @@ $Headers = @{ "X-Dev-Token" = $DevToken }
 
 function Invoke-Api {
   param([string]$Method, [string]$Uri, [object]$Body)
+  # PS 5.1 compatible: HttpWebRequest gives readable error bodies on 4xx/5xx
+  $req = [System.Net.HttpWebRequest]::Create($Uri)
+  $req.Method = $Method
+  $req.Timeout = 60000
+  $req.Headers.Add("X-Dev-Token", $DevToken)
+  if ($PSBoundParameters.ContainsKey("Body")) {
+    $json = $Body | ConvertTo-Json -Depth 6
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $req.ContentType = "application/json; charset=utf-8"
+    $req.ContentLength = $bytes.Length
+    $stream = $req.GetRequestStream()
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Close()
+  }
   try {
-    if ($PSBoundParameters.ContainsKey("Body")) {
-      $json = $Body | ConvertTo-Json -Depth 6
-      return Invoke-RestMethod -Method $Method -Uri $Uri `
-        -ContentType "application/json; charset=utf-8" -Body $json -Headers $Headers
-    }
-    return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $Headers
-  } catch {
+    $resp = $req.GetResponse()
+  } catch [System.Net.WebException] {
     $resp = $_.Exception.Response
-    if ($null -ne $resp) {
-      try {
-        $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
-        $text = $reader.ReadToEnd()
-        Write-Host "[HTTP $([int]$resp.StatusCode)] $text"
-      } catch {
-        Write-Host "[HTTP error] $($_.Exception.Message)"
-      }
-    } else {
+    if ($null -eq $resp) {
       Write-Host "[connection error] $($_.Exception.Message)"
+      return $null
     }
+  }
+  $code = [int]$resp.StatusCode
+  $reader = New-Object System.IO.StreamReader($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
+  $text = $reader.ReadToEnd()
+  $reader.Close()
+  $resp.Close()
+  if ($code -ge 400) {
+    Write-Host "[HTTP $code] $text"
     return $null
   }
+  if ($text) { return ($text | ConvertFrom-Json) }
+  return $null
 }
 
 function Show-Result {
@@ -90,6 +102,14 @@ $status = Invoke-Api -Method GET -Uri "$BaseUrl/api/v1/executor/status"
 if ($null -eq $status) {
   Write-Host "[WARN] Executor service unreachable or dev token mismatch."
   Write-Host "       If Docker is not installed this is expected: the run API stays fail-closed."
+} else {
+  Write-Host ("executor service   : " + $status.executor_service)
+  Write-Host ("engine_available   : " + $status.engine_available)
+  Write-Host ("image_digest_locked: " + $status.image_digest_locked)
+  Write-Host ("docker_integration_tests: " + $status.docker_integration_tests)
+  if (-not $status.docker_environment_ready) {
+    Write-Host "[WARN] Docker environment is NOT ready. Runs below will fail-closed with 503 + install hint."
+  }
 }
 
 # ---- Step 1: ensure a runnable demo experiment exists (local content, safe to delete) ----

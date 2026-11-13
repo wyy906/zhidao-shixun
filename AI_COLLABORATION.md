@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 已获 ChatGPT 第十六轮复审批准；**V2-04B 阶段 A 复审修正（A1）已完成：修正后重跑 18 PASS / 1 FAIL / 0 BLOCKED，FAIL=T073 空 DACL 前提不可建立（父目录 DC 授权 ev_b 已实证），报告口径已限定（原 19 PASS=修正前统计）；V2-04B 阶段 B（B1+B2）执行器核心与独立执行服务接口已实现：全量 273 项测试通过（全部 Mock/静态验证，Mock 不计入真实 Docker 安全验收），Docker 真实集成测试保持 BLOCKED（本机无 Docker），executor_image_lock.json 保持 pending/null 未批准**；阶段 A 门禁原始记录：Windows 实机环境盘点与 NTFS 门禁（可复现脚本 scripts/ntfs_gate_check.py）——修正前 19 PASS/0 FAIL/0 BLOCKED：①方案 A′ 主路径实机验证成功（NtCreateFile+FILE_DIRECTORY_FILE+OBJ_DONT_REPARSE+绝对 \??\ 路径→STATUS_SUCCESS；RootDirectory 相对打开文件/子目录→成功；OBJ_DONT_REPARSE 终末+中间级 junction→恰返回 0xC000050B；无标志对照→junction 被跟随且 FileId 一致；DOS 盘符映射不触发；FileId/卷序列号同一性 same=True）；②删除双授权路径实证（文件 deny DELETE 不阻止删除；父目录 FILE_DELETE_CHILD 单独授予→空 DACL 子文件经父路径删除成功——R-4B-11 转为实测证据；icacls 无法授予 DC，需 PowerShell FileSystemAccessRule）；③共享模式对照 ERROR_SHARING_VIOLATION(32) 与 DACL 拒绝明确区分；④ctypes 结构实测（US=16/OBJA=48/IOSB=16/FILE_ID_INFO=24B）；⑤GetSecurityInfo by handle 成功；⑥令牌实证：UAC 过滤令牌（Administrators deny-only、Medium IL）；⑦Docker 未安装→Docker 相关门禁全部 BLOCKED（不得冒充 PASS），阶段 C 真实 Docker 集成测试待环境；安装阶段带外信任根建立=NOT TESTED。阶段 C 在具备 Docker 环境前保持 BLOCKED） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 已获 ChatGPT 第十六轮复审批准；**V2-04C（C1+C2）主业务 API 已接入独立执行服务：POST /api/v1/experiments/{id}/runs（开发/受控测试模式，fail-closed 访问控制）+ GET /executor/status，297 项测试 + 本机无 Docker 双服务实机冒烟通过（诚实 503/401/404/422）；真实 Python 执行仍 BLOCKED——需 Docker Desktop + 批准 digest（阶段 C）；演示脚本 scripts/demo-python-run.ps1 可重复执行**；V2-04B 阶段 A 复审修正（A1）已完成：修正后重跑 18 PASS / 1 FAIL / 0 BLOCKED，FAIL=T073 空 DACL 前提不可建立（父目录 DC 授权 ev_b 已实证），报告口径已限定（原 19 PASS=修正前统计）；V2-04B 阶段 B（B1+B2）执行器核心与独立执行服务接口已实现：全量 273 项测试通过（全部 Mock/静态验证，Mock 不计入真实 Docker 安全验收），Docker 真实集成测试保持 BLOCKED（本机无 Docker），executor_image_lock.json 保持 pending/null 未批准**；阶段 A 门禁原始记录：Windows 实机环境盘点与 NTFS 门禁（可复现脚本 scripts/ntfs_gate_check.py）——修正前 19 PASS/0 FAIL/0 BLOCKED：①方案 A′ 主路径实机验证成功（NtCreateFile+FILE_DIRECTORY_FILE+OBJ_DONT_REPARSE+绝对 \??\ 路径→STATUS_SUCCESS；RootDirectory 相对打开文件/子目录→成功；OBJ_DONT_REPARSE 终末+中间级 junction→恰返回 0xC000050B；无标志对照→junction 被跟随且 FileId 一致；DOS 盘符映射不触发；FileId/卷序列号同一性 same=True）；②删除双授权路径实证（文件 deny DELETE 不阻止删除；父目录 FILE_DELETE_CHILD 单独授予→空 DACL 子文件经父路径删除成功——R-4B-11 转为实测证据；icacls 无法授予 DC，需 PowerShell FileSystemAccessRule）；③共享模式对照 ERROR_SHARING_VIOLATION(32) 与 DACL 拒绝明确区分；④ctypes 结构实测（US=16/OBJA=48/IOSB=16/FILE_ID_INFO=24B）；⑤GetSecurityInfo by handle 成功；⑥令牌实证：UAC 过滤令牌（Administrators deny-only、Medium IL）；⑦Docker 未安装→Docker 相关门禁全部 BLOCKED（不得冒充 PASS），阶段 C 真实 Docker 集成测试待环境；安装阶段带外信任根建立=NOT TESTED。阶段 C 在具备 Docker 环境前保持 BLOCKED） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1190,6 +1190,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-13 | **V2-04B 阶段 A 完成（V2-04A 已获批准）**：Windows 实机环境盘点（Win11 26300/NTFS/无 Docker/Python 3.13.14/UAC 过滤令牌）+ NTFS 门禁 19 PASS/0 FAIL/0 BLOCKED（可复现脚本 scripts/ntfs_gate_check.py）——方案 A′ 主路径、RootDirectory 相对打开、OBJ_DONT_REPARSE 三态（0xC000050B 实证）、FileId 同一性、删除双授权路径（R-4B-11 实测证据）、共享模式错误分类、ctypes 结构（FILE_ID_INFO=24B）全部实测通过；Docker 相关=BLOCKED（未安装，不得冒充 PASS）；安装阶段信任根建立=NOT TESTED | 阶段 A 按 V2-04B 任务书执行，全部 PASS 项有真实执行证据可复现；icacls 无法授予 FILE_DELETE_CHILD（安装程序需 PowerShell/.NET）；pytest 238 passed 基线不变；Docker 执行器实现进入阶段 B，其集成测试在具备 Docker Desktop 前保持 BLOCKED |
 | 2026-11-13 | **V2-04B 阶段 A 复审修正（A1）**：FILE_ID_INFO 64 位化（VSN=c_ulonglong@0 + FileId 16B@8，总 24B，显式断言）；T001 仅 NTFS 才 PASS；T060 接收 ppSecurityDescriptor + finally LocalFree 整个 SD；T073 空 DACL 实证——父目录 DC 授权 ev_b 实证成立，但子文件继承创建者令牌默认 DACL、空 DACL 前提不可建立→诚实 FAIL；报告口径限定（原 19 PASS=修正前统计、Docker 项独立 BLOCKED、安装模式信任根 NOT TESTED、修正前后分别记录）；修正后重跑 18 PASS/1 FAIL/0 BLOCKED（commit `376a58c`） | 采纳 ChatGPT 阶段 A 复审五项修正，无降低；T073 FAIL 符合"任何一项无法证实时不得报告 PASS"规则；删除双授权路径结论不受影响（T072 隔离实证） |
 | 2026-11-13 | **V2-04B 阶段 B（B1+B2）Docker 执行器核心实现**：复用 V2-02 执行器接口，新增 models（FailureKind/ExecutionTask/ExecutionOutcome 结构化失败与元数据关联）/driver（ContainerSpec 服务端固定容器参数，无挂载字段面）/service（digest 未锁定→拒绝执行 fail-closed 门禁序列）/docker_adapter（SDK 惰性加载、finally 强制清理）；B2：独立执行服务 HTTP API（token 必需、/healthz 标注 BLOCKED）/JsonlRecordStore 执行记录/业务进程 HTTP 客户端（不可达→DockerUnavailableError）/启动脚本/config 六项；命令向量 `python -I -u -c code` 无 shell 无临时文件无 bind mount；全部基线结构级强制不可关闭；273 tests passed（Mock/静态，不计入真实 Docker 安全验收）；Docker 真实集成测试保持 BLOCKED（commit `a715eda` + B2 commit） | 按 V2-04B 任务书阶段 B 执行：业务接口与 Docker 实现分离、容器参数服务端固定生成、Docker 异常/超时/结果三态不互相伪装；executor_image_lock.json 保持 pending/null；真实容器参数生效、docker-py 行为、digest 校验实测全部待阶段 C |
+| 2026-11-13 | **V2-04C（C1+C2）主业务 API 接入独立执行服务**：POST /api/v1/experiments/{id}/runs（开发/受控测试模式，ZD_DEV_API_TOKEN 未配置即整体关闭 fail-closed）经依赖注入 ExecutorServiceClient 调执行服务；语法/运行时错误=运行结果（completed+非零退出码+stderr）、服务不可达/Docker 未就绪=503+安装提示、digest 未锁定=503、基础设施=502，互不伪装；GET /executor/status 探测；docker_adapter 无 SDK 容错（执行服务可在无 Docker 机器启动并诚实报告）；297 tests + 本机无 Docker 双服务实机冒烟（503/401/404/422 全部实测）；演示脚本 demo-python-run.ps1；前端接入接口信息已写入交接记录（C1=`0857724`） | 项目负责人产品交付冲刺任务书；本轮以功能交付优先、不扩大安全审查范围；认证不足→明确限制为开发/受控测试模式；Docker 真实执行仍 BLOCKED（需 Docker Desktop+批准 digest，阶段 C），lock 文件保持 pending/null |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -3058,3 +3059,40 @@ NtCreateFile / FILE_DIRECTORY_FILE、FILE_NON_DIRECTORY_FILE / OBJ_CASE_INSENSIT
 **安全边界落实核对（设计要求逐项）**：不 privileged（结构无该字段）✓；不挂 Docker socket（无 mounts 入口）✓；无 host network（强制 "none"）✓；非 root（强制 user，"root"/"0:0" 拒绝）✓；只读根文件系统（强制 read_only=True）✓；禁网（network_mode="none"）✓；cap_drop ALL ✓；no-new-privileges ✓；CPU/内存/PID/超时/输出限制 ✓；工作目录 /sandbox 容器内 tmpfs、按任务独立容器隔离 ✓；镜像/容器参数/挂载路径用户不可控（请求模型无此字段面，ContainerSpec 服务端固定生成）✓；Docker 不可用 fail-closed（服务与客户端双侧）✓；宿主机执行回退不存在（静态断言）✓；业务进程不持 Docker API（SDK 仅执行服务进程加载、业务走 HTTP）✓。
 
 **未验证事项（如实）**：①容器创建参数在真实 Docker Engine 上未被实测生效（network none/read_only/tmpfs/cap_drop/no-new-privileges/nano_cpus/pids_limit 全部待阶段 C 实测）；②docker-py attach/日志采集实际行为未实测（R-4B-2 维持"待 V2-04B 实测"，注：当前实现用 `logs(demux=True)` 而非低层 attach，代码经 `-c` 向量传入，原"临时文件 bind mount / stdin attach"两方案均未采用）；③镜像 digest 校验依赖本地镜像元数据，真实 pull/digest 行为未实测；④`executor_image_lock.json` 保持 pending/null，未批准、未宣称；⑤执行服务与业务 API 的真实联调（阶段 D）未开始。
+
+### 2026-11-13｜Trae：V2-04C（C1+C2）主业务 API 接入独立执行服务——Python 实验运行链路打通（无 Docker 环境诚实 fail-closed 实机验证）
+
+**任务来源**：项目负责人"V2 产品交付冲刺：打通真实 Python 实验运行链路"任务书（本对话）。交付节奏 C1（业务 API 接入+测试+演示脚本）→ C2（启动配置/文档/集成修正）两个独立 commit。
+
+**C1：主业务 API 接入（commit `0857724`）**：
+1. `server/app/api/v1/executions.py`（新增）：`POST /api/v1/experiments/{experiment_id}/runs`——复用 B2 `ExecutorServiceClient`（FastAPI 依赖注入，业务进程零 Docker SDK 依赖）；请求体仅 code/timeout_seconds/task_id（无镜像/容器参数注入面）；响应含 execution_id/status/stdout/stderr/exit_code/timed_out/truncated/duration_ms/experiment_id/task_id。`GET /api/v1/executor/status` 探测执行服务健康（engine_available/image_digest_locked/docker_environment_ready）。
+2. **访问控制（认证不足时的明确限制）**：当前无用户认证体系 → 接口为**开发/受控测试模式**：`ZD_DEV_API_TOKEN` 未配置时接口整体关闭（503 executor_dev_mode_disabled，fail-closed，匿名无法获得任意代码执行）；配置后请求头 `X-Dev-Token` 常量时间比对（401 dev_auth_required）；固定 user_id="dev-local" 如实标注非真实用户；实验必须已导入（404 experiment_not_found）；代码字节上限/超时上下界校验（400/422）。
+3. **错误映射（不互相伪装）**：执行服务不可达→503 executor_unavailable（含 Docker 安装提示 install_hint）；执行服务返回 status=error 且 failure_kind=docker_unavailable→503 executor_unavailable；image_digest_not_locked→503 executor_image_not_locked；其余基础设施失败→502 executor_infra_error（附 failure_kind）；执行服务 HTTP 错误→502 executor_service_error；**语法错误/运行时异常是运行结果不是故障**：透传为 200 completed + 非零退出码 + stderr（failure_kind=None）。
+4. `server/tests/test_runs_api.py`（23 项，全部 Mock/依赖注入，明确标注非真实 Docker 验证）：成功运行/语法错误/运行时异常/超时/输出截断/服务不可达/docker_unavailable/digest 未锁定/基础设施 502/执行服务 HTTP 错误/非法请求参数化/超限代码/未知实验/缺 token/错 token/dev 模式未配置/executor token 未配置/status 探测两态。
+5. `scripts/demo-python-run.ps1`（ASCII 注释，PS 5.1 HttpWebRequest 实现可读错误体）：可重复执行——自动生成本地演示实验文件（experiments/demo-python-run.json，标注可删除），提交正常/运行时错误/语法错误三段代码，打印 execution_id/status/stdout/stderr/exit_code，fail-closed 时显示统一错误体。
+6. 配置：`executor_api_url`（默认 http://127.0.0.1:8101）、`dev_api_token`（空→接口关闭）。
+
+**C2：集成修正 + 启动配置 + 文档（本 commit）**：
+1. `docker_adapter.py` 集成修正：docker SDK 未安装时 `DockerSdkDriver` 可构造（原实现 __init__ 直接抛异常→执行服务进程在无 Docker 机器上无法启动、healthz 诚实报告不可达）；现 engine_info()→None 如实报告不可用、image_digest→None、run→DockerUnavailableError（fail-closed，无宿主机回退）。执行服务因此在无 Docker 机器上可启动并诚实报告。新增容错单测（docker SDK 已装环境自动 skip）。
+2. `.env.example`：新增 `ZD_DEV_API_TOKEN` 与 `ZD_EXECUTOR_API_URL` 说明段。
+3. README：状态行（C1/C2 链路 + 本机冒烟结论 + "当前尚未能真正运行 Python 代码"明示）、可运行版本表（测试 297、演示脚本行）、尚未实现节更新。
+4. 本文件：本条目 + 看板 + 决策表。
+
+**真实双服务实机冒烟（Win11，本机无 Docker，2026-11-13 实测）**：
+- 启动：执行服务（ZD_EXECUTOR_TOKEN，127.0.0.1:8101）+ 主 API（ZD_DEV_API_TOKEN/ZD_EXECUTOR_TOKEN，127.0.0.1:8100）均正常启动。
+- `GET /healthz`→200 {engine_available:false, image_digest_locked:false, docker_integration_tests:"BLOCKED（等待真实 Docker 环境）"}（docker_adapter 容错修正后新可达）。
+- `GET /api/v1/executor/status`→200 {executor_service:"reachable", engine_available:false, docker_environment_ready:false}。
+- `POST /api/v1/experiments/{id}/runs`（3 次）→执行服务返回 docker_unavailable outcome→主 API 映射 **503 executor_unavailable**，统一错误体含完整 install_hint（真实链路：业务 API→HTTP 客户端→执行服务→SandboxExecutionService 门禁→结构化失败→回传映射，全链路无宿主机回退）。
+- 访问控制实测：无/错 X-Dev-Token→401 dev_auth_required；未知实验→404 experiment_not_found；缺 code→422 validation_error。
+- 演示脚本 `demo-python-run.ps1` 实机跑通（503 错误体完整显示）。
+- 测试结果：**297 passed**（273 + C2 容错 1 + C1 23）。
+
+**Docker 实测结果**：**BLOCKED**——本机未安装 Docker（已实测确认）。本轮所有"真实"验证限于：双服务真实启动、HTTP 真实调用、fail-closed 真实触发。未做且不得宣称：容器内真实执行、容器安全参数生效、镜像 digest 校验。Mock 测试（24+23 项）已明确标注，不计入真实 Docker 安全验收。`executor_image_lock.json` 保持 pending/null 未动。
+
+**当前是否已能从 API 真正运行 Python**：**否**——链路代码已全部打通且 fail-closed 行为经实机验证，但真实执行被设计门禁阻断（Docker 未安装 + digest 未批准）。**这是按 D-1 决策的正确行为**：安装 Docker Desktop 并批准镜像 digest 后（阶段 C），无需改代码即可真实执行。
+
+**下一步前端接入所需接口信息**：
+- 运行代码：`POST /api/v1/experiments/{experiment_id}/runs`，请求头 `X-Dev-Token: <ZD_DEV_API_TOKEN 值>`（开发模式；正式用户体系后替换为会话凭证），请求体 `{"code": "...", "timeout_seconds": 10, "task_id": "..."}`；成功 200 → `{execution_id, status: completed|timeout, exit_code, stdout, stderr, timed_out, truncated, duration_ms, experiment_id, task_id, failure_kind?, failure_detail?}`。
+- 执行环境探测：`GET /api/v1/executor/status` → `{executor_service, engine_available, image_digest_locked, docker_integration_tests, docker_environment_ready}`；前端应按 docker_environment_ready=false 时禁用运行按钮并展示安装提示。
+- 错误统一结构：`{"error": {"code", "message", "details"}}`；前端按 code 分支（executor_unavailable/executor_image_not_locked→提示环境未就绪；dev_auth_required→配置问题；validation_error→输入问题）。
+- 前端永不持有：ZD_EXECUTOR_TOKEN（执行服务令牌）、ZD_DEV_API_TOKEN 按现设计仅限本机开发，浏览器接入需在业务 API 侧代理（该令牌不进入前端，正式方案待用户体系）。

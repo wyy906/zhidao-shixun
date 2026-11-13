@@ -286,3 +286,25 @@ def test_base_placeholder_still_refuses_without_service() -> None:
 
     with pytest.raises(DockerUnavailableError):
         DockerCodeExecutor().run(ExecutionRequest(language="python", code="print(1)"))
+
+
+def test_docker_sdk_driver_tolerates_missing_sdk() -> None:
+    """无 docker SDK 环境：驱动可构造、engine_info 如实返回 None、run fail-closed——
+    执行服务因此能在无 Docker 机器上启动并诚实报告（C2 集成修正）。"""
+    import importlib.util
+
+    from app.services.executor.docker_adapter import DockerSdkDriver
+
+    if importlib.util.find_spec("docker") is not None:
+        pytest.skip("docker SDK 已安装，容错路径不适用（该环境应有真实引擎）")
+    driver = DockerSdkDriver()
+    assert driver.engine_info() is None
+    assert driver.image_digest("python:3.12-slim") is None
+    spec = ContainerSpec(
+        image_ref="python:3.12-slim",
+        command=("python", "-I", "-u", "-c", "print(1)"),
+        user="65534:65534", timeout_seconds=5, mem_limit="256m", cpus=1.0,
+        pids_limit=64,
+    )
+    with pytest.raises(DockerUnavailableError, match="无宿主机回退"):
+        driver.run(spec)
