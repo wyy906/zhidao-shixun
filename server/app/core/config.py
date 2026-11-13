@@ -28,6 +28,19 @@ class Settings(BaseSettings):
     # V2-03 起真正启用数据库；当前仅预留配置位
     database_url: str = "sqlite:///./zhidao.db"
 
+    # ===== 独立执行服务（V2-04B；仅执行服务进程使用，业务进程不加载 Docker SDK）=====
+    executor_bind_host: str = "127.0.0.1"
+    executor_bind_port: int = 8101
+    # 执行服务调用令牌：为空时执行服务拒绝启动（fail-closed）；浏览器永不持有该令牌
+    executor_token: str = ""
+    # 固定执行镜像（服务端固定生成，用户不可指定）
+    executor_image_tag: str = "python:3.12-slim"
+    # 批准的镜像 digest：为空（executor_image_lock.json approval_status=pending）时
+    # 执行服务拒绝一切执行（fail-closed）
+    executor_image_digest: str = ""
+    # 执行记录 JSONL 存储路径
+    executor_records_path: str = "data/executor_records.jsonl"
+
 
 @lru_cache
 def get_settings() -> Settings:

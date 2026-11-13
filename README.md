@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**V2-02 基础工程骨架、V2-03 实验定义与步骤数据模型已完成。** V2-03 第五轮源码复审通过；Windows 本机全量测试 238 passed / 0 failed / 0 skipped，前端 vue-tsc + vite 构建通过。**V2-04A 已获 ChatGPT 第十六轮独立复审批准**（方案 A′ 有界采用；OBJ_DONT_REPARSE 官方组合契约仍标注 unresolved；FileId 仅作句柄间身份一致性比较；首次信任根由安装/部署阶段带外条件建立；Docker 为不可信代码主要隔离边界）。**V2-04B 阶段 A 已完成：Windows 实机环境盘点与 NTFS 门禁报告（可复现脚本 scripts/ntfs_gate_check.py）——脚本修正前原口径实测 19 PASS / 0 FAIL / 0 BLOCKED**（修正后真实重跑 18 PASS / 1 FAIL / 0 BLOCKED：T073 因子文件按 Windows 语义继承创建者令牌默认 DACL、空 DACL 前提无法建立而诚实记 FAIL；父目录 FILE_DELETE_CHILD 授权已单独实证 ev_b=True，父路径删除隔离证据由 T072 承担；FILE_ID_INFO 已按复审修正为 64 位 VolumeSerialNumber@0 + FileId@8 共 24 字节）：①方案 A′ 主路径实机验证成功——NtCreateFile(FILE_OPEN + FILE_DIRECTORY_FILE + OBJ_CASE_INSENSITIVE|OBJ_DONT_REPARSE + 绝对 \??\ 路径) 打开目录、RootDirectory 相对打开文件（FILE_NON_DIRECTORY_FILE）/子目录均 STATUS_SUCCESS；②OBJ_DONT_REPARSE 三态实证——终末 junction 与中间级 junction 均恰返回 0xC000050B（STATUS_REPARSE_POINT_ENCOUNTERED 实机值），无标志对照下 junction 被跟随且 FileId 与目标一致；③DOS 盘符映射（\??\C:）在 OBJ_DONT_REPARSE 下正常解析；④FileId/卷序列号同一性核验 same=True（仅作句柄间身份比较）；⑤删除双授权路径实测：文件 DACL deny DELETE 不阻止删除（父目录授权路径）、父目录仅授 FILE_DELETE_CHILD(0x40)+FILE_ADD_FILE 时空 DACL 子文件经父路径删除成功——R-4B-11 由威胁模型转为实测证据；**icacls 无法授予 FILE_DELETE_CHILD，需 PowerShell FileSystemAccessRule（对安装程序实现有直接影响）**；⑥共享模式对照：ERROR_SHARING_VIOLATION(32) 与 DACL 拒绝明确区分；⑦ctypes 结构实测：UNICODE_STRING=16B/OBJECT_ATTRIBUTES=48B/IO_STATUS_BLOCK=16B/FILE_ID_INFO=24B（8 字节对齐，传 20B 缓冲会越界写）；⑧GetSecurityInfo 句柄上读取 Owner/DACL 成功；⑨当前用户为 UAC 过滤令牌（Administrators deny-only、Medium IL）——令牌分类实证。**Docker 未安装：Docker 相关门禁全部 BLOCKED（不得冒充 PASS）；安装阶段带外信任根建立=NOT TESTED；阶段 C 真实 Docker 集成测试待具备 Docker Desktop 环境。** pytest 238 passed 基线不变。阶段 B（Docker 隔离执行器核心实现）按门禁结果推进，其安全声明必须以真实 Docker 环境实测为准。AI 指导、屏幕标注等业务功能尚未实现。
+**V2-02 基础工程骨架、V2-03 实验定义与步骤数据模型已完成。** V2-03 第五轮源码复审通过；Windows 本机全量测试 238 passed / 0 failed / 0 skipped，前端 vue-tsc + vite 构建通过。**V2-04A 已获 ChatGPT 第十六轮独立复审批准**（方案 A′ 有界采用；OBJ_DONT_REPARSE 官方组合契约仍标注 unresolved；FileId 仅作句柄间身份一致性比较；首次信任根由安装/部署阶段带外条件建立；Docker 为不可信代码主要隔离边界）。**V2-04B 阶段 A 已完成：Windows 实机环境盘点与 NTFS 门禁报告（可复现脚本 scripts/ntfs_gate_check.py）——脚本修正前原口径实测 19 PASS / 0 FAIL / 0 BLOCKED**（修正后真实重跑 18 PASS / 1 FAIL / 0 BLOCKED：T073 因子文件按 Windows 语义继承创建者令牌默认 DACL、空 DACL 前提无法建立而诚实记 FAIL；父目录 FILE_DELETE_CHILD 授权已单独实证 ev_b=True，父路径删除隔离证据由 T072 承担；FILE_ID_INFO 已按复审修正为 64 位 VolumeSerialNumber@0 + FileId@8 共 24 字节）：①方案 A′ 主路径实机验证成功——NtCreateFile(FILE_OPEN + FILE_DIRECTORY_FILE + OBJ_CASE_INSENSITIVE|OBJ_DONT_REPARSE + 绝对 \??\ 路径) 打开目录、RootDirectory 相对打开文件（FILE_NON_DIRECTORY_FILE）/子目录均 STATUS_SUCCESS；②OBJ_DONT_REPARSE 三态实证——终末 junction 与中间级 junction 均恰返回 0xC000050B（STATUS_REPARSE_POINT_ENCOUNTERED 实机值），无标志对照下 junction 被跟随且 FileId 与目标一致；③DOS 盘符映射（\??\C:）在 OBJ_DONT_REPARSE 下正常解析；④FileId/卷序列号同一性核验 same=True（仅作句柄间身份比较）；⑤删除双授权路径实测：文件 DACL deny DELETE 不阻止删除（父目录授权路径）、父目录仅授 FILE_DELETE_CHILD(0x40)+FILE_ADD_FILE 时空 DACL 子文件经父路径删除成功——R-4B-11 由威胁模型转为实测证据；**icacls 无法授予 FILE_DELETE_CHILD，需 PowerShell FileSystemAccessRule（对安装程序实现有直接影响）**；⑥共享模式对照：ERROR_SHARING_VIOLATION(32) 与 DACL 拒绝明确区分；⑦ctypes 结构实测：UNICODE_STRING=16B/OBJECT_ATTRIBUTES=48B/IO_STATUS_BLOCK=16B/FILE_ID_INFO=24B（8 字节对齐，传 20B 缓冲会越界写）；⑧GetSecurityInfo 句柄上读取 Owner/DACL 成功；⑨当前用户为 UAC 过滤令牌（Administrators deny-only、Medium IL）——令牌分类实证。**Docker 未安装：Docker 相关门禁全部 BLOCKED（不得冒充 PASS）；安装阶段带外信任根建立=NOT TESTED；阶段 C 真实 Docker 集成测试待具备 Docker Desktop 环境。** pytest 238 passed 基线不变。阶段 B（Docker 隔离执行器核心实现）按门禁结果推进，其安全声明必须以真实 Docker 环境实测为准。**V2-04B 阶段 B（B1+B2）Docker 执行器核心实现与独立执行服务接口已交付**：执行器模型（结构化失败分类/任务元数据关联）、服务端固定容器参数 ContainerSpec（无挂载/镜像/容器参数用户入口）、digest 未锁定即拒绝执行的 fail-closed 门禁序列、Docker SDK 适配器（惰性加载、finally 强制清理容器）、独立执行服务 HTTP API（127.0.0.1:8101，令牌必需，业务进程经 HTTP 客户端调用、绝不接触 Docker API）、JSONL 执行记录、启动脚本 `scripts/start-executor-service.ps1`；命令向量 `python -I -u -c <code>` 传入代码（无 shell、无临时文件、无 bind mount）；安全基线（禁网/只读根/非 root/cap_drop ALL/no-new-privileges/资源限制）结构级强制不可关闭。**以上全部经 Mock 单元测试与静态安全检查验证（全量 pytest 273 passed），Mock 不计入真实 Docker 安全验收；本机未安装 Docker，全部 Docker 真实集成测试与容器安全参数实测保持 BLOCKED（阶段 C）；executor_image_lock.json 保持 approval_status=pending、digest=null，镜像 digest 未批准前执行服务拒绝一切执行（fail-closed）。** AI 指导、屏幕标注等业务功能尚未实现。
 
 仓库不内置任何演示 / 测试实验数据；实验内容由用户在 `experiments/` 导入。
 
@@ -25,7 +25,7 @@
 
 ```
 contracts/   跨端统一数据契约（独立 Python 包 + JSON Schema 基线，web/desktop 不依赖 server 内部模块）
-server/      后端 FastAPI（健康检查、实验定义加载校验、验证器白名单、状态机、执行器接口占位）
+server/      后端 FastAPI（健康检查、实验定义加载校验、验证器白名单、状态机、Docker 隔离执行器与独立执行服务——真实 Docker 执行待阶段 C 验证）
 web/         前端 Vue 3 + Vite + TypeScript（最小页面，显示后端连接状态）
 desktop/     Windows 助手 PySide6（最小窗口：连接状态 / 暂停 / 停止）
 experiments/ 实验定义 JSON（规范化 Schema 1.1 见 experiments/schema/；内容由用户导入）
@@ -64,7 +64,8 @@ git switch feat/zhidao-shixun-v2-rebuild
 | 后端 | `./scripts/start-server.ps1`（默认 8000 端口，`-Port` 可改） | `curl http://127.0.0.1:8000/health` 返回 `{"status":"ok",...}` |
 | 前端 | `./scripts/start-web.ps1` | 浏览器访问 http://localhost:5173，页面显示「后端连接正常」 |
 | 桌面助手 | `./scripts/start-desktop.ps1` | 窗口出现；`-Check` 仅探测后端；`-Smoke` 启动后 1.5 秒自动退出 |
-| 测试 | `.venv\Scripts\python.exe -m pytest` | 全量 238 项测试通过（含 V2-02 基线 20 项：契约模型 / Schema 漂移 / 配置 / 执行器 / 健康检查；V2-03 实验定义体系 218 项，含 Schema/Pydantic 双通道镜像表驱动、schema_version 与 verifier.type 枚举镜像、状态机穷举测试） |
+| 测试 | `.venv\Scripts\python.exe -m pytest` | 全量 273 项测试通过（含 V2-02 基线 20 项：契约模型 / Schema 漂移 / 配置 / 执行器 / 健康检查；V2-03 实验定义体系 218 项，含 Schema/Pydantic 双通道镜像表驱动、schema_version 与 verifier.type 枚举镜像、状态机穷举测试；V2-04B 阶段 B 执行器 35 项——23 项核心 Mock 单测 + 12 项执行服务 API 测试，全部为 Mock/静态验证，不计入真实 Docker 安全验收） |
+| 执行服务 | `./scripts/start-executor-service.ps1`（需先设 `ZD_EXECUTOR_TOKEN` 环境变量，未设置则拒绝启动） | `curl http://127.0.0.1:8101/healthz` 返回 engine_available/image_digest_locked/docker_integration_tests="BLOCKED"；**当前本机无 Docker，启动后健康检查会如实报告 Docker 不可用；镜像 digest 未批准（pending）时拒绝一切执行，均为设计内 fail-closed 行为** |
 | 前端构建 | `npm run build`（web/ 目录内） | vue-tsc 类型检查 + vite 构建通过 |
 
 前后端端口说明：
@@ -84,8 +85,9 @@ git switch feat/zhidao-shixun-v2-rebuild
 
 ## 尚未实现 / 待验证
 
-- 业务功能（实验任务、AI 指导、屏幕标注、Docker 沙箱执行）尚未实现，当前为骨架。
-- Docker 沙箱执行器：接口与安全基线已定义并测试，容器实现在 V2-04（见 AI_COLLABORATION.md 决策 D-1）。
+- 业务功能（实验任务、AI 指导、屏幕标注）尚未实现，当前为骨架。
+- Docker 沙箱执行器：核心实现与独立执行服务接口已交付（V2-04B 阶段 B，全量 273 项测试通过），但**全部为 Mock/静态验证**——容器安全参数在真实 Docker Engine 上生效、docker-py 实际行为、镜像 digest 校验实测均为未验证项；本机无 Docker，真实集成测试保持 BLOCKED（阶段 C，见 AI_COLLABORATION.md 决策 D-1 与 V2-04B 条目）。
+- executor_image_lock.json：approval_status=pending、digest=null，需负责人批准镜像 digest 后执行功能方可运行（当前 fail-closed 拒绝一切执行）。
 - 生产部署、HTTPS、多用户并发：未做。
 
 ## 部署说明
