@@ -13,7 +13,7 @@
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
 | 后端测试 | **113 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **158 项，全部通过**（`sandbox_manager/tests/`） |
+| 沙箱管理器测试 | **164 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -23,7 +23,7 @@
 ## 2. 结论摘要
 
 1. 后端 113 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
-2. 沙箱管理器 158 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+2. 沙箱管理器 164 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
    生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、
    结果字段校验、生命周期，以及验收工具 `verify_isolation.py` 的 PASS/FAIL/SKIP 判定可靠性
    （网络 errno 分类、stdout/stderr 分别与合计截断、`memory.swap.max`、本地临时 mTLS 握手、执行节点身份声明）。
@@ -49,7 +49,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（113 项 + 158 项）
+## 4. 后端自动化测试（113 项 + 164 项）
 
 ### 4.1 用例分布
 
@@ -71,8 +71,8 @@
 | `sandbox_manager/tests/test_verify_isolation.py` | 44 | 44 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
-| `sandbox_manager/tests/test_runner.py` | 19 | 19 | 0 |
-| **管理器合计** | **158** | **158** | **0** |
+| `sandbox_manager/tests/test_runner.py` | 25 | 25 | 0 |
+| **管理器合计** | **164** | **164** | **0** |
 
 ### 4.2 实际执行结果
 
@@ -83,7 +83,7 @@ python -m pytest -q
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-158 passed, 1 warning in 3.21s
+164 passed, 1 warning in 3.16s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -602,7 +602,7 @@ python3 sandbox_manager/scripts/verify_isolation.py \
   未覆盖 gVisor/多实例/生产网络拓扑。**不得据此宣称生产环境验收通过**。
 - 生产节点的结论仍以在该节点重新运行 `verify_isolation.py` 的输出为准。
 
-## 12. 本机 WSL2 实机验收与两处修复（2026-11-13）
+## 12. 本机 WSL2 实机验收与两处修复（2026-11-13，历史记录）
 
 ### 12.1 环境
 WSL 3.0.5 + Ubuntu 24.04 LTS + Docker Engine 29.1.3（cgroup v2），
@@ -625,4 +625,33 @@ S-14 单独实测：11 次提交接受 10、第 11 个 429 queue_full、结束�
 ### 12.4 新增测试
 - `test_verify_isolation.py`：`tls_rejection_of` 分类、mTLS 负向四类归因（RemoteDisconnected 算拒绝 / DNS 与拒绝连接不算 / 正向失败不可归因 / 返回 200 判失败）
 - `test_runner.py`：attach 失败回退、`_BoundedCapture` 上限与总量计数
-- 管理器用例数 151 → **158**
+- 管理器用例数 151 → **158**（该数字为当时轮次结果；当前为 **164**，见 §13）
+
+## 13. 第十一轮：attach 部分读取异常修复（2026-11-13）
+
+### 13.1 问题（X-03）
+attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通道都为空”才回退日志，
+其余情况会**把部分输出当作完整结果**返回，任务仍可能标记 `succeeded`，不符合输出完整性要求。
+
+### 13.2 修复规则
+| 情况 | 处理 |
+|---|---|
+| 未读到任何数据即失败 | 回退 `docker logs`，仍按 stdout/stderr 各自上限截断 |
+| 已读到部分数据后中断 | 抛 `SandboxError("output_capture_failed")`，丢弃部分输出，不返回成功 |
+| 读取线程有界等待后仍未退出 | 关闭读取流、再有界等待；仍不退出则 `output_capture_failed` 并回收容器 |
+| 日志回退本身失败 | `_logs()` 抛 `_OutputCaptureError` → `output_capture_failed`，不伪装成空输出 |
+| 正常结束 | 返回有界缓冲内容，保留截断标记，双通道独立上限 |
+
+### 13.3 新增回归测试（6 项）
+`test_attach_partial_stdout_then_error_fails`、`test_attach_partial_stderr_then_error_fails`、
+`test_attach_partial_both_channels_then_error_fails`、`test_attach_failure_before_data_falls_back_within_limits`、
+`test_log_fallback_error_fails`、`test_pump_thread_stuck_fails_and_cleans_container`。
+
+### 13.4 当前测试数量
+- 沙箱管理器：**164 passed**（`test_runner.py` 19 → 25）
+- 后端：**113 passed**
+- 前端：`vue-tsc --noEmit` 退出码 0
+
+### 13.5 结论边界
+- 上述为**单元测试**结论；WSL2 实机验收见 §7.3（该节点 S-01~S-15 通过）。
+- **独立 Linux 生产节点尚未验收**，WSL2 结果不得写成生产环境安全验收通过。

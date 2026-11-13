@@ -25,6 +25,10 @@ class SandboxError(RuntimeError):
         self.code = code
 
 
+class _OutputCaptureError(RuntimeError):
+    """输出采集失败：attach 中断或日志回退读取失败"""
+
+
 class _BoundedCapture:
     """线程安全的有界输出缓冲
 
@@ -70,6 +74,9 @@ class DockerRunner:
     def __init__(self, config: ManagerConfig):
         self.config = config
         self._client = None
+        # 输出读取线程的有界等待时间（可在测试中收窄）
+        self.pump_join_timeout = 10.0
+        self.pump_close_join_timeout = 5.0
 
     # ------------------------------------------------------------------
     # 就绪检查：Docker / 固定镜像 / 运行时 / 强制访问控制
@@ -215,6 +222,9 @@ class DockerRunner:
 
         Docker json-file 日志本身有轮转上限；这里再以流式方式读取，
         达到上限立即停止并关闭流，避免先把无限量日志读进内存再截断。
+
+        读取失败时抛出 `_OutputCaptureError`，使调用方能区分
+        “日志确实为空”和“日志读取失败”，不会把失败伪装成空输出。
         """
         chunks: list[bytes] = []
         total = 0
@@ -233,8 +243,8 @@ class DockerRunner:
                     break
                 chunks.append(chunk)
                 total += len(chunk)
-        except Exception:
-            return ""
+        except Exception as exc:
+            raise _OutputCaptureError(f"日志读取失败: {type(exc).__name__}") from exc
         finally:
             close = getattr(stream, "close", None)
             if callable(close):
@@ -249,20 +259,25 @@ class DockerRunner:
 
     @staticmethod
     def _pump(container, out: _BoundedCapture, err: _BoundedCapture,
-              errors: list[str]) -> None:
-        """在后台线程中通过 attach 实时读取容器 stdout/stderr"""
+              state: dict) -> None:
+        """在后台线程中通过 attach 实时读取容器 stdout/stderr
+
+        `state` 用于回传读取流引用与异常类型，供调用方判断
+        “未读到任何数据”与“读到部分数据后中断”两种情况。
+        """
         stream = None
         try:
             stream = container.attach(
                 stream=True, logs=True, stdout=True, stderr=True, demux=True
             )
+            state["stream"] = stream
             for chunk_out, chunk_err in stream:
                 if chunk_out:
                     out.feed(chunk_out)
                 if chunk_err:
                     err.feed(chunk_err)
-        except Exception as exc:  # attach 失败时由调用方回退到日志读取
-            errors.append(type(exc).__name__)
+        except Exception as exc:  # 由调用方决定回退还是判定失败
+            state["error"] = type(exc).__name__
         finally:
             close = getattr(stream, "close", None)
             if callable(close):
@@ -317,10 +332,10 @@ class DockerRunner:
         # 启动前先建立 attach 流：实时读取输出，避免依赖会被轮转覆盖的 json-file 日志
         out_cap = _BoundedCapture(self.limits().stdout_limit)
         err_cap = _BoundedCapture(self.limits().stderr_limit)
-        pump_errors: list[str] = []
+        pump_state: dict = {"stream": None, "error": None}
         pump = threading.Thread(
             target=self._pump,
-            args=(container, out_cap, err_cap, pump_errors),
+            args=(container, out_cap, err_cap, pump_state),
             daemon=True,
         )
         pump.start()
@@ -346,19 +361,50 @@ class DockerRunner:
             except Exception:
                 # 已被 kill，等待状态刷新即可
                 pass
-            pump.join(timeout=10)
+            pump.join(timeout=self.pump_join_timeout)
+            if pump.is_alive():
+                # 关闭读取流以解除阻塞，再做有界等待；仍不退出则安全失败
+                _close = getattr(pump_state.get("stream"), "close", None)
+                if callable(_close):
+                    try:
+                        _close()
+                    except Exception:
+                        pass
+                pump.join(timeout=self.pump_close_join_timeout)
+            pump_stuck = pump.is_alive()
+
             container.reload()
             state = container.attrs.get("State", {})
             exit_code = state.get("ExitCode")
             oom_killed = bool(state.get("OOMKilled"))
-            stdout = out_cap.text()
-            stderr = err_cap.text()
-            if pump_errors and not stdout and not stderr:
-                # attach 不可用时回退到 json-file 日志（可能已被轮转覆盖）
-                logger.warning("attach 读取输出失败(%s)，回退到日志读取", pump_errors)
-                stdout = self._logs(container, stdout=True, limit=self.limits().stdout_limit)
-                stderr = self._logs(container, stdout=False, limit=self.limits().stderr_limit)
             duration_ms = int((time.monotonic() - started) * 1000)
+
+            if pump_stuck:
+                # 读取线程未退出：安全失败，容器在 finally 中回收
+                raise SandboxError(
+                    "output_capture_failed", "输出读取线程未在限期内退出"
+                )
+
+            attach_error = pump_state.get("error")
+            if attach_error:
+                if out_cap.total or err_cap.total:
+                    # 已读到部分输出后中断：不得把部分输出伪装成完整结果
+                    raise SandboxError(
+                        "output_capture_failed",
+                        f"attach 读取中断({attach_error})，部分输出已丢弃",
+                    )
+                # 未读到任何数据才允许回退到日志
+                logger.warning("attach 未读到数据(%s)，回退到日志读取", attach_error)
+                try:
+                    stdout = self._logs(container, True, self.limits().stdout_limit)
+                    stderr = self._logs(container, False, self.limits().stderr_limit)
+                except _OutputCaptureError as exc:
+                    raise SandboxError(
+                        "output_capture_failed", f"日志回退失败({exc})"
+                    ) from exc
+            else:
+                stdout = out_cap.text()
+                stderr = err_cap.text()
         except SandboxError:
             raise
         except Exception as exc:

@@ -48,10 +48,44 @@ def _valid_attrs() -> dict:
     }
 
 
+class FakeAttachStream:
+    """可控的 attach 流：按步骤产出数据或抛错，或阻塞等待关闭"""
+
+    def __init__(self, steps=None, block_event=None, stubborn=False):
+        self.steps = list(steps or [])
+        self.block_event = block_event
+        self.stubborn = stubborn
+        self.closed = False
+        self.thread = None
+        self.started = threading.Event()
+
+    def __iter__(self):
+        self.thread = threading.current_thread()
+        self.started.set()
+        return self
+
+    def __next__(self):
+        if self.block_event is not None:
+            self.block_event.wait()
+            raise StopIteration
+        if not self.steps:
+            raise StopIteration
+        step = self.steps.pop(0)
+        if step[0] == "data":
+            return (step[1], step[2])
+        raise step[1]
+
+    def close(self):
+        self.closed = True
+        if self.block_event is not None and not self.stubborn:
+            self.block_event.set()
+
+
 class FakeContainer:
     def __init__(self, attrs=None, start_error=None, never_stop=False,
                  remove_error=None, exit_code=0, oom=False,
-                 stdout_bytes=b"hello\n", stderr_bytes=b"", labels=None):
+                 stdout_bytes=b"hello\n", stderr_bytes=b"", labels=None,
+                 attach_stream=None, logs_steps=None):
         self._attrs = attrs or _valid_attrs()
         self.start_error = start_error
         self.never_stop = never_stop
@@ -68,6 +102,8 @@ class FakeContainer:
         self.streamed = False
         self.attached = False
         self.attach_error = None
+        self.attach_stream = attach_stream
+        self.logs_steps = logs_steps
 
     @property
     def attrs(self):
@@ -78,6 +114,8 @@ class FakeContainer:
         self.attached = True
         if self.attach_error:
             raise self.attach_error
+        if self.attach_stream is not None:
+            return iter(self.attach_stream)
         if demux:
             return iter([(self.stdout_bytes, self.stderr_bytes)])
         return iter([self.stdout_bytes + self.stderr_bytes])
@@ -100,6 +138,17 @@ class FakeContainer:
         self._attrs["State"] = {"Running": False, "ExitCode": 137, "OOMKilled": False}
 
     def logs(self, stdout=True, stderr=False, timestamps=False, stream=False, tail=None):
+        if self.logs_steps is not None:
+            def _gen():
+                for step in self.logs_steps:
+                    if step[0] == "data":
+                        yield step[1]
+                    else:
+                        raise step[1]
+            if stream:
+                self.streamed = True
+                return _gen()
+            return b"".join(s[1] for s in self.logs_steps if s[0] == "data")
         data = self.stdout_bytes if stdout else self.stderr_bytes
         if stream:
             self.streamed = True
@@ -334,6 +383,103 @@ def test_bounded_capture_keeps_only_prefix_and_counts_total():
     exact = _BoundedCapture(4)
     exact.feed(b"wxyz")
     assert exact.text() == "wxyz"  # 恰好达到上限不算截断
+
+
+# ===========================================================================
+# attach 部分读取后异常 / 读取线程不退出 / 日志回退失败
+# ===========================================================================
+def _assert_capture_failed(exc_info, container):
+    assert exc_info.value.code == "output_capture_failed"
+    assert container.removed is True
+
+
+def test_attach_partial_stdout_then_error_fails():
+    container = FakeContainer(
+        attach_stream=FakeAttachStream(steps=[
+            ("data", b"A" * 100, None),
+            ("error", RuntimeError("attach broken")),
+        ])
+    )
+    runner = _runner(FakeDocker(container))
+    with pytest.raises(SandboxError) as exc_info:
+        runner.run_job("print(1)", timeout=1)
+    _assert_capture_failed(exc_info, container)
+
+
+def test_attach_partial_stderr_then_error_fails():
+    container = FakeContainer(
+        attach_stream=FakeAttachStream(steps=[
+            ("data", None, b"B" * 100),
+            ("error", RuntimeError("attach broken")),
+        ])
+    )
+    runner = _runner(FakeDocker(container))
+    with pytest.raises(SandboxError) as exc_info:
+        runner.run_job("print(1)", timeout=1)
+    _assert_capture_failed(exc_info, container)
+
+
+def test_attach_partial_both_channels_then_error_fails():
+    container = FakeContainer(
+        attach_stream=FakeAttachStream(steps=[
+            ("data", b"A" * 50, b"B" * 50),
+            ("error", OSError("stream reset")),
+        ])
+    )
+    runner = _runner(FakeDocker(container))
+    with pytest.raises(SandboxError) as exc_info:
+        runner.run_job("print(1)", timeout=1)
+    _assert_capture_failed(exc_info, container)
+
+
+def test_attach_failure_before_data_falls_back_within_limits():
+    container = FakeContainer(
+        stdout_bytes=b"O" * 200_000,
+        stderr_bytes=b"E" * 200_000,
+    )
+    container.attach_error = RuntimeError("attach unsupported")
+    runner = _runner(FakeDocker(container))
+    result = runner.run_job("print(1)", timeout=1)
+    limits = SandboxLimits()
+
+    assert result["status"] == "succeeded"
+    assert len(result["stdout"].encode("utf-8")) <= limits.stdout_limit + 100
+    assert len(result["stderr"].encode("utf-8")) <= limits.stderr_limit + 100
+    assert container.streamed is True
+    assert container.removed is True
+
+
+def test_log_fallback_error_fails():
+    container = FakeContainer(
+        logs_steps=[("data", b"partial\n"), ("error", OSError("log read failed"))]
+    )
+    container.attach_error = RuntimeError("attach unsupported")
+    runner = _runner(FakeDocker(container))
+    with pytest.raises(SandboxError) as exc_info:
+        runner.run_job("print(1)", timeout=1)
+    _assert_capture_failed(exc_info, container)
+
+
+def test_pump_thread_stuck_fails_and_cleans_container():
+    release = threading.Event()
+    stream = FakeAttachStream(block_event=release, stubborn=True)
+    container = FakeContainer(attach_stream=stream)
+    runner = _runner(FakeDocker(container))
+    runner.pump_join_timeout = 0.05
+    runner.pump_close_join_timeout = 0.05
+
+    with pytest.raises(SandboxError) as exc_info:
+        runner.run_job("print(1)", timeout=1)
+
+    _assert_capture_failed(exc_info, container)
+    assert stream.closed is True  # 已尝试关闭读取流
+
+    # 释放阻塞，确保测试不遗留后台线程
+    release.set()
+    assert stream.thread is not None
+    stream.thread.join(timeout=2)
+    assert stream.thread.is_alive() is False
+
 
 
 
