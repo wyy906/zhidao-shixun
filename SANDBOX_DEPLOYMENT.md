@@ -620,6 +620,15 @@ uvicorn app.main:app ...  # 缺表会直接启动失败
 合计: 27 项，FAIL 0，SKIP 0；验收结论: PASS（exit 0）
 ```
 
+S-14（并发与队列）不在 `verify_isolation.py` 覆盖范围内，单独实测：
+
+```
+提交 11 个 time.sleep(3) 任务（max_concurrent=2，排队上限 8）
+accepted = 10
+rejected = 1  ->  HTTP 429 queue_full
+全部结束后：residual=none
+```
+
 执行前准备（在业务后端所在机器或执行节点本机执行；以下变量按实际替换）：
 
 ```bash
@@ -655,7 +664,7 @@ echo "job=$JOB container=$CID"
 | S-11 | 执行超时与进程终止 | `verify_isolation.py`（无限循环用例） | `无限循环被超时终止` 为 PASS | 见 §17.1 实跑记录 | `S-11.txt` | WSL2 通过；生产未验收 |
 | S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 32768 --output-total-limit 65536` | `stdout 输出被截断` 与 `stderr 输出被截断` 均为 PASS，各自实际字节数须 **接近且不超过** 32868；`stdout+stderr 合计输出限制（同一任务）` 为 PASS（两通道都接近单流上限、合计接近且 ≤ 65636） | 见 §17.1 实跑记录 | `S-12.txt` | WSL2 通过；生产未验收 |
 | S-13 | 任务完成后容器清理 | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --confirm-manager-docker-same-host --docker-check local`；`docker ps -aq --filter label=zd.sandbox=1` | 输出为空；`任务结束后无残留容器` 为 PASS；未人工确认节点身份或 Docker CLI 不属于执行节点时为 SKIP（结论 INCOMPLETE） | 见 §17.1 实跑记录 | `S-13.txt` | WSL2 通过；生产未验收 |
-| S-14 | 并发与队列限制（2 并发 / 8 排队） | 并行提交 16 个 `time.sleep(5)` 任务：`seq 16 \| xargs -P16 -I{} curl ... /v1/jobs`；随后 `docker ps` | 见 §17.1 实跑记录 | 未执行 | WSL2 通过；生产未验收 | 未执行 |
+| S-14 | 并发与队列限制（2 并发 / 8 排队） | 并行提交 16 个 `time.sleep(5)` 任务：`seq 16 \| xargs -P16 -I{} curl ... /v1/jobs`；随后 `docker ps` | 接受数 ≤ 10；至少 1 个 HTTP 429 `queue_full`；无残留容器 | WSL2 实测 11 次提交，接受 10 次，第 11 次返回 HTTP 429 `queue_full`，结束后无残留容器 | 见 §17.1 实跑记录（未单独保存 S-14 证据文件） | WSL2 通过；生产未验收 |
 | S-15 | HTTPS / mTLS 身份认证与证书错误处理 | 见 §5.1；或 `verify_isolation.py ... --client-cert ... --client-key ... --expect-mtls --invalid-client-cert ... --invalid-client-key ...` | 合法证书 200；无客户端证书 / 错误证书 / 不受信服务端证书均被拒绝；错误令牌 401；整体退出码 0 或 2（含 SKIP 时不得视为通过）。本地临时 TLS 单元测试（含“证书与私钥不匹配初始化失败”）仅证明客户端逻辑，**不能替代本节实机结论** | 见 §17.1 实跑记录 | `S-15.txt` | WSL2 通过；生产未验收 |
 
 状态填写规则：
