@@ -16,6 +16,7 @@ import {
   type StepStatusValue,
   type SubmitStepResponse,
 } from './api/progress'
+import CodeEditor from './components/CodeEditor.vue'
 
 const DEV_TOKEN_KEY = 'zd_dev_token'
 
@@ -145,8 +146,9 @@ async function selectExperiment(summary: ExperimentSummary) {
   }
 }
 
-function onCodeInput() {
-  if (activeStepId.value) stepCodes.value[activeStepId.value] = code.value
+function onCodeInput(value: string) {
+  code.value = value
+  if (activeStepId.value) stepCodes.value[activeStepId.value] = value
 }
 
 async function runActiveStep() {
@@ -310,7 +312,7 @@ onMounted(async () => {
               <span v-if="activeStep" class="meta">（{{ activeStep.title }}）</span>
             </h2>
             <p v-if="activeStep" class="hint">本步学习目标：{{ activeStep.learning_goal }}</p>
-            <textarea v-model="code" class="editor" spellcheck="false" @input="onCodeInput" />
+            <CodeEditor v-model="code" @update:model-value="onCodeInput" />
             <div class="run-row">
               <button class="primary" :disabled="!canSubmit" @click="runActiveStep">
                 {{ submitting ? '运行中…' : '运行并验证此步' }}
@@ -425,17 +427,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .steps li:hover { background: #f1f5f9; }
 .steps li.active { background: #dbeafe; }
 .step-line { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; }
-.editor {
-  width: 100%;
-  min-height: 180px;
-  font-family: Consolas, 'Courier New', monospace;
-  font-size: 0.85rem;
-  padding: 0.6rem;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  resize: vertical;
-  box-sizing: border-box;
-}
 .run-row { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.6rem; }
 .output {
   background: #0f172a;

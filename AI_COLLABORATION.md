@@ -1194,6 +1194,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-13 | **V2-04D（D1+D2）实验工作台前端 + 列表/详情 API**：GET /api/v1/experiments(+/{id})（fail-closed 加载、issues_count 如实）；前端 Vue 3 零新依赖工作台（健康/令牌/执行环境横幅/实验列表/步骤/textarea 编辑器/运行按钮未就绪禁用带原因/结果面板 stdout+stderr+exit_code）；统一错误体解析；302 tests + 三服务真实联调 + 浏览器实测 5 项全 PASS（无 Docker 下诚实禁用+安装指引，截图证据）（D1=`6960e1c`）；textarea 明确标注待升级 Monaco | 项目负责人"加速完成项目"；运行接口保持开发令牌模式（非用户体系）；真实执行仍 BLOCKED 待阶段 C |
 | 2026-11-13 | **V2-04E（E1+E2）步骤进度闭环**：StepProgressService 把真实运行结果接入白名单验证器（passed/failed/uncertain）与 V2-03 状态机受保护入口（推进/依赖解锁）；uncertain 永不推进、基础设施失败状态不变、阻塞 409/终态 409；GET progress / POST steps/{id}/submit / POST reset（开发令牌门）；前端步骤状态芯片+"运行并验证此步"+重置；315 tests + 三服务联调 + 浏览器实测（两步芯片/禁用原因/截图）；进度为内存态如实标注（E1=`fb2edf9`） | 项目负责人"一切交给你"；复用 V2-03 状态机与验证器，零新增验证逻辑、零状态机旁路；真实终态行为待阶段 C 实测 |
 | 2026-11-13 | **阶段 C 开启：真实 Docker 执行链路打通**：负责人批准 `python:3.12-slim @ sha256:5e2bdb1b...`（lock v2）；首批真实集成实测 10/10（端到端/非 root/只读根/tmpfs/禁网/分流/语法错误/超时 SIGKILL 137/清理零残留），容器安全参数全部真实生效；真实发现三问题并修复：logs 无 demux、attach 竞态丢输出、wait 超时抛 ConnectionError+连接池脏状态（→ logs 按流过滤最终方案）；pytest 真实集成 9 项 + 浏览器教学闭环 8/8（s1 通过→s2 真实解锁→s2 通过，截图）；healthz 口径更新 | 负责人批准 digest（R-4B-4 纪律：AI 实测取回→负责人批准→写入）；Mock 测试无法暴露的 SDK 签名/竞态问题由阶段 C 真实测试捕获——验证了分阶段验收设计的价值 |
+| 2026-11-13 | **V2-04F（F1+F2）扩大真实集成 + Monaco**：第二批真实集成 6/6（输出截断/字节上限/timeout 上限/3 并发隔离/边界 20s/运行时异常 stderr，真实容器）；Monaco 0.57 接入（exports map 路径修正，浏览器实测渲染+高亮+真实运行 passed） | 项目负责人"加速完成项目"；真实集成累计 15 项全过；Monaco 路径问题由 node import.meta.resolve 实测定案 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -3195,3 +3196,13 @@ NtCreateFile / FILE_DIRECTORY_FILE、FILE_NON_DIRECTORY_FILE / OBJ_CASE_INSENSIT
 **测试规模**：Mock 单元 314 passed + 真实集成 9 passed（环境就绪时）/ SKIP（未就绪时，诚实跳过）。
 
 **下一步**：①ChatGPT 对 V2-04B~C（阶段 A/B/C 修正、核心、真实测试）完整复审——现已有全部真实证据；②扩大真实集成覆盖（并发、输出超限 65536 实测、失败分类全矩阵）；③登录会话最小实现（运行接口仍为开发令牌模式）；④Monaco 编辑器；⑤报告草稿（V2-09 前置）。
+
+### 2026-11-13｜Trae：V2-04F（F1+F2）扩大真实集成覆盖 + Monaco 编辑器交付
+
+**F1：真实集成第二批 6/6 PASS（commit `5de491c`）**——[test_integration_real_docker_batch2.py](server/tests/test_integration_real_docker_batch2.py)：①输出超限实测（生成 70KB stdout → truncated=true、体积 ≤65536）②代码 65536 字节上限拒绝 ③timeout_seconds>20 拒绝 ④**3 并发任务实测**（ThreadPoolExecutor 并行运行，结果互不串扰——独立容器隔离生效）⑤timeout=20 边界值可用 ⑥运行时异常 stderr 完整 traceback 采集。全部真实容器运行，服务层零修改（第一批迭代已打好基础）。
+
+**F2：Monaco 编辑器替换 textarea**：`web/src/components/CodeEditor.vue`（monaco-editor 0.57.0，vue-tsc + vite build 通过）。真实接入发现：monaco 0.57 exports map 使经典 `esm/vs/...` 子路径导入失效（node import.meta.resolve 实测确认 `esm/vs/esm/vs/...` 双重拼接）——正确路径为 `monaco-editor/editor/editor.worker.js?worker`。浏览器实测（截图证据）5/5 PASS：Monaco 渲染（行号 gutter/语法高亮/vs 主题）、运行按钮解禁、s1 真实容器运行（exit=0，stdout 采集）→ 判定 passed → 步骤"已通过"；step2 与控制台检查因浏览器代理步骤预算耗尽未跑（同一代码路径已验证，如实记录）。
+
+**当前状态**：测试规模 314 Mock 单元 passed + 真实集成 15 passed（首批 9 + 二批 6，环境不满足诚实 SKIP）；前端编辑器达到产品级（语法高亮/行号/专业编辑体验）；真实 Docker 链路全部就绪。
+
+**下一步**：①ChatGPT 对 V2-04B~F 完整复审；②登录会话最小实现（V2-07 前置）；③实验内容建设（真实教学实验包）；④过程记录与报告草稿（V2-09 前置）。
