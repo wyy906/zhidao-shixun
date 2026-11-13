@@ -1,4 +1,4 @@
-﻿# 测试报告
+﻿﻿﻿﻿# 测试报告
 
 > 本文件记录「智导实训」的测试基线与历次实测结果。**第 1~7 章为当前状态**，
 > 第 8 章为历史演进记录（仅用于追溯，不代表当前状态）。
@@ -13,7 +13,7 @@
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
 | 后端测试 | **113 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **151 项，全部通过**（`sandbox_manager/tests/`） |
+| 沙箱管理器测试 | **158 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
@@ -23,7 +23,7 @@
 ## 2. 结论摘要
 
 1. 后端 113 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
-2. 沙箱管理器 151 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+2. 沙箱管理器 158 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
    生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、
    结果字段校验、生命周期，以及验收工具 `verify_isolation.py` 的 PASS/FAIL/SKIP 判定可靠性
    （网络 errno 分类、stdout/stderr 分别与合计截断、`memory.swap.max`、本地临时 mTLS 握手、执行节点身份声明）。
@@ -49,7 +49,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（113 项 + 151 项）
+## 4. 后端自动化测试（113 项 + 158 项）
 
 ### 4.1 用例分布
 
@@ -68,11 +68,11 @@
 | `sandbox_manager/tests/test_container_spec.py` | 41 | 41 | 0 |
 | `sandbox_manager/tests/test_server.py` | 19 | 19 | 0 |
 | `sandbox_manager/tests/test_jobs.py` | 21 | 21 | 0 |
-| `sandbox_manager/tests/test_verify_isolation.py` | 39 | 39 | 0 |
+| `sandbox_manager/tests/test_verify_isolation.py` | 44 | 44 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
-| `sandbox_manager/tests/test_runner.py` | 17 | 17 | 0 |
-| **管理器合计** | **151** | **151** | **0** |
+| `sandbox_manager/tests/test_runner.py` | 19 | 19 | 0 |
+| **管理器合计** | **158** | **158** | **0** |
 
 ### 4.2 实际执行结果
 
@@ -83,7 +83,7 @@ python -m pytest -q
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-151 passed, 1 warning in 2.72s
+158 passed, 1 warning in 3.21s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -220,29 +220,46 @@ python -m pytest -q sandbox_manager/tests
 | D-07 | 覆盖导入会删除同标题旧实验，连带删除学生进度、报告与操作记录 | 数据不可恢复 | 改为归档 / 保留历史进度 |
 | D-08 | 全量使用 `datetime.utcnow()`，触发 DeprecationWarning，未来版本将移除 | 未来兼容性 | 迁移到 `datetime.now(UTC)` |
 
-### 7.3 尚未验证
+### 7.3 实机验收结果（WSL2 节点，2026-11-13）
 
-| 编号 | 项 | 说明 |
-|---|---|---|
-| R-06 | 桌面端 GUI / UIA / 悬浮层实际运行 | 目前仅完成离屏导入检查；需人工在 Windows 桌面点验 |
-| S-01 | 容器网络隔离（公网 / 局域网 / 业务端口） | **未执行**：开发机为 Windows、无 Docker、无 Linux 节点 |
-| S-02 | 文件系统隔离（宿主机 / 业务文件不可读） | **未执行** |
-| S-03 | 根文件系统只读 | **未执行** |
-| S-04 | 非 root 身份运行 | **未执行** |
-| S-05 | 无额外挂载与设备 | **未执行** |
-| S-06 | 无端口映射 | **未执行** |
-| S-07 | CPU 限制 0.5 核 | **未执行** |
-| S-08 | 内存与交换限制 128MB | **未执行** |
-| S-09 | PID 数量限制 32 | **未执行** |
-| S-10 | 临时磁盘限制（tmpfs 24MB / 业务 16MB） | **未执行** |
-| S-11 | 执行超时与进程终止 | **未执行** |
-| S-12 | stdout/stderr 输出截断 64KB | **未执行** |
-| S-13 | 任务完成后容器清理 | **未执行** |
-| S-14 | 并发与队列限制（2 并发 / 8 排队） | **未执行** |
-| S-15 | HTTPS / mTLS 身份认证与证书错误处理 | **未执行** |
+验收环境：Windows 11（build 26300）+ WSL2（WSL 3.0.5，内核
+`6.18.58.1-microsoft-standard-WSL2`）+ Ubuntu 24.04 LTS + Docker Engine 29.1.3，
+cgroup v2。沙箱镜像为本地构建并按本地 Image ID 固定
+（`sha256:f6ce001f…`，`image_verification=local-image-id`）。
+管理器以 systemd 运行，`https://127.0.0.1:8443` + 双向 TLS。
 
-> S-01 ~ S-15 的命令、预期结果与证据要求见 `SANDBOX_DEPLOYMENT.md` §17；
-> 当前全部为“未执行”，不得用单元测试或配置检查替代实机结论。
+`verify_isolation.py` 实跑结果：**27 项，FAIL 0，SKIP 0，结论 PASS（exit 0）**；
+S-14 另行单独实测通过。
+
+| 编号 | 项 | 状态 | 证据摘要 |
+|---|---|---|---|
+| S-01 | 容器网络隔离（公网/局域网/业务端口） | **通过** | 三目标均 `OSError errno=101`；容器仅 `lo` |
+| S-02 | 文件系统隔离 | **通过** | 宿主机标记文件、业务 `.env` 均 `READ_DENIED` |
+| S-03 | 根文件系统只读 | **通过** | `MOUNT_OPTS: ro,…` |
+| S-04 | 非 root 身份 | **通过** | `UID: 65534` |
+| S-05 | 无额外挂载与设备 | **通过** | inspect：`binds=None`、`Devices=[]` |
+| S-06 | 无端口映射 | **通过** | inspect：`PortBindings=map[]`、`PublishAllPorts=false` |
+| S-07 | CPU 0.5 核 | **通过** | `quota=50000 period=100000` |
+| S-08 | 内存/交换 128MB | **通过** | `memory.max=134217728`、`memory.swap.max=0` |
+| S-09 | PID 32 | **通过** | `pids.max=32` |
+| S-10 | 临时磁盘限制 | **通过** | tmpfs 12m/4m、`/dev/shm` 8m；`DISK_LIMITED (ENOSPC)` |
+| S-11 | 执行超时与终止 | **通过** | `status=timeout` |
+| S-12 | stdout/stderr 截断 64KB | **通过** | stdout 32802、stderr 32802、合计 65604（上限≈65536） |
+| S-13 | 容器清理 | **通过** | `residual=none` |
+| S-14 | 并发与队列（2 并发 / 8 排队） | **通过** | 11 次提交：接受 10、第 11 个 `429 queue_full`；结束后无残留 |
+| S-15 | HTTPS / mTLS | **通过** | 合法证书 200；无证书/不受信证书在 TLS 层被关闭；错误令牌 401；不受信服务端证书被拒绝 |
+
+**重要边界（不得省略）**：
+1. 本环境为 **WSL2**，不是独立 Linux 生产节点；结论只代表该 WSL2 配置。
+2. **AppArmor 在 WSL2 下不可用**（`/sys/module/apparmor/parameters/enabled=N`），
+   故仅验证了 seccomp 默认策略，未验证 AppArmor 强制。
+3. 镜像经**本地构建**并按本地 Image ID 固定，未验证 registry digest 供应链链路。
+4. 仍未验证：gVisor 运行时、多实例清理隔离、Docker 故障注入、真实生产网络拓扑。
+5. R-06（桌面端 GUI / UIA / 悬浮层实际运行）仍未验证，需人工在 Windows 桌面点验。
+
+> 因此：**S-01~S-15 在当前 WSL2 节点已执行且通过，但阶段 3-A 仍不能宣称
+> “生产环境安全验收通过”**，生产节点（含 AppArmor/gVisor、正式镜像 digest、
+> 真实网络）仍需独立复验。
 
 补充未验证项（技术细节，与上表互补）：
 
@@ -579,6 +596,33 @@ python3 sandbox_manager/scripts/verify_isolation.py \
 
 ## 11. 本机环境补充
 
-- 开发机为 Windows 且未安装 Docker，无法启动 Linux 容器，
-  因此阶段 3-A 的容器隔离、网络隔离、资源限制、容器清理**均未在本机实机验证**。
-- 上述能力的测试结果只能以 Linux 执行节点上的 `verify_isolation.py` 输出为准。
+- 2026-11-13 已在本机 WSL2（Ubuntu 24.04 + Docker Engine 29.1.3）部署管理器并完成
+  S-01~S-15 实跑，结果见 §7.3。
+- 该环境为 WSL2，不是独立 Linux 生产节点：AppArmor 不可用、镜像为本地构建、
+  未覆盖 gVisor/多实例/生产网络拓扑。**不得据此宣称生产环境验收通过**。
+- 生产节点的结论仍以在该节点重新运行 `verify_isolation.py` 的输出为准。
+
+## 12. 本机 WSL2 实机验收与两处修复（2026-11-13）
+
+### 12.1 环境
+WSL 3.0.5 + Ubuntu 24.04 LTS + Docker Engine 29.1.3（cgroup v2），
+管理器 systemd 常驻，`https://127.0.0.1:8443` + mTLS。
+镜像为本地构建并以本地 Image ID 固定（Docker Hub 不可达）。
+
+### 12.2 首轮实跑发现的两个问题
+| 编号 | 问题 | 根因 | 处置 |
+|---|---|---|---|
+| X-01 | mTLS 负向用例被判 FAIL | TLS 1.3 下服务端告警在握手完成后到达，客户端得到 `RemoteDisconnected` 而非 `SSLError` | `verify_isolation.py` 新增 `tls_rejection_of()`：只接受 SSL 异常或“TLS 层关闭且零 HTTP 响应”，并要求正向请求成功才可归因 |
+| X-02 | stdout/合计输出接近 0 字节 | json-file `max-size=64k` + `max-file=1`，5MB 突发输出被轮转覆盖（实测日志仅剩 70 字节） | `runner.py` 改为启动前 attach 实时读取 + 有界缓冲（超限仍读走但不保留），attach 失败才回退 `logs` |
+
+### 12.3 修复后复验
+```
+verify_isolation.py：27 项，FAIL 0，SKIP 0，结论 PASS（exit 0）
+  stdout 32802 / stderr 32802 / 合计 65604（上限≈65536）
+S-14 单独实测：11 次提交接受 10、第 11 个 429 queue_full、结束后无残留
+```
+
+### 12.4 新增测试
+- `test_verify_isolation.py`：`tls_rejection_of` 分类、mTLS 负向四类归因（RemoteDisconnected 算拒绝 / DNS 与拒绝连接不算 / 正向失败不可归因 / 返回 200 判失败）
+- `test_runner.py`：attach 失败回退、`_BoundedCapture` 上限与总量计数
+- 管理器用例数 151 → **158**

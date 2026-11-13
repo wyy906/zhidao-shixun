@@ -43,6 +43,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import ssl
@@ -410,6 +411,43 @@ def ssl_error_of(exc: BaseException) -> ssl.SSLError | None:
     if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, ssl.SSLError):
         return exc.reason
     return None
+
+
+def _exception_chain(exc: BaseException):
+    """遍历异常链（含 urllib 包装的 reason），用于识别底层异常类型"""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        reason = getattr(current, "reason", None)
+        if isinstance(reason, BaseException) and id(reason) not in seen:
+            yield reason
+            seen.add(id(reason))
+        current = current.__cause__ or current.__context__
+
+
+def tls_rejection_of(exc: BaseException) -> tuple[bool, str]:
+    """判断异常是否表明服务端在 TLS 层拒绝了连接
+
+    只接受两类证据：
+      1. 明确的 SSL 异常；
+      2. TLS 已建立后被服务端关闭（RemoteDisconnected / RST / BrokenPipe），
+         此时客户端收不到任何 HTTP 响应。
+
+    DNS 失败、连接被拒绝、超时、证书/私钥配置错误一律不算。
+    TLS 1.3 下服务端告警在握手完成后才到达，客户端因此看到的是连接被关闭，
+    而不是 SSLError，故必须按“零 HTTP 响应”识别，不能直接当作握手失败。
+    """
+    ssl_exc = ssl_error_of(exc)
+    if ssl_exc is not None:
+        reason = getattr(ssl_exc, "reason", "") or ""
+        return True, f"SSLError({reason})" if reason else "SSLError"
+
+    for item in _exception_chain(exc):
+        if isinstance(item, (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError)):
+            return True, f"{type(item).__name__}（TLS 层关闭，未收到 HTTP 响应）"
+    return False, f"{type(exc).__name__}（非 TLS 层拒绝，不能作为 mTLS 证据）"
 
 
 # ===========================================================================
@@ -814,37 +852,44 @@ def _check_mtls(m: Manager, args, add) -> None:
             "服务端声明强制 mTLS，但未提供 --client-cert / --client-key")
         return
 
+    positive_ok = False
     try:
         status, _ = m._request("GET", "/health")
-        add("双向 TLS：合法客户端证书可访问", status == 200, f"status={status}")
+        positive_ok = status == 200
+        add("双向 TLS：合法客户端证书可访问", positive_ok, f"status={status}")
     except Exception as exc:  # noqa: BLE001
         add("双向 TLS：合法客户端证书可访问", False,
             f"请求异常: {type(exc).__name__}")
 
-    # 无客户端证书：必须被拒绝（SSL/TLS 层失败）
-    try:
-        plain = Manager(args.url, args.token, args.ca)
-        status, _ = plain._request("GET", "/health")
-        add("双向 TLS：无客户端证书被拒绝", False, f"请求成功 status={status}")
-    except Exception as exc:  # noqa: BLE001
-        ok = ssl_error_of(exc) is not None
-        add("双向 TLS：无客户端证书被拒绝", ok, f"{type(exc).__name__}")
-
-    # 错误客户端证书：必须被拒绝
-    if args.invalid_client_cert and args.invalid_client_key:
+    def _judge_negative(label: str, client: Manager) -> None:
         try:
-            bad = Manager(args.url, args.token, args.ca,
-                          args.invalid_client_cert, args.invalid_client_key)
-            status, _ = bad._request("GET", "/health")
-            add("双向 TLS：错误客户端证书被拒绝", False, f"请求成功 status={status}")
-        except Exception as exc:  # noqa: BLE001
-            add("双向 TLS：错误客户端证书被拒绝",
-                ssl_error_of(exc) is not None, f"{type(exc).__name__}")
+            status, _ = client._request("GET", "/health")
+        except Exception as exc:  # noqa: BLE001 - 需要给出异常类型依据
+            ok, detail = tls_rejection_of(exc)
+            if ok and not positive_ok:
+                # 合法证书都无法访问时，负向结果无法归因于证书校验
+                ok = False
+                detail += "；合法证书请求未成功，无法归因"
+            add(label, ok, detail)
+        else:
+            add(label, False, f"请求成功 status={status}，mTLS 未生效")
+
+    # 无客户端证书：必须在 TLS 层被拒绝（零 HTTP 响应）
+    _judge_negative("双向 TLS：无客户端证书被拒绝",
+                    Manager(args.url, args.token, args.ca))
+
+    # 错误客户端证书：必须在 TLS 层被拒绝
+    if args.invalid_client_cert and args.invalid_client_key:
+        _judge_negative(
+            "双向 TLS：错误客户端证书被拒绝",
+            Manager(args.url, args.token, args.ca,
+                    args.invalid_client_cert, args.invalid_client_key),
+        )
     else:
         add("双向 TLS：错误客户端证书被拒绝", None,
             "未提供 --invalid-client-cert / --invalid-client-key，无法执行负向测试")
 
-    # 不受信服务端证书：必须校验失败
+    # 不受信服务端证书：必须由客户端证书校验明确拒绝
     try:
         untrusted = Manager(args.url, args.token, None,
                             args.client_cert, args.client_key)

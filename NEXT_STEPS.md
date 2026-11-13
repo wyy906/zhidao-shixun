@@ -1,4 +1,4 @@
-﻿# 下一步
+﻿﻿﻿﻿# 下一步
 
 ## 现状一句话
 
@@ -193,3 +193,20 @@
 - 用例不得依赖网络、真实 AI Key、真实数据库。
 - 不得把模拟测试（FakeRunner / 参数级单测）写成“真实隔离已验证”。
 - `pytest` 出现失败时先判断是代码缺陷还是用例过期，**不得通过删断言或 skip 变绿**。
+
+## 本机 WSL2 实机验收结果（2026-11-13）
+
+已完成：
+1. 本机 WSL2（WSL 3.0.5 + Ubuntu 24.04 + Docker Engine 29.1.3）部署沙箱管理器。
+2. 因 Docker Hub 不可达，镜像改为**本地构建 + 本地 Image ID 固定**（`sha256:f6ce001f…`）。
+3. `verify_isolation.py` 实跑：**27 项 FAIL 0 / SKIP 0 / PASS**；S-14 另行实测通过。
+4. 修复两处：
+   - `verify_isolation.py` mTLS 负向判定适配 TLS 1.3（`RemoteDisconnected` 且零 HTTP 响应也算服务端拒绝）。
+   - `runner.py` 输出改 attach 实时读取 + 有界缓冲，解决 json-file 轮转导致输出丢失。
+5. 管理器用例 151 → 158。
+
+仍需完成（生产口径）：
+1. 在独立 Linux 生产节点（含 AppArmor / 可选 gVisor）复跑 S-01~S-15。
+2. 使用正式 registry 镜像 digest（非本地 Image ID）。
+3. 多实例清理隔离、Docker 故障注入、真实网络拓扑验证。
+4. WSL2 结论**不得**当作生产验收通过。

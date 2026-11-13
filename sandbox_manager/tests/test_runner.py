@@ -66,10 +66,21 @@ class FakeContainer:
         self.removed = False
         self.killed = False
         self.streamed = False
+        self.attached = False
+        self.attach_error = None
 
     @property
     def attrs(self):
         return self._attrs
+
+    def attach(self, stream=True, logs=True, stdout=True, stderr=True, demux=False):
+        """模拟 Docker attach：实时输出，不受 json-file 轮转影响"""
+        self.attached = True
+        if self.attach_error:
+            raise self.attach_error
+        if demux:
+            return iter([(self.stdout_bytes, self.stderr_bytes)])
+        return iter([self.stdout_bytes + self.stderr_bytes])
 
     def start(self):
         if self.start_error:
@@ -290,7 +301,8 @@ def test_logs_streamed_and_capped_per_channel():
     result = _runner(FakeDocker(container)).run_job("print(1)", timeout=1)
     limits = SandboxLimits()
 
-    assert container.streamed is True  # 不是先整块读完再截断
+    # 通过 attach 实时读取，不依赖会被轮转覆盖的 json-file 日志
+    assert container.attached is True
     stdout_bytes = len(result["stdout"].encode("utf-8"))
     stderr_bytes = len(result["stderr"].encode("utf-8"))
     assert stdout_bytes <= limits.stdout_limit + 100
@@ -298,6 +310,31 @@ def test_logs_streamed_and_capped_per_channel():
     assert stdout_bytes + stderr_bytes <= limits.output_bytes + 200
     assert "已截断" in result["stdout"]
     assert "已截断" in result["stderr"]
+
+
+def test_attach_failure_falls_back_to_logs():
+    container = FakeContainer(stdout_bytes=b"fallback-out\n", stderr_bytes=b"fallback-err\n")
+    container.attach_error = RuntimeError("attach unsupported")
+    result = _runner(FakeDocker(container)).run_job("print(1)", timeout=1)
+
+    assert result["stdout"] == "fallback-out\n"
+    assert result["stderr"] == "fallback-err\n"
+    assert container.streamed is True
+
+
+def test_bounded_capture_keeps_only_prefix_and_counts_total():
+    from sandbox_manager.runner import _BoundedCapture
+
+    cap = _BoundedCapture(8)
+    cap.feed(b"abcd")
+    cap.feed(b"efghijkl")
+    assert cap.total == 12
+    assert cap.text() == "abcdefgh\n…（输出过长，已截断）"
+
+    exact = _BoundedCapture(4)
+    exact.feed(b"wxyz")
+    assert exact.text() == "wxyz"  # 恰好达到上限不算截断
+
 
 
 # ===========================================================================

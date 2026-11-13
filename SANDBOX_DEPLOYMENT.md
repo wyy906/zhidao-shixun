@@ -672,3 +672,43 @@ sudo journalctl -u zd-sandbox --since "1 hour ago" --no-pager | sudo tee "$EVID/
 - 证据中不得包含真实令牌、证书私钥、服务器密码或真实用户数据；令牌在粘贴前替换为 `<redacted>`。
 - `TEST_REPORT.md` 只记录汇总结论、执行日期、节点版本和证据文件路径，不复制敏感内容。
 - 每项验收完成后，同步更新 §17 的“实际结果 / 证据保存位置 / 状态”三列。
+
+---
+
+## 19. 验收判定细节补充（2026-11-13）
+
+### 19.1 mTLS 与 TLS 1.3 的判定语义
+
+服务端配置 `ZD_SANDBOX_TLS_CLIENT_CA` 后会以 `CERT_REQUIRED` 校验客户端证书。
+在 **TLS 1.3** 下，服务端的拒绝告警在客户端握手完成之后才到达，客户端看到的往往是
+`http.client.RemoteDisconnected` / 连接被重置，而不是 `ssl.SSLError`。
+
+因此 `verify_isolation.py` 的判定规则是：
+
+- **算作拒绝**：明确的 `SSLError`，或“TLS 已建立但服务端关闭连接、未返回任何 HTTP 响应字节”。
+- **不算作拒绝**：DNS 解析失败（`gaierror`）、`ConnectionRefused`、超时、证书/私钥配置错误、
+  以及其他未知异常。
+- 负向结论只有在**同一客户端证书的正向请求返回 200** 时才可归因；正向失败时负向结果判 FAIL。
+
+不要用 `openssl s_client` 的“握手完成”来判断 mTLS 未生效——请以实际 HTTP 响应是否返回为准。
+
+### 19.2 输出截断与日志轮转
+
+容器日志驱动仍保留 `max-size=64k / max-file=1` 作为磁盘上限。但**不能依赖 json-file
+读取学生输出**：5MB 级突发会把日志反复轮转覆盖（实测可只剩几十字节）。
+
+管理器改为在容器启动前建立 `attach` 流，用有界缓冲实时读取 stdout/stderr：
+
+- 每流最多保留 `output_bytes/2`，超出部分继续读走但不保留（避免容器写入阻塞）；
+- 总输出不超过 `output_bytes`；
+- 仅在 attach 失败时才回退到 json-file 读取。
+
+因此 S-12 的验收标准是：**实际返回字节数应接近单流上限**，而不是“非空且不超上限”。
+
+### 19.3 WSL2 环境部署（仅用于准备与本地复验）
+
+本项目曾在本机 WSL2 完成一次实跑，命令与生产节点一致，但请注意：
+
+- 镜像可本地构建并以 `sha256:<image-id>` 固定（`image_verify.py` 支持本地 Image ID）；
+- WSL2 **没有 AppArmor**，必须将 `ZD_SANDBOX_APPARMOR` 留空；
+- WSL2 不是独立生产节点，其结果**不得**作为生产安全验收结论。

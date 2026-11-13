@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import importlib.util
+import errno
+import http.client
 import socket
 import ssl
 import threading
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -647,3 +650,123 @@ def test_certificate_and_key_mismatch_fails(tmp_path):
     with pytest.raises(ssl.SSLError):
         vi.Manager.build_ssl_context(
             bundle["ca"], bundle["client_cert"], bundle["server_key"])
+
+
+# ---------------------------------------------------------------------------
+# TLS 1.3 负向判定：只接受“TLS 层拒绝”，不能把任意异常当成拒绝
+# ---------------------------------------------------------------------------
+def test_tls_rejection_classification():
+    ok, _ = vi.tls_rejection_of(ssl.SSLError(1, "certificate required"))
+    assert ok is True
+
+    ok, _ = vi.tls_rejection_of(http.client.RemoteDisconnected("closed"))
+    assert ok is True
+
+    ok, _ = vi.tls_rejection_of(ConnectionResetError(errno.ECONNRESET, "reset"))
+    assert ok is True
+
+    ok, _ = vi.tls_rejection_of(ssl.SSLCertVerificationError(1, "unable to verify"))
+    assert ok is True
+
+    wrapped = urllib.error.URLError(http.client.RemoteDisconnected("closed"))
+    ok, _ = vi.tls_rejection_of(wrapped)
+    assert ok is True
+
+    ok, _ = vi.tls_rejection_of(socket.gaierror(-2, "name resolution"))
+    assert ok is False
+
+    ok, _ = vi.tls_rejection_of(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
+    assert ok is False
+
+    ok, _ = vi.tls_rejection_of(TimeoutError())
+    assert ok is False
+
+    ok, _ = vi.tls_rejection_of(RuntimeError("boom"))
+    assert ok is False
+
+
+class _FakeClient:
+    def __init__(self, outcome):
+        self.outcome = outcome
+
+    def _request(self, method, path, token=None):
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome
+
+
+class _MtlsArgs:
+    client_cert = "client.crt"
+    client_key = "client.key"
+    url = "https://127.0.0.1:8443"
+    token = "token"
+    ca = "ca.crt"
+    invalid_client_cert = "bad.crt"
+    invalid_client_key = "bad.key"
+
+
+def _run_mtls(monkeypatch, positive, no_cert, bad_cert, untrusted):
+    def factory(url, token, ca=None, cert=None, key=None):
+        if cert is None:
+            return _FakeClient(no_cert)
+        if cert == "bad.crt":
+            return _FakeClient(bad_cert)
+        if ca is None:
+            return _FakeClient(untrusted)
+        return _FakeClient(no_cert)
+
+    monkeypatch.setattr(vi, "Manager", factory)
+    results: list[tuple[str, bool | None, str]] = []
+    vi._check_mtls(_FakeClient(positive), _MtlsArgs(),
+                   lambda name, ok, detail="": results.append((name, ok, detail)))
+    return {name: (ok, detail) for name, ok, detail in results}
+
+
+def test_mtls_negative_remote_disconnected_is_rejection(monkeypatch):
+    out = _run_mtls(
+        monkeypatch,
+        positive=(200, {}),
+        no_cert=http.client.RemoteDisconnected("closed"),
+        bad_cert=http.client.RemoteDisconnected("closed"),
+        untrusted=ssl.SSLCertVerificationError(1, "unable to verify"),
+    )
+    assert out["双向 TLS：无客户端证书被拒绝"][0] is True
+    assert out["双向 TLS：错误客户端证书被拒绝"][0] is True
+    assert out["TLS：不受信服务端证书被拒绝"][0] is True
+
+
+def test_mtls_negative_dns_error_is_not_rejection(monkeypatch):
+    out = _run_mtls(
+        monkeypatch,
+        positive=(200, {}),
+        no_cert=socket.gaierror(-2, "name resolution"),
+        bad_cert=ConnectionRefusedError(errno.ECONNREFUSED, "refused"),
+        untrusted=ssl.SSLCertVerificationError(1, "unable to verify"),
+    )
+    assert out["双向 TLS：无客户端证书被拒绝"][0] is False
+    assert out["双向 TLS：错误客户端证书被拒绝"][0] is False
+
+
+def test_mtls_negative_not_attributable_when_positive_fails(monkeypatch):
+    out = _run_mtls(
+        monkeypatch,
+        positive=RuntimeError("manager unreachable"),
+        no_cert=http.client.RemoteDisconnected("closed"),
+        bad_cert=http.client.RemoteDisconnected("closed"),
+        untrusted=ssl.SSLCertVerificationError(1, "unable to verify"),
+    )
+    assert out["双向 TLS：合法客户端证书可访问"][0] is False
+    assert out["双向 TLS：无客户端证书被拒绝"][0] is False
+
+
+def test_mtls_negative_success_response_is_failure(monkeypatch):
+    out = _run_mtls(
+        monkeypatch,
+        positive=(200, {}),
+        no_cert=(200, {}),
+        bad_cert=(200, {}),
+        untrusted=(200, {}),
+    )
+    assert out["双向 TLS：无客户端证书被拒绝"][0] is False
+    assert out["双向 TLS：错误客户端证书被拒绝"][0] is False
+    assert out["TLS：不受信服务端证书被拒绝"][0] is False

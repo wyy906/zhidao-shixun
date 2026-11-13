@@ -25,6 +25,47 @@ class SandboxError(RuntimeError):
         self.code = code
 
 
+class _BoundedCapture:
+    """线程安全的有界输出缓冲
+
+    通过 attach 实时读取容器输出，避免依赖会被轮转覆盖的 json-file 日志文件。
+    超出上限的数据仍然被读走（防止容器写入阻塞），但不保留，只记录截断标记。
+    """
+
+    def __init__(self, limit: int):
+        self.limit = max(0, int(limit))
+        self._buf = bytearray()
+        self._total = 0
+        self._truncated = False
+        self._lock = threading.Lock()
+
+    def feed(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        with self._lock:
+            self._total += len(chunk)
+            remaining = self.limit - len(self._buf)
+            if remaining > 0:
+                self._buf.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    self._truncated = True
+            else:
+                self._truncated = True
+
+    def text(self) -> str:
+        with self._lock:
+            text = bytes(self._buf).decode("utf-8", "replace")
+            truncated = self._truncated
+        if truncated:
+            return text + "\n…（输出过长，已截断）"
+        return text
+
+    @property
+    def total(self) -> int:
+        with self._lock:
+            return self._total
+
+
 class DockerRunner:
     def __init__(self, config: ManagerConfig):
         self.config = config
@@ -206,6 +247,30 @@ class DockerRunner:
             return text + "\n…（输出过长，已截断）"
         return text
 
+    @staticmethod
+    def _pump(container, out: _BoundedCapture, err: _BoundedCapture,
+              errors: list[str]) -> None:
+        """在后台线程中通过 attach 实时读取容器 stdout/stderr"""
+        stream = None
+        try:
+            stream = container.attach(
+                stream=True, logs=True, stdout=True, stderr=True, demux=True
+            )
+            for chunk_out, chunk_err in stream:
+                if chunk_out:
+                    out.feed(chunk_out)
+                if chunk_err:
+                    err.feed(chunk_err)
+        except Exception as exc:  # attach 失败时由调用方回退到日志读取
+            errors.append(type(exc).__name__)
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
     def run_job(
         self,
         code: str,
@@ -249,6 +314,16 @@ class DockerRunner:
         cancelled = False
         started = time.monotonic()
         cleanup_failed = False
+        # 启动前先建立 attach 流：实时读取输出，避免依赖会被轮转覆盖的 json-file 日志
+        out_cap = _BoundedCapture(self.limits().stdout_limit)
+        err_cap = _BoundedCapture(self.limits().stderr_limit)
+        pump_errors: list[str] = []
+        pump = threading.Thread(
+            target=self._pump,
+            args=(container, out_cap, err_cap, pump_errors),
+            daemon=True,
+        )
+        pump.start()
         try:
             container.start()
             while True:
@@ -271,12 +346,18 @@ class DockerRunner:
             except Exception:
                 # 已被 kill，等待状态刷新即可
                 pass
+            pump.join(timeout=10)
             container.reload()
             state = container.attrs.get("State", {})
             exit_code = state.get("ExitCode")
             oom_killed = bool(state.get("OOMKilled"))
-            stdout = self._logs(container, stdout=True, limit=self.limits().stdout_limit)
-            stderr = self._logs(container, stdout=False, limit=self.limits().stderr_limit)
+            stdout = out_cap.text()
+            stderr = err_cap.text()
+            if pump_errors and not stdout and not stderr:
+                # attach 不可用时回退到 json-file 日志（可能已被轮转覆盖）
+                logger.warning("attach 读取输出失败(%s)，回退到日志读取", pump_errors)
+                stdout = self._logs(container, stdout=True, limit=self.limits().stdout_limit)
+                stderr = self._logs(container, stdout=False, limit=self.limits().stderr_limit)
             duration_ms = int((time.monotonic() - started) * 1000)
         except SandboxError:
             raise
