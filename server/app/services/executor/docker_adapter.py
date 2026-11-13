@@ -59,7 +59,10 @@ class DockerSdkDriver(ContainerDriver):
             raise DockerUnavailableError(
                 "docker SDK 未安装，无法驱动容器执行（fail-closed，无宿主机回退）"
             )
-        from requests.exceptions import ReadTimeout  # docker SDK 依赖 requests
+        # 阶段 C 实测：docker-py wait(timeout=) 超时抛 ConnectionError（包裹
+        # urllib3 ReadTimeoutError），而非 requests.ReadTimeout——两者都要接住。
+        from requests.exceptions import ConnectionError as RequestsConnectionError
+        from requests.exceptions import ReadTimeout  # noqa: F401 docker SDK 依赖 requests
 
         container = None
         timed_out = False
@@ -87,19 +90,34 @@ class DockerSdkDriver(ContainerDriver):
             try:
                 wait_result = container.wait(timeout=spec.timeout_seconds)
                 status_code = int(wait_result.get("StatusCode", -1))
-            except ReadTimeout:
+            except (RequestsConnectionError, ReadTimeout):
                 timed_out = True
+                # 阶段 C 实测：wait 读超时后 Npipe 连接池中的连接处于脏状态
+                # （响应未读完），复用会导致后续 kill/wait 再次 ReadTimeout——
+                # 先关闭连接池（后续请求自动重建连接）再 kill。
+                try:
+                    self._client.api.close()
+                except Exception:  # noqa: BLE001
+                    pass
                 try:
                     container.kill()
                 except Exception:  # noqa: BLE001 - 已死的容器无需 kill
                     pass
                 wait_result = container.wait(timeout=10)
                 status_code = int(wait_result.get("StatusCode", -1))
-            out_b, err_b = container.logs(stdout=True, stderr=True, demux=True)
+            # 阶段 C 实测最终结论（R-4B-2，三次实测迭代）：
+            # 1) container.logs() 无 demux 参数（TypeError）；
+            # 2) attach 方案（无论 wait 后阻塞读还是 attach-before-wait 流读）
+            #    对容器生命周期时序敏感——实测出现 completed/exit=0 但 stdout
+            #    全空的间歇性输出丢失，不可接受；
+            # 3) 最终方案：wait 完成后用 logs() 分两次按流过滤——logs 端点对
+            #    停止容器回放缓存后必然 EOF，无竞态、无挂起。
+            out_b = container.logs(stdout=True, stderr=False)
+            err_b = container.logs(stdout=False, stderr=True)
             return DriverRunResult(
                 exit_code=status_code,
-                stdout=out_b or b"",
-                stderr=err_b or b"",
+                stdout=out_b if isinstance(out_b, bytes) else b"".join(out_b),
+                stderr=err_b if isinstance(err_b, bytes) else b"".join(err_b),
                 timed_out=timed_out,
                 container_id=container.id,
             )

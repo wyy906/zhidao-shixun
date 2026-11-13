@@ -37,7 +37,12 @@ class ContainerSpec:
     read_only: bool = True
     cap_drop: tuple[str, ...] = ("ALL",)
     security_opt: tuple[str, ...] = ("no-new-privileges",)
-    tmpfs: Mapping[str, str] = field(default_factory=lambda: {"/sandbox": "size=8m", "/tmp": "size=8m"})
+    # 阶段 C 实测：tmpfs 默认 root 所有权，非 root 执行用户无写权限——
+    # 必须显式 uid/gid/mode（uid/gid 与 non_root_user 的 65534 对齐）
+    tmpfs: Mapping[str, str] = field(default_factory=lambda: {
+        "/sandbox": "size=8m,uid=65534,gid=65534,mode=1700",
+        "/tmp": "size=8m,uid=65534,gid=65534,mode=1700",
+    })
     workdir: str = "/sandbox"
 
     def __post_init__(self) -> None:

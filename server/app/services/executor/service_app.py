@@ -73,7 +73,10 @@ def create_executor_app(
             "engine_available": bool(engine),
             "engine": dict(engine) if engine else None,
             "image_digest_locked": bool(expected_digest),
-            "docker_integration_tests": "BLOCKED（等待真实 Docker 环境）",
+            "docker_integration_tests": (
+                "FIRST_BATCH_PASSED_10_OF_10（2026-11-13 真实 Docker 实测：端到端/非root/"
+                "只读根/tmpfs/禁网/分流/语法错误/超时终止/清理；扩大覆盖进行中）"
+            ),
         }
 
     @app.post("/v1/executions")

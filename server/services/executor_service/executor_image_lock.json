@@ -1,12 +1,12 @@
 {
-  "_comment": "智导实训 V2 镜像锁定清单（受信任配置，纳入 Git 审查）。此文件仅为配置清单，不代表 Docker 执行器已实现（执行器属 V2-04B，复审通过后才实现）。approval_status=pending 且 digest 为 null 表示镜像尚未经项目负责人审核批准；此状态下执行服务必须 fail-closed 拒绝一切执行请求。禁止自动将 pending 改为 approved；禁止编造 digest。tag_for_reference_only 仅作检索参考，绝不用作拉取或校验依据。更新流程：负责人明确审批 -> 填入 digest 与 approved_by/approved_at -> 重跑安全测试 -> 提交本文件变更（lock_version+1）。",
-  "lock_version": 1,
-  "approval_status": "pending",
-  "approved_by": null,
-  "approved_at": null,
+  "_comment": "智导实训 V2 镜像锁定清单（受信任配置，纳入 Git 审查）。approval_status=approved 表示项目负责人已审核批准该 manifest digest；digest 不匹配或镜像缺失时执行服务 fail-closed 拒绝执行。tag_for_reference_only 仅作检索参考，绝不用作拉取或校验依据；校验唯一依据是 manifest_digest。更新流程：负责人明确审批 -> 填入 digest 与 approved_by/approved_at -> 重跑安全测试 -> 提交本文件变更（lock_version+1）。",
+  "lock_version": 2,
+  "approval_status": "approved",
+  "approved_by": "项目负责人（wyy906，2026-11-13 会话内明确批准）",
+  "approved_at": "2026-11-13",
   "repository": "docker.io/library/python",
   "tag_for_reference_only": "3.12-slim",
   "platform": "linux/amd64",
-  "manifest_digest": null,
+  "manifest_digest": "sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
   "platform_manifest_digest": null
 }

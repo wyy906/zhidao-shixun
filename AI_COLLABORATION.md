@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 已获 ChatGPT 第十六轮复审批准；**V2-04E（E1+E2）步骤进度闭环已交付：真实运行结果 → 白名单验证器三态判定 → V2-03 状态机推进/依赖解锁（uncertain 永不推进、基础设施失败状态不变），GET/POST progress 接口 + 前端步骤状态芯片与"运行并验证此步"，315 项测试 + 三服务联调 + 浏览器实测（无 Docker 下诚实禁用）；进度为内存态如实标注；下一步：Docker 环境阶段 C 实测 / 登录会话 / Monaco**；V2-04D（D1+D2）实验工作台已交付：GET /api/v1/experiments(+/{id}) + 前端"选实验→写代码→运行→看结果"界面（Vue 3，零新依赖），302 项测试 + 三服务真实联调 + 浏览器实测 5 项全 PASS（无 Docker 下运行按钮诚实禁用+安装指引）；真实 Python 执行仍 BLOCKED——需 Docker Desktop + 批准 digest（阶段 C）；V2-04C（C1+C2）主业务 API 已接入独立执行服务：POST /api/v1/experiments/{id}/runs（开发/受控测试模式，fail-closed 访问控制）+ GET /executor/status，297 项测试 + 本机无 Docker 双服务实机冒烟通过（诚实 503/401/404/422）；演示脚本 scripts/demo-python-run.ps1 可重复执行；V2-04B 阶段 A 复审修正（A1）已完成：修正后重跑 18 PASS / 1 FAIL / 0 BLOCKED，FAIL=T073 空 DACL 前提不可建立（父目录 DC 授权 ev_b 已实证），报告口径已限定（原 19 PASS=修正前统计）；V2-04B 阶段 B（B1+B2）执行器核心与独立执行服务接口已实现：全量 273 项测试通过（全部 Mock/静态验证，Mock 不计入真实 Docker 安全验收），Docker 真实集成测试保持 BLOCKED（本机无 Docker），executor_image_lock.json 保持 pending/null 未批准**；阶段 A 门禁原始记录：Windows 实机环境盘点与 NTFS 门禁（可复现脚本 scripts/ntfs_gate_check.py）——修正前 19 PASS/0 FAIL/0 BLOCKED：①方案 A′ 主路径实机验证成功（NtCreateFile+FILE_DIRECTORY_FILE+OBJ_DONT_REPARSE+绝对 \??\ 路径→STATUS_SUCCESS；RootDirectory 相对打开文件/子目录→成功；OBJ_DONT_REPARSE 终末+中间级 junction→恰返回 0xC000050B；无标志对照→junction 被跟随且 FileId 一致；DOS 盘符映射不触发；FileId/卷序列号同一性 same=True）；②删除双授权路径实证（文件 deny DELETE 不阻止删除；父目录 FILE_DELETE_CHILD 单独授予→空 DACL 子文件经父路径删除成功——R-4B-11 转为实测证据；icacls 无法授予 DC，需 PowerShell FileSystemAccessRule）；③共享模式对照 ERROR_SHARING_VIOLATION(32) 与 DACL 拒绝明确区分；④ctypes 结构实测（US=16/OBJA=48/IOSB=16/FILE_ID_INFO=24B）；⑤GetSecurityInfo by handle 成功；⑥令牌实证：UAC 过滤令牌（Administrators deny-only、Medium IL）；⑦Docker 未安装→Docker 相关门禁全部 BLOCKED（不得冒充 PASS），阶段 C 真实 Docker 集成测试待环境；安装阶段带外信任根建立=NOT TESTED。阶段 C 在具备 Docker 环境前保持 BLOCKED） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | **进行中——阶段 C 已开启：真实 Docker 执行链路已打通（2026-11-13）**：负责人批准 digest（lock v2）→ 首批真实集成实测 10/10 全 PASS（端到端执行/非 root uid=65534/只读根 errno 30/tmpfs/禁网/分流/语法错误/超时 SIGKILL 137/清理零残留），容器安全参数全部真实生效；Mock 无法暴露的三个真实 SDK 问题已修复（logs 无 demux、attach 竞态丢输出、wait 超时抛 ConnectionError）；pytest 真实集成 9 项 + 浏览器完整教学闭环 8/8（s1 通过→s2 依赖真实解锁→s2 通过，截图证据）；下一步：扩大集成覆盖 / 登录会话 / Monaco / ChatGPT 复审（现已有全部真实证据）；此前：V2-04E（E1+E2）步骤进度闭环已交付（315 项测试+浏览器实测）；V2-04D 实验工作台（302 项）；V2-04C 主业务 API 接入执行服务（297 项）；V2-04B 阶段 A 复审修正（A1：18 PASS/1 FAIL）与阶段 B 执行器核心（273 项）已完成；executor_image_lock.json 现在 v2 approved（负责人批准）**；阶段 A 门禁原始记录：Windows 实机环境盘点与 NTFS 门禁（可复现脚本 scripts/ntfs_gate_check.py）——修正前 19 PASS/0 FAIL/0 BLOCKED：①方案 A′ 主路径实机验证成功（NtCreateFile+FILE_DIRECTORY_FILE+OBJ_DONT_REPARSE+绝对 \??\ 路径→STATUS_SUCCESS；RootDirectory 相对打开文件/子目录→成功；OBJ_DONT_REPARSE 终末+中间级 junction→恰返回 0xC000050B；无标志对照→junction 被跟随且 FileId 一致；DOS 盘符映射不触发；FileId/卷序列号同一性 same=True）；②删除双授权路径实证（文件 deny DELETE 不阻止删除；父目录 FILE_DELETE_CHILD 单独授予→空 DACL 子文件经父路径删除成功——R-4B-11 转为实测证据；icacls 无法授予 DC，需 PowerShell FileSystemAccessRule）；③共享模式对照 ERROR_SHARING_VIOLATION(32) 与 DACL 拒绝明确区分；④ctypes 结构实测（US=16/OBJA=48/IOSB=16/FILE_ID_INFO=24B）；⑤GetSecurityInfo by handle 成功；⑥令牌实证：UAC 过滤令牌（Administrators deny-only、Medium IL）；⑦Docker 未安装→Docker 相关门禁全部 BLOCKED（不得冒充 PASS），阶段 C 真实 Docker 集成测试待环境；安装阶段带外信任根建立=NOT TESTED。阶段 C 在具备 Docker 环境前保持 BLOCKED） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1193,6 +1193,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-13 | **V2-04C（C1+C2）主业务 API 接入独立执行服务**：POST /api/v1/experiments/{id}/runs（开发/受控测试模式，ZD_DEV_API_TOKEN 未配置即整体关闭 fail-closed）经依赖注入 ExecutorServiceClient 调执行服务；语法/运行时错误=运行结果（completed+非零退出码+stderr）、服务不可达/Docker 未就绪=503+安装提示、digest 未锁定=503、基础设施=502，互不伪装；GET /executor/status 探测；docker_adapter 无 SDK 容错（执行服务可在无 Docker 机器启动并诚实报告）；297 tests + 本机无 Docker 双服务实机冒烟（503/401/404/422 全部实测）；演示脚本 demo-python-run.ps1；前端接入接口信息已写入交接记录（C1=`0857724`） | 项目负责人产品交付冲刺任务书；本轮以功能交付优先、不扩大安全审查范围；认证不足→明确限制为开发/受控测试模式；Docker 真实执行仍 BLOCKED（需 Docker Desktop+批准 digest，阶段 C），lock 文件保持 pending/null |
 | 2026-11-13 | **V2-04D（D1+D2）实验工作台前端 + 列表/详情 API**：GET /api/v1/experiments(+/{id})（fail-closed 加载、issues_count 如实）；前端 Vue 3 零新依赖工作台（健康/令牌/执行环境横幅/实验列表/步骤/textarea 编辑器/运行按钮未就绪禁用带原因/结果面板 stdout+stderr+exit_code）；统一错误体解析；302 tests + 三服务真实联调 + 浏览器实测 5 项全 PASS（无 Docker 下诚实禁用+安装指引，截图证据）（D1=`6960e1c`）；textarea 明确标注待升级 Monaco | 项目负责人"加速完成项目"；运行接口保持开发令牌模式（非用户体系）；真实执行仍 BLOCKED 待阶段 C |
 | 2026-11-13 | **V2-04E（E1+E2）步骤进度闭环**：StepProgressService 把真实运行结果接入白名单验证器（passed/failed/uncertain）与 V2-03 状态机受保护入口（推进/依赖解锁）；uncertain 永不推进、基础设施失败状态不变、阻塞 409/终态 409；GET progress / POST steps/{id}/submit / POST reset（开发令牌门）；前端步骤状态芯片+"运行并验证此步"+重置；315 tests + 三服务联调 + 浏览器实测（两步芯片/禁用原因/截图）；进度为内存态如实标注（E1=`fb2edf9`） | 项目负责人"一切交给你"；复用 V2-03 状态机与验证器，零新增验证逻辑、零状态机旁路；真实终态行为待阶段 C 实测 |
+| 2026-11-13 | **阶段 C 开启：真实 Docker 执行链路打通**：负责人批准 `python:3.12-slim @ sha256:5e2bdb1b...`（lock v2）；首批真实集成实测 10/10（端到端/非 root/只读根/tmpfs/禁网/分流/语法错误/超时 SIGKILL 137/清理零残留），容器安全参数全部真实生效；真实发现三问题并修复：logs 无 demux、attach 竞态丢输出、wait 超时抛 ConnectionError+连接池脏状态（→ logs 按流过滤最终方案）；pytest 真实集成 9 项 + 浏览器教学闭环 8/8（s1 通过→s2 真实解锁→s2 通过，截图）；healthz 口径更新 | 负责人批准 digest（R-4B-4 纪律：AI 实测取回→负责人批准→写入）；Mock 测试无法暴露的 SDK 签名/竞态问题由阶段 C 真实测试捕获——验证了分阶段验收设计的价值 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -3162,3 +3163,35 @@ NtCreateFile / FILE_DIRECTORY_FILE、FILE_NON_DIRECTORY_FILE / OBJ_CASE_INSENSIT
 **未做且不得宣称**：executor_image_lock.json **保持 pending/null 未动**——digest 审批是负责人专属决策（R-4B-4），AI 不自行批准；容器安全参数实测、真实执行、验证闭环终态全部**待 digest 审批后的阶段 C**。
 
 **下一步**：①负责人审批 digest → 填入 executor_image_lock.json（approval_status=approved）→ 重启执行服务 → `docker_environment_ready=true`、前端解禁；②阶段 C 真实集成测试（安全参数逐项实测 + 端到端运行 + 验证闭环终态）；③测试证据供 ChatGPT 对 V2-04B~E 复审。
+
+### 2026-11-13｜Trae：阶段 C 开启——负责人批准 digest，真实 Docker 执行链路全面打通（首批实测 10/10 + pytest 集成 9 项 + 浏览器闭环 8/8）
+
+**里程碑**：Python 代码首次在真实 Docker 容器中被智导实训平台端到端执行、验证并推进实验步骤。真实执行、真实验证、真实状态推进——全部经实机证据确认。
+
+**digest 审批（R-4B-4 纪律执行）**：AI 实测取回 `python:3.12-slim` RepoDigest `sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b`（docker image inspect 实读）→ 向负责人正式申请 → **负责人会话内明确批准** → executor_image_lock.json 更新为 approval_status=approved、lock_version=2（含 approved_by/approved_at）。AI 未自行批准。
+
+**阶段 C 首批真实集成实测（scripts 对应固化为 server/tests/test_integration_real_docker.py，环境不满足自动 SKIP 不冒充）——10/10 PASS**：
+| # | 实测项 | 结果 |
+|---|---|---|
+| C1 | 端到端真实执行 + stdout 采集 | completed, exit=0, stdout="hello from container\n42\n" |
+| C2 | 非 root 用户 | os.getuid()=65534 真实生效 |
+| C3 | 只读根文件系统 | 根目录写入 PermissionError errno 30 真实生效 |
+| C4 | /sandbox tmpfs 可写 | 修复 uid/gid 后可写 |
+| C5 | 网络禁用 | socket 连接 OSError 真实生效 |
+| C6 | stdout/stderr 分流 | demux 真实采集 |
+| C7 | 语法错误 | completed exit=1 + SyntaxError stderr（运行结果非基础设施故障） |
+| C8 | 超时终止 | status=timeout, SIGKILL exit=137, timed_out=true |
+| C9 | 容器清理 | docker ps 无残留 |
+
+**Mock 无法暴露的三个真实 SDK 问题（R-4B-2/R-4B-6 全部真实结案）**：
+1. `container.logs()` 无 demux 参数（TypeError）——Mock 用的假 API 不暴露签名差异；
+2. attach 方案（wait 后阻塞读 / attach-before-wait 流读两种）对容器生命周期时序敏感，实测出现 completed/exit=0 但 stdout 间歇性全空——**最终方案：wait 完成后 logs() 分两次按流过滤**（logs 端点对停止容器回放缓存后必然 EOF，无竞态）；
+3. wait(timeout=) 超时抛 ConnectionError（包裹 urllib3 ReadTimeoutError）而非 requests.ReadTimeout——超时分支从未被触发过；且超时后 Npipe 连接池连接脏状态导致 kill 二次失败，需先 api.close()。
+
+**安全基线实测生效**：tmpfs 修复（默认 root 所有权致非 root 无写权限 → uid=65534,gid=65534,mode=1700）。**全部容器安全参数（network none / read_only / 非 root / tmpfs / cap_drop / no-new-privileges / 超时 kill / finally 清理）在真实 Docker 29.9.3 上实测生效。**
+
+**端到端验证**：pytest 真实集成 9 项全 PASS（7.42s，全部真实容器）；主 API `/executor/status` 实测 `docker_environment_ready=true`；演示脚本真实容器运行（成功场景 + 真实 SyntaxError）；**浏览器完整教学闭环 8/8 PASS**（截图证据）：运行按钮解禁 → s1 真实运行（193ms，stdout=hello）→ 判定 passed → s1 芯片"已通过" → **s2 从"被阻塞"真实解锁为"待开始"** → s2 运行 → 判定 passed → s2 芯片"已通过"。
+
+**测试规模**：Mock 单元 314 passed + 真实集成 9 passed（环境就绪时）/ SKIP（未就绪时，诚实跳过）。
+
+**下一步**：①ChatGPT 对 V2-04B~C（阶段 A/B/C 修正、核心、真实测试）完整复审——现已有全部真实证据；②扩大真实集成覆盖（并发、输出超限 65536 实测、失败分类全矩阵）；③登录会话最小实现（运行接口仍为开发令牌模式）；④Monaco 编辑器；⑤报告草稿（V2-09 前置）。
