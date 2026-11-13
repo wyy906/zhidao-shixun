@@ -9,21 +9,29 @@
 
 | 项 | 值 |
 |---|---|
-| 日期 | 2026-11-12 |
+| 日期 | 2026-11-13 |
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
 | 后端测试 | **113 项，全部通过**（`backend/tests/`） |
-| 沙箱管理器测试 | **164 项，全部通过**（`sandbox_manager/tests/`） |
+| 沙箱管理器测试 | **168 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
 | 真实 `.env` | 测试**不读取**（`ZD_ENV_FILE` 指向不存在的临时文件） |
-| 代码执行 | 已改为「业务后端 + 独立 Linux 执行节点 + 一次性 Docker 容器」架构；**真实隔离尚未在 Linux 节点验证** |
+| 代码执行 | 已改为「业务后端 + 独立 Linux 执行节点 + 一次性 Docker 容器」架构；**WSL2 节点已实机验收通过，独立 Linux 生产节点尚未验收** |
 | 操作系统 | Windows 10/11，Python 3.13.14，Node v26.13.0 |
+
+### 1.1 三层结论（不可混淆）
+
+| 层次 | 结论 |
+|---|---|
+| 单元测试 | **通过**（后端 113 / 管理器 168 / 前端类型检查 0 错误） |
+| WSL2 实机验收 | **通过**（该节点 S-01~S-15；`verify_isolation.py` 27 项 PASS / FAIL 0 / SKIP 0） |
+| 独立 Linux 生产环境验收 | **尚未通过**（未在独立生产节点执行，且 AppArmor/gVisor/正式 digest 等未覆盖） |
 
 ## 2. 结论摘要
 
 1. 后端 113 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
-2. 沙箱管理器 164 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
+2. 沙箱管理器 168 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
    生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、
    结果字段校验、生命周期，以及验收工具 `verify_isolation.py` 的 PASS/FAIL/SKIP 判定可靠性
    （网络 errno 分类、stdout/stderr 分别与合计截断、`memory.swap.max`、本地临时 mTLS 握手、执行节点身份声明）。
@@ -49,7 +57,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（113 项 + 164 项）
+## 4. 后端自动化测试（113 项 + 168 项）
 
 ### 4.1 用例分布
 
@@ -71,8 +79,8 @@
 | `sandbox_manager/tests/test_verify_isolation.py` | 44 | 44 | 0 |
 | `sandbox_manager/tests/test_config.py` | 7 | 7 | 0 |
 | `sandbox_manager/tests/test_image_verify.py` | 7 | 7 | 0 |
-| `sandbox_manager/tests/test_runner.py` | 25 | 25 | 0 |
-| **管理器合计** | **164** | **164** | **0** |
+| `sandbox_manager/tests/test_runner.py` | 29 | 29 | 0 |
+| **管理器合计** | **168** | **168** | **0** |
 
 ### 4.2 实际执行结果
 
@@ -83,7 +91,7 @@ python -m pytest -q
 
 # sandbox_manager（无 Docker 依赖，纯单元测试）
 python -m pytest -q sandbox_manager/tests
-164 passed, 1 warning in 3.16s
+168 passed, 1 warning in 3.13s
 ```
 
 > warning 主要为 `datetime.utcnow()` 的 DeprecationWarning（见 D-08）及 starlette TestClient 内部弃用提示，
@@ -625,7 +633,7 @@ S-14 单独实测：11 次提交接受 10、第 11 个 429 queue_full、结束�
 ### 12.4 新增测试
 - `test_verify_isolation.py`：`tls_rejection_of` 分类、mTLS 负向四类归因（RemoteDisconnected 算拒绝 / DNS 与拒绝连接不算 / 正向失败不可归因 / 返回 200 判失败）
 - `test_runner.py`：attach 失败回退、`_BoundedCapture` 上限与总量计数
-- 管理器用例数 151 → **158**（该数字为当时轮次结果；当前为 **164**，见 §13）
+- 管理器用例数 151 → **158**（该数字为当时轮次结果；当前为 **168**，见 §14）
 
 ## 13. 第十一轮：attach 部分读取异常修复（2026-11-13）
 
@@ -648,10 +656,48 @@ attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通�
 `test_log_fallback_error_fails`、`test_pump_thread_stuck_fails_and_cleans_container`。
 
 ### 13.4 当前测试数量
-- 沙箱管理器：**164 passed**（`test_runner.py` 19 → 25）
+- 沙箱管理器：**168 passed**（`test_runner.py` 19 → 29）
 - 后端：**113 passed**
 - 前端：`vue-tsc --noEmit` 退出码 0
 
 ### 13.5 结论边界
 - 上述为**单元测试**结论；WSL2 实机验收见 §7.3（该节点 S-01~S-15 通过）。
 - **独立 Linux 生产节点尚未验收**，WSL2 结果不得写成生产环境安全验收通过。
+
+## 14. 第十二轮：读取线程残留边界确认（2026-11-13）
+
+### 14.1 实测结论：attach 流关闭机制
+在 Docker SDK 7.2.0 上实测（`docker.types.daemon.CancellableStream`）：
+
+- `container.attach(stream=True, demux=True)` 返回 **CancellableStream**，不是裸生成器；
+- `close()` 会定位底层 socket 并执行 `shutdown(SHUT_RDWR)` + `close()`；
+- 实测：读取线程在 `next()` 阻塞时调用 `close()`，线程**立即退出**（`thread_alive_after_close=False`）；
+- 回收容器同样会关闭连接，阻塞读取随之退出。
+
+### 14.2 本轮代码调整
+| 场景 | 处理 |
+|---|---|
+| 容器结束后读取线程仍未结束 | 关闭流 + 有界等待；**即使 close 后线程退出，也判 `output_capture_failed`**（不得当作完整输出返回） |
+| 容器回收后线程仍存活 | `finally` 中再 `join(close_timeout)`；仍存活则记录 “daemon 线程残留” 警告 |
+| 正常结束 | 线程自行退出，返回有界缓冲内容 |
+
+### 14.3 线程残留边界（如实保留）
+- Python 线程无法被安全强制终止；`close()` 在 Docker SDK 7.2.0 + urllib3 下实测可解除阻塞，
+  但**不构成跨版本保证**。若底层 socket 关闭后仍不返回，线程会作为 daemon 残留至进程退出。
+- 残留线程不会写入后续任务的结果（每个任务有独立的 `_BoundedCapture` 与 stream）；
+  容器已在 `finally` 中强制删除，不会污染容器状态。
+- 未升级 Docker SDK 版本，未使用私有字段或异步异常注入。
+
+### 14.4 新增测试（4 项，`test_runner.py` 25 → 29；另强化 1 项）
+新增：`test_attach_close_unblocks_reader_but_still_fails`、
+`test_attach_normal_close_thread_exits_and_output_complete`、
+`test_attach_error_thread_exits_and_no_partial_output`、
+`test_second_job_unaffected_after_capture_failure`（连续任务不串输出）。
+强化：原 `test_pump_thread_stuck_fails_and_cleans_container` 改为
+`test_pump_thread_stuck_fails_and_thread_exits_after_container_removed`，
+不再由测试手动释放阻塞，而是验证“容器回收后线程自行退出”。
+
+### 14.5 本轮实际结果
+- 管理器：**168 passed**
+- 后端：**113 passed**
+- 前端：`vue-tsc --noEmit` 退出码 0

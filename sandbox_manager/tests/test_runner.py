@@ -85,7 +85,7 @@ class FakeContainer:
     def __init__(self, attrs=None, start_error=None, never_stop=False,
                  remove_error=None, exit_code=0, oom=False,
                  stdout_bytes=b"hello\n", stderr_bytes=b"", labels=None,
-                 attach_stream=None, logs_steps=None):
+                 attach_stream=None, logs_steps=None, release_on_remove=None):
         self._attrs = attrs or _valid_attrs()
         self.start_error = start_error
         self.never_stop = never_stop
@@ -104,6 +104,7 @@ class FakeContainer:
         self.attach_error = None
         self.attach_stream = attach_stream
         self.logs_steps = logs_steps
+        self.release_on_remove = release_on_remove
 
     @property
     def attrs(self):
@@ -159,6 +160,9 @@ class FakeContainer:
         if self.remove_error:
             raise self.remove_error
         self.removed = True
+        if self.release_on_remove is not None:
+            # 模拟 Docker 回收容器后关闭 attach 连接，使阻塞读取退出
+            self.release_on_remove.set()
 
 
 class FakeImage:
@@ -168,10 +172,11 @@ class FakeImage:
 
 
 class FakeDocker:
-    def __init__(self, container=None, image=None, listed=None):
+    def __init__(self, container=None, image=None, listed=None, containers_queue=None):
         self.container = container or FakeContainer()
         self.image = image or FakeImage()
         self.listed = listed or []
+        self.queue = list(containers_queue or [])
         self.created_kwargs = None
         self.last_filters = None
         self.containers = types.SimpleNamespace(
@@ -187,6 +192,8 @@ class FakeDocker:
 
     def _create(self, **kwargs):
         self.created_kwargs = kwargs
+        if self.queue:
+            return self.queue.pop(0)
         return self.container
 
     def _list_containers(self, all=True, filters=None):
@@ -460,10 +467,11 @@ def test_log_fallback_error_fails():
     _assert_capture_failed(exc_info, container)
 
 
-def test_pump_thread_stuck_fails_and_cleans_container():
+def test_pump_thread_stuck_fails_and_thread_exits_after_container_removed():
+    """close() 无法解除阻塞时：任务失败，容器回收后读取线程退出"""
     release = threading.Event()
     stream = FakeAttachStream(block_event=release, stubborn=True)
-    container = FakeContainer(attach_stream=stream)
+    container = FakeContainer(attach_stream=stream, release_on_remove=release)
     runner = _runner(FakeDocker(container))
     runner.pump_join_timeout = 0.05
     runner.pump_close_join_timeout = 0.05
@@ -473,12 +481,77 @@ def test_pump_thread_stuck_fails_and_cleans_container():
 
     _assert_capture_failed(exc_info, container)
     assert stream.closed is True  # 已尝试关闭读取流
-
-    # 释放阻塞，确保测试不遗留后台线程
-    release.set()
+    # 不需要测试手动释放：容器回收即关闭连接，线程应自行退出
     assert stream.thread is not None
     stream.thread.join(timeout=2)
     assert stream.thread.is_alive() is False
+
+
+def test_attach_close_unblocks_reader_but_still_fails():
+    """close() 能解除阻塞（真实 CancellableStream 行为）时，不得返回成功"""
+    release = threading.Event()
+    stream = FakeAttachStream(block_event=release, stubborn=False)
+    container = FakeContainer(attach_stream=stream)
+    runner = _runner(FakeDocker(container))
+    runner.pump_join_timeout = 0.05
+    runner.pump_close_join_timeout = 2.0
+
+    with pytest.raises(SandboxError) as exc_info:
+        runner.run_job("print(1)", timeout=1)
+
+    _assert_capture_failed(exc_info, container)
+    assert stream.closed is True
+    assert stream.thread.is_alive() is False
+
+
+def test_attach_normal_close_thread_exits_and_output_complete():
+    stream = FakeAttachStream(steps=[("data", b"out-ok\n", b"err-ok\n")])
+    container = FakeContainer(attach_stream=stream)
+    result = _runner(FakeDocker(container)).run_job("print(1)", timeout=1)
+
+    assert result["status"] == "succeeded"
+    assert result["stdout"] == "out-ok\n"
+    assert result["stderr"] == "err-ok\n"
+    assert container.removed is True
+    assert stream.thread is not None
+    stream.thread.join(timeout=2)
+    assert stream.thread.is_alive() is False
+
+
+def test_attach_error_thread_exits_and_no_partial_output():
+    stream = FakeAttachStream(steps=[
+        ("data", b"partial", None),
+        ("error", RuntimeError("broken")),
+    ])
+    container = FakeContainer(attach_stream=stream)
+    with pytest.raises(SandboxError) as exc_info:
+        _runner(FakeDocker(container)).run_job("print(1)", timeout=1)
+
+    _assert_capture_failed(exc_info, container)
+    assert stream.thread is not None
+    stream.thread.join(timeout=2)
+    assert stream.thread.is_alive() is False
+
+
+def test_second_job_unaffected_after_capture_failure():
+    bad = FakeContainer(attach_stream=FakeAttachStream(steps=[
+        ("data", b"STALE", None),
+        ("error", RuntimeError("broken")),
+    ]))
+    good = FakeContainer(stdout_bytes=b"second-ok\n")
+    docker = FakeDocker(containers_queue=[bad, good])
+    runner = _runner(docker)
+
+    with pytest.raises(SandboxError) as exc_info:
+        runner.run_job("print(1)", timeout=1)
+    assert exc_info.value.code == "output_capture_failed"
+
+    result = runner.run_job("print(2)", timeout=1)
+    assert result["status"] == "succeeded"
+    assert result["stdout"] == "second-ok\n"
+    assert "STALE" not in result["stdout"]
+    assert bad.removed is True
+    assert good.removed is True
 
 
 

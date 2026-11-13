@@ -362,7 +362,8 @@ class DockerRunner:
                 # 已被 kill，等待状态刷新即可
                 pass
             pump.join(timeout=self.pump_join_timeout)
-            if pump.is_alive():
+            capture_interrupted = pump.is_alive()
+            if capture_interrupted:
                 # 关闭读取流以解除阻塞，再做有界等待；仍不退出则安全失败
                 _close = getattr(pump_state.get("stream"), "close", None)
                 if callable(_close):
@@ -379,10 +380,12 @@ class DockerRunner:
             oom_killed = bool(state.get("OOMKilled"))
             duration_ms = int((time.monotonic() - started) * 1000)
 
-            if pump_stuck:
-                # 读取线程未退出：安全失败，容器在 finally 中回收
+            if capture_interrupted:
+                # 容器已结束但读取流仍未关闭：输出可能不完整，不得返回成功。
+                # 容器在 finally 中回收，回收会关闭连接，通常可让阻塞读取退出。
                 raise SandboxError(
-                    "output_capture_failed", "输出读取线程未在限期内退出"
+                    "output_capture_failed",
+                    "输出读取线程超时未结束（已关闭读取流并有界等待）",
                 )
 
             attach_error = pump_state.get("error")
@@ -416,6 +419,11 @@ class DockerRunner:
             except Exception as exc:
                 cleanup_failed = True
                 logger.error("沙箱容器清理失败: %s", exc)
+            # 回收容器会关闭 attach 连接；再给读取线程一个有界等待，
+            # 仍不退出则记录残留（daemon 线程，不会阻塞进程退出）。
+            pump.join(timeout=self.pump_close_join_timeout)
+            if pump.is_alive():
+                logger.warning("输出读取线程在容器回收后仍未退出（daemon 线程残留）")
 
         if cleanup_failed:
             raise SandboxError("cleanup_failed", "容器清理失败，拒绝返回结果")

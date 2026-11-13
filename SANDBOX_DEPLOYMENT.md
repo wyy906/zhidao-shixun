@@ -590,9 +590,35 @@ uvicorn app.main:app ...  # 缺表会直接启动失败
 
 ## 17. 实机安全验收清单（S-01 ~ S-15）
 
-> **当前状态：全部未执行。** 本仓库开发机为 Windows，未安装 Docker，也没有可连接的
-> Linux 执行节点，因此没有任何一项可以标记为“通过”。本节只定义在真实节点上的
-> 执行命令、预期结果和证据要求；**不得用单元测试或配置检查替代实机结论**。
+> **当前状态（2026-11-13）：**
+>
+> - **WSL2 节点：S-01 ~ S-15 已执行并通过。** `verify_isolation.py` 实跑
+>   27 项 PASS、FAIL 0、SKIP 0（环境：WSL 3.0.5 + Ubuntu 24.04 + Docker Engine 29.1.3，
+>   镜像按本地 Image ID 固定，管理器启用 HTTPS + mTLS）。S-14 另行并发实测通过
+>   （11 次提交接受 10，第 11 个返回 429 `queue_full`，无残留容器）。
+> - **独立 Linux 生产节点：尚未验收。** WSL2 无 AppArmor、镜像非正式 registry digest，
+>   且未覆盖 gVisor、多实例隔离、Docker 故障注入与生产网络拓扑。
+>
+> 本节只定义在真实节点上的执行命令、预期结果和证据要求；
+> **不得用单元测试或配置检查替代实机结论**，也不得把 WSL2 结论当作生产验收通过。
+
+### 17.1 WSL2 节点实跑记录（2026-11-13）
+
+```
+[PASS] 管理接口拒绝错误令牌: HTTP 401
+[PASS] 双向 TLS：合法客户端证书可访问: status=200
+[PASS] 双向 TLS：无客户端证书被拒绝: RemoteDisconnected（TLS 层关闭，未收到 HTTP 响应）
+[PASS] 双向 TLS：错误客户端证书被拒绝: RemoteDisconnected（TLS 层关闭，未收到 HTTP 响应）
+[PASS] TLS：不受信服务端证书被拒绝: URLError
+[PASS] 公网/局域网/业务后端端口不可达: errno=101
+[PASS] 宿主机标记文件/业务 .env 不可读: READ_DENIED
+[PASS] 工作目录独立且为空 / UID 65534 / 根只读 / 仅 lo
+[PASS] CPU 0.5 / memory.max 134217728 / memory.swap.max 0 / pids.max 32
+[PASS] 超时终止 / 内存超限 / fork 限制 / 磁盘 ENOSPC
+[PASS] stdout 32802 / stderr 32802 / 合计 65604（上限≈65536）
+[PASS] 任务结束后无残留容器: residual=none
+合计: 27 项，FAIL 0，SKIP 0；验收结论: PASS（exit 0）
+```
 
 执行前准备（在业务后端所在机器或执行节点本机执行；以下变量按实际替换）：
 
@@ -616,25 +642,25 @@ echo "job=$JOB container=$CID"
 
 | 编号 | 验收目标 | 执行命令 | 预期结果 | 实际结果 | 证据保存位置 | 状态 |
 |---|---|---|---|---|---|---|
-| S-01 | 容器网络隔离（无公网 / 局域网 / 业务端口） | `verify_isolation.py ... --lan-host <IP> --lan-port <端口> --backend-host <IP> --backend-port 8000`；`docker inspect $CID --format '{{.HostConfig.NetworkMode}}'` | 公网/局域网/业务端口均不可达为 PASS；仅接受 `ENETUNREACH/EHOSTUNREACH/EACCES/EPERM` 证据，`ConnectionRefused`、DNS 失败、超时、未知异常均为 FAIL；`NetworkMode=none` | 未执行 | `S-01.txt` | 未执行 |
-| S-02 | 文件系统隔离（宿主机 / 业务文件不可读） | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --host-file /tmp/zd_host_probe.txt`；`docker inspect $CID --format '{{json .Mounts}}'` | 标记文件/业务文件读取被拒绝（`READ_DENIED`）；`Mounts=[]`；非执行节点运行时该项为 SKIP | 未执行 | `S-02.txt` | 未执行 |
-| S-03 | 根文件系统只读 | `verify_isolation.py`；`docker inspect $CID --format '{{.HostConfig.ReadonlyRootfs}}'` | `MOUNT_OPTS: ro...` 为 PASS；`ReadonlyRootfs=true` | 未执行 | `S-03.txt` | 未执行 |
-| S-04 | 非 root 身份运行 | `verify_isolation.py`；`docker inspect $CID --format '{{.Config.User}}'` | `UID: 65534` 为 PASS；`User=65534:65534` | 未执行 | `S-04.txt` | 未执行 |
-| S-05 | 无额外挂载与设备 | `docker inspect $CID --format '{{json .Mounts}} {{json .HostConfig.Devices}}'` | `[] []` | 未执行 | `S-05.txt` | 未执行 |
-| S-06 | 无端口映射 | `docker ps --format '{{.Ports}}' --filter label=zd.sandbox=1`；`docker inspect $CID --format '{{json .HostConfig.PortBindings}}'` | 端口列为空；绑定为 `{}` 或 `null` | 未执行 | `S-06.txt` | 未执行 |
-| S-07 | CPU 限制 0.5 核 | `docker inspect $CID --format '{{.HostConfig.NanoCpus}}'`；`verify_isolation.py` | `500000000`；cgroup `CPU_MAX: 50000 100000` | 未执行 | `S-07.txt` | 未执行 |
-| S-08 | 内存与交换限制 128MB | `docker inspect $CID --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'`；`verify_isolation.py --expected-swap-mb 0` | `134217728 134217728`；`MEM_MAX: 134217728`；`SWAP_MAX: 0`（`max` 不算通过） | 未执行 | `S-08.txt` | 未执行 |
-| S-09 | PID 数量限制 32 | `docker inspect $CID --format '{{.HostConfig.PidsLimit}}'`；`verify_isolation.py` | `32`；`PIDS_MAX: 32`；fork 测试 PASS | 未执行 | `S-09.txt` | 未执行 |
-| S-10 | 临时磁盘限制（tmpfs 合计 24MB，业务 16MB） | `docker inspect $CID --format '{{json .HostConfig.Tmpfs}}'`；`verify_isolation.py` | 含 `/workspace`、`/tmp`、`/dev/shm` 与容量/`noexec,nosuid,nodev`；磁盘测试 PASS | 未执行 | `S-10.txt` | 未执行 |
-| S-11 | 执行超时与进程终止 | `verify_isolation.py`（无限循环用例） | `无限循环被超时终止` 为 PASS | 未执行 | `S-11.txt` | 未执行 |
-| S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 32768 --output-total-limit 65536` | `stdout 输出被截断` 与 `stderr 输出被截断` 均为 PASS，各自实际字节数须 **接近且不超过** 32868；`stdout+stderr 合计输出限制（同一任务）` 为 PASS（两通道都接近单流上限、合计接近且 ≤ 65636） | 未执行 | `S-12.txt` | 未执行 |
-| S-13 | 任务完成后容器清理 | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --confirm-manager-docker-same-host --docker-check local`；`docker ps -aq --filter label=zd.sandbox=1` | 输出为空；`任务结束后无残留容器` 为 PASS；未人工确认节点身份或 Docker CLI 不属于执行节点时为 SKIP（结论 INCOMPLETE） | 未执行 | `S-13.txt` | 未执行 |
-| S-14 | 并发与队列限制（2 并发 / 8 排队） | 并行提交 16 个 `time.sleep(5)` 任务：`seq 16 \| xargs -P16 -I{} curl ... /v1/jobs`；随后 `docker ps` | 至少 1 个 HTTP 429 `queue_full`；接受数 ≤ 10；无残留容器 | 未执行 | `S-14.txt` | 未执行 |
-| S-15 | HTTPS / mTLS 身份认证与证书错误处理 | 见 §5.1；或 `verify_isolation.py ... --client-cert ... --client-key ... --expect-mtls --invalid-client-cert ... --invalid-client-key ...` | 合法证书 200；无客户端证书 / 错误证书 / 不受信服务端证书均被拒绝；错误令牌 401；整体退出码 0 或 2（含 SKIP 时不得视为通过）。本地临时 TLS 单元测试（含“证书与私钥不匹配初始化失败”）仅证明客户端逻辑，**不能替代本节实机结论** | 未执行 | `S-15.txt` | 未执行 |
+| S-01 | 容器网络隔离（无公网 / 局域网 / 业务端口） | `verify_isolation.py ... --lan-host <IP> --lan-port <端口> --backend-host <IP> --backend-port 8000`；`docker inspect $CID --format '{{.HostConfig.NetworkMode}}'` | 公网/局域网/业务端口均不可达为 PASS；仅接受 `ENETUNREACH/EHOSTUNREACH/EACCES/EPERM` 证据，`ConnectionRefused`、DNS 失败、超时、未知异常均为 FAIL；`NetworkMode=none` | 见 §17.1 实跑记录 | `S-01.txt` | WSL2 通过；生产未验收 |
+| S-02 | 文件系统隔离（宿主机 / 业务文件不可读） | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --host-file /tmp/zd_host_probe.txt`；`docker inspect $CID --format '{{json .Mounts}}'` | 标记文件/业务文件读取被拒绝（`READ_DENIED`）；`Mounts=[]`；非执行节点运行时该项为 SKIP | 见 §17.1 实跑记录 | `S-02.txt` | WSL2 通过；生产未验收 |
+| S-03 | 根文件系统只读 | `verify_isolation.py`；`docker inspect $CID --format '{{.HostConfig.ReadonlyRootfs}}'` | `MOUNT_OPTS: ro...` 为 PASS；`ReadonlyRootfs=true` | 见 §17.1 实跑记录 | `S-03.txt` | WSL2 通过；生产未验收 |
+| S-04 | 非 root 身份运行 | `verify_isolation.py`；`docker inspect $CID --format '{{.Config.User}}'` | `UID: 65534` 为 PASS；`User=65534:65534` | 见 §17.1 实跑记录 | `S-04.txt` | WSL2 通过；生产未验收 |
+| S-05 | 无额外挂载与设备 | `docker inspect $CID --format '{{json .Mounts}} {{json .HostConfig.Devices}}'` | `[] []` | 见 §17.1 实跑记录 | `S-05.txt` | WSL2 通过；生产未验收 |
+| S-06 | 无端口映射 | `docker ps --format '{{.Ports}}' --filter label=zd.sandbox=1`；`docker inspect $CID --format '{{json .HostConfig.PortBindings}}'` | 端口列为空；绑定为 `{}` 或 `null` | 见 §17.1 实跑记录 | `S-06.txt` | WSL2 通过；生产未验收 |
+| S-07 | CPU 限制 0.5 核 | `docker inspect $CID --format '{{.HostConfig.NanoCpus}}'`；`verify_isolation.py` | `500000000`；cgroup `CPU_MAX: 50000 100000` | 见 §17.1 实跑记录 | `S-07.txt` | WSL2 通过；生产未验收 |
+| S-08 | 内存与交换限制 128MB | `docker inspect $CID --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'`；`verify_isolation.py --expected-swap-mb 0` | `134217728 134217728`；`MEM_MAX: 134217728`；`SWAP_MAX: 0`（`max` 不算通过） | 见 §17.1 实跑记录 | `S-08.txt` | WSL2 通过；生产未验收 |
+| S-09 | PID 数量限制 32 | `docker inspect $CID --format '{{.HostConfig.PidsLimit}}'`；`verify_isolation.py` | `32`；`PIDS_MAX: 32`；fork 测试 PASS | 见 §17.1 实跑记录 | `S-09.txt` | WSL2 通过；生产未验收 |
+| S-10 | 临时磁盘限制（tmpfs 合计 24MB，业务 16MB） | `docker inspect $CID --format '{{json .HostConfig.Tmpfs}}'`；`verify_isolation.py` | 含 `/workspace`、`/tmp`、`/dev/shm` 与容量/`noexec,nosuid,nodev`；磁盘测试 PASS | 见 §17.1 实跑记录 | `S-10.txt` | WSL2 通过；生产未验收 |
+| S-11 | 执行超时与进程终止 | `verify_isolation.py`（无限循环用例） | `无限循环被超时终止` 为 PASS | 见 §17.1 实跑记录 | `S-11.txt` | WSL2 通过；生产未验收 |
+| S-12 | stdout/stderr 输出截断 64KB | `verify_isolation.py --output-limit 32768 --output-total-limit 65536` | `stdout 输出被截断` 与 `stderr 输出被截断` 均为 PASS，各自实际字节数须 **接近且不超过** 32868；`stdout+stderr 合计输出限制（同一任务）` 为 PASS（两通道都接近单流上限、合计接近且 ≤ 65636） | 见 §17.1 实跑记录 | `S-12.txt` | WSL2 通过；生产未验收 |
+| S-13 | 任务完成后容器清理 | 在**执行节点**运行 `verify_isolation.py ... --on-execution-node --confirm-manager-docker-same-host --docker-check local`；`docker ps -aq --filter label=zd.sandbox=1` | 输出为空；`任务结束后无残留容器` 为 PASS；未人工确认节点身份或 Docker CLI 不属于执行节点时为 SKIP（结论 INCOMPLETE） | 见 §17.1 实跑记录 | `S-13.txt` | WSL2 通过；生产未验收 |
+| S-14 | 并发与队列限制（2 并发 / 8 排队） | 并行提交 16 个 `time.sleep(5)` 任务：`seq 16 \| xargs -P16 -I{} curl ... /v1/jobs`；随后 `docker ps` | 见 §17.1 实跑记录 | 未执行 | WSL2 通过；生产未验收 | 未执行 |
+| S-15 | HTTPS / mTLS 身份认证与证书错误处理 | 见 §5.1；或 `verify_isolation.py ... --client-cert ... --client-key ... --expect-mtls --invalid-client-cert ... --invalid-client-key ...` | 合法证书 200；无客户端证书 / 错误证书 / 不受信服务端证书均被拒绝；错误令牌 401；整体退出码 0 或 2（含 SKIP 时不得视为通过）。本地临时 TLS 单元测试（含“证书与私钥不匹配初始化失败”）仅证明客户端逻辑，**不能替代本节实机结论** | 见 §17.1 实跑记录 | `S-15.txt` | WSL2 通过；生产未验收 |
 
 状态填写规则：
 
-- **未执行**：尚未在真实节点运行（当前默认值）。
+- **未执行**：尚未在该节点运行（WSL2 节点已全部执行，生产节点仍为默认值）。
 - **通过**：命令输出与预期完全一致，且证据文件已保存。
 - **失败**：输出与预期不符；必须记录差异并修复后重跑，不能改预期迁就现状。
 - **阻塞**：缺少节点 / Docker / 证书 / 网络条件，需负责人提供环境。
@@ -713,6 +739,12 @@ sudo journalctl -u zd-sandbox --since "1 hour ago" --no-pager | sudo tee "$EVID/
 - **不得**把部分输出当作完整结果返回；
 - 只有“未读到任何数据”才允许回退 `docker logs`；
 - 回退日志仍受 stdout/stderr 各自字节上限约束。
+
+线程边界：容器结束后读取线程仍未结束时，管理器会关闭 attach 流（Docker SDK 7.2.0 的
+`CancellableStream.close()` 会 `shutdown` 底层 socket）并做有界等待；**即使线程随后退出，
+本次任务仍判 `output_capture_failed`**，不会把被截断的流当作完整输出。容器回收后还会再
+`join` 一次，若仍存活则记录“daemon 线程残留”警告——Python 线程无法被强制终止，
+该行为不构成跨版本保证，残留线程不写后续任务结果、不影响容器清理。
 
 排查该错误时先看管理器日志中的 attach 异常类型与容器是否已回收，不要直接放宽输出限制。
 
