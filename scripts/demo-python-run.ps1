@@ -146,6 +146,22 @@ if (-not (Test-Path $expFile)) {
       "common_errors": ["Docker not installed"],
       "recovery_hints": ["Install Docker Desktop and start the executor service"],
       "guide_hint": 1
+    },
+    {
+      "step_id": "s2",
+      "title": "Print expected output",
+      "learning_goal": "Verify stdout-based verification",
+      "student_action": "Run code that prints the expected text",
+      "expected_state": {
+        "description": "Stdout contains the expected text",
+        "artifacts": ["stdout"]
+      },
+      "verifier": {"type": "python_stdout_contains", "params": {"text": "hello"}},
+      "depends_on": ["s1"],
+      "preconditions": ["Docker environment ready"],
+      "common_errors": ["Missing expected output"],
+      "recovery_hints": ["Print the expected text with print()"],
+      "guide_hint": 1
     }
   ],
   "meta": {"estimated_minutes": 5, "difficulty": "beginner"}
