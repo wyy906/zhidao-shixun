@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十三轮架构修订已提交：修复第十二轮复审三项阻塞——①阻塞 A 目录句柄闭环：确认"CreateFileW 打开受信任根"与官方语义冲突（开目录必须 FILE_FLAG_BACKUP_SEMANTICS，补设又引入 backup intent 入口）；方案 A/B 九维度比较后推荐方案 A——受信任根与受控链统一 NtCreateFile 打开（CreateOptions 白名单仅 FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT，不含 FILE_OPEN_FOR_BACKUP_INTENT），入口级消除 backup intent；②阻塞 B：启动判断固定 11 步顺序（令牌解析→SD 查询→DACL 模板→AccessCheck→基础读取→拒绝位→降级判定→审计→启动），管理员降级仅在第 9 步且只改变保证等级不豁免任何检查；denylist 特权交叉规则（须归因 Administrators 成员否则拒绝；SeBackup 旁路下降级模式密钥保密性对提升进程完全不保证）；③阻塞 C：NTFS 实测错误分类表（ACCESS_DENIED/SHARING_VIOLATION/LOCK_VIOLATION/NOT_FOUND 等分别归因，不统一归 DACL）+ 19 项证据清单 + 删除 4 组正负对照 + 重命名/替换/删除重建共享模式隔离矩阵；④官方依据表 9 条含 URL（CreateFileW 目录标志/MS-FSA Open BackupAccess 伪代码等，查阅 2026-11-13）；⑤N-A111~N-A124（A 文档核对/B mock/C 实机分层）；R-4B-9/R-4B-12 更新、新增 R-4B-14；全部标注【未验证】；待 ChatGPT 第十三轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十四轮架构修订已提交：NtCreateFile 目录打开与 Reparse 防护最终裁决——①确认第十三轮方案 A 组合 FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT 不受官方支持（NtCreateFile 页 FILE_DIRECTORY_FILE 兼容清单仅含 FILE_SYNCHRONOUS_IO_ALERT/NONALERT、FILE_WRITE_THROUGH、FILE_OPEN_FOR_BACKUP_INTENT、FILE_OPEN_BY_FILE_ID）；②三方向裁决：弃用方向 B（打开后 tag 检查无法闭环终末 reparse 跟随）、维持不采用方向 C（CreateFileW+BACKUP_SEMANTICS 引入 backup intent 入口）；③定版方案 A′：CreateOptions 白名单仅 FILE_DIRECTORY_FILE，Attributes 白名单 OBJ_CASE_INSENSITIVE|OBJ_DONT_REPARSE (0x1040)——官方 ntdef 页明示"no reparse points will be followed when parsing the name...fail and return STATUS_REPARSE_POINT_ENCOUNTERED...in security scenarios"，打开时原子拒绝路径中任何 reparse（含终末 .env 为 symlink）→ fail-closed，撤销"以 FILE_OPEN_REPARSE_POINT 打开 reparse 对象本身再核 tag"旧设计；④仍无法保证行为与必须实机测试清单（OBJ_DONT_REPARSE 用户态行为/中间级覆盖/常量值等全部【未验证】）；⑤判定：设计层参数闭环成立，实机验证缺失为事实性未完成项，是否批准交 ChatGPT 第十四轮复审；V2-04B 继续禁止） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1184,6 +1184,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-13 | V2-04A 第十一轮修订：有效权限条件化——DACL 授权面 ≠ 令牌化有效权限；开发模式选方案 B（管理员提升令牌允许运行但防篡改声明降级+审计，标准/过滤令牌下批准声明成立）；最终模式令牌硬条件（无 enabled Administrators、无受限 SID、SeChangeNotifyPrivilege enabled、AccessCheck(MAXIMUM_ALLOWED)==批准掩码）+ 安装时/运行时双时点检查；启动校验升级为静态 DACL 模板比对 + 动态 AccessCheck granted 掩码比对双层；新增 R-4B-9 | 采纳 ChatGPT 第十轮复审结论（组 SID 未纳入权限计算）；已核对 Microsoft Learn SID Attributes 与 AccessCheck 原文；GetEffectiveRightsFromAcl/CheckTokenMembership 明确拒绝作完整有效权限计算器 |
 | 2026-11-13 | V2-04A 第十二轮修订：SID 属性常量勘误定版（deny-only=0x10/enabled=0x04/enabled-by-default=0x02/mandatory=0x01，来源 TOKEN_GROUPS 官方页）；AccessCheck 归因边界（GrantedAccess 无 ACE/SID 来源，降级判定改为令牌分类确定性判定）；三层验证模型（静态 DACL / Token+SD 检查 / 真实 NTFS 操作）；MAXIMUM_ALLOWED 降级为辅助诊断 + 逐项最小权限 AccessCheck；每级父目录 FILE_DELETE_CHILD 逐级核验 + 10 项文件系统操作矩阵；backup intent 特权 denylist 策略；Restricted Token 精确判定；新增 R-4B-10~R-4B-13 | 采纳 ChatGPT 第十一轮复审四项阻塞与五项澄清；已核对 Microsoft Learn TOKEN_GROUPS 页全部常量值；不实现任何验证代码，实测归 V2-04B |
 | 2026-11-13 | V2-04A 第十三轮修订：目录句柄方案定版——确认 CreateFileW 开目录必须 FILE_FLAG_BACKUP_SEMANTICS 与旧设计冲突（阻塞 A 成立），推荐方案 A（受信任根与受控链统一 NtCreateFile，CreateOptions 白名单仅 FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT，入口级消除 backup intent）；启动检查固定 11 步顺序、管理员降级为第 9 步且不豁免任何检查（阻塞 B）；NTFS 实测错误分类表 + 删除 4 组正负对照 + 共享模式隔离矩阵（阻塞 C）；官方依据表 9 条（含 MS-FSA Open BackupAccess 伪代码页）；新增 R-4B-14，更新 R-4B-9/R-4B-12 | 采纳 ChatGPT 第十二轮复审三项阻塞；CreateFileW 目录标志要求与 MS-FSA 伪代码已核对官方页；方案 A 全部行为【未验证】，实机不可行时记录为架构阻塞重审，绝不回退普通路径打开 |
+| 2026-11-13 | V2-04A 第十四轮修订：目录打开 Reparse 防护最终裁决——确认 FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT 不在官方兼容清单（阻塞成立）；定版方案 A′：CreateOptions 仅 FILE_DIRECTORY_FILE + Attributes 增设 OBJ_DONT_REPARSE (0x1000)（官方明示安全场景防 reparse 跟随、遇即返回 STATUS_REPARSE_POINT_ENCOUNTERED），弃用"打开 reparse 对象本身再核 tag"旧设计（终末 reparse 已被跟随时 tag 检查失明）；维持不采用 CreateFileW+BACKUP_SEMANTICS；方案 A′ 全部实机行为【未验证】 | 采纳 ChatGPT 第十三轮复审关键问题；已核对 NtCreateFile 兼容清单原文与 ntdef OBJECT_ATTRIBUTES 的 OBJ_DONT_REPARSE 原文；设计层参数闭环成立，实机验证缺失仍为事实性未完成项，V2-04A 是否批准交第十四轮复审 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -2821,3 +2822,62 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 **修订 6：风险登记表变化**：R-4B-9 更新（降级为检查通过后的标记，11 步顺序）；R-4B-12 更新（目录句柄冲突确认 + 方案 A 消除 backup intent 入口 + 降级路径特权交叉规则）；**新增 R-4B-14**（共享模式干扰导致错误归因）；AccessCheck≠NTFS（R-4B-10）、RootDirectory/SeChangeNotify 未实测（R-4B-5）、FILE_DELETE_CHILD 链与删除重建（R-4B-11）已在既有条目覆盖，本轮补充描述。历史风险均不关闭（无真实验证证据）。
 
 **范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，docs-only；未实现任何业务代码；`executor_image_lock.json` 保持 pending/null；全部禁止事项遵守。修订 4 官方 URL 于 2026-11-13 经检索/抓取核对存在；N-A111~N-A124 全部未运行，A/B/C 层级逐项标注；实测归 V2-04B。
+
+### 2026-11-13｜Trae：V2-04A 架构第十四轮修订（NtCreateFile 目录打开与 Reparse 防护最终裁决：方案 A′ = FILE_DIRECTORY_FILE + OBJ_DONT_REPARSE，弃用 FILE_OPEN_REPARSE_POINT，docs-only）
+
+**前置说明**：响应 ChatGPT 第十三轮复审关键问题——winternl NtCreateFile 官方文档的 FILE_DIRECTORY_FILE 兼容 CreateOptions 清单不含 FILE_OPEN_REPARSE_POINT，第十三轮方案 A 的 `FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT` 组合不受官方文档支持，不能定版。已核对官方文档（实际查阅日期 2026-11-13）：
+1. **NtCreateFile (winternl)**（https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile）：FILE_DIRECTORY_FILE 条目原文——"With this flag, other compatible *CreateOptions* flags include only the following: **FILE_SYNCHRONOUS_IO_ALERT, FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_THROUGH, FILE_OPEN_FOR_BACKUP_INTENT, and FILE_OPEN_BY_FILE_ID**"。**FILE_OPEN_REPARSE_POINT 不在兼容列表内**——第十三轮方案 A 组合不属于受支持的 API 合约（阻塞确认成立）；同页 RootDirectory 条目官方确认非 NULL 时 ObjectName 为相对该目录的文件名。
+2. **OBJECT_ATTRIBUTES (ntdef)**（https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes）：官方 Attributes 标志表明确列出 **OBJ_DONT_REPARSE**，原文——"If this flag is set, no reparse points will be followed when parsing the name of the associated object. If any reparses are encountered the attempt will fail and return an **STATUS_REPARSE_POINT_ENCOUNTERED** result. This can be used to determine if there are any reparse points in the object's path, **in security scenarios**."（官方明示其安全场景用途）。
+3. **OBJ_DONT_REPARSE 常量值**：`0x00001000`，包含于 `OBJ_VALID_ATTRIBUTES (0x00001FF2)`——winnt.h/ntdef.h 头文件定义；Microsoft Q&A（官方托管社区，非产品文档保证，仅作值核对参考）确认 0x1000 位在 OBJ_VALID_ATTRIBUTES 内（https://learn.microsoft.com/en-us/answers/questions/6042974/is-obj-dont-reparse-supported-in-object-attributes）。
+4. **实机观察（非合约）**：Microsoft Q&A 社区报告 Windows 11 build 26200 本地 NTFS 下，OBJ_DONT_REPARSE 对终末与中间级 NTFS junction 均返回 STATUS_REPARSE_POINT_ENCOUNTERED、普通目录成功（https://learn.microsoft.com/en-ca/answers/questions/6045388/how-does-obj-dont-reparse-interact-with-and-c-in-a）——仅为第三方实机观察，**不得当作 API 合约保证**。
+
+**修订 1：三个方向分析**
+
+- **方向 A：NtCreateFile + FILE_DIRECTORY_FILE + OBJ_DONT_REPARSE（Attributes |= 0x00001000）**
+  - 适用范围结论：OBJ_DONT_REPARSE 属 OBJECT_ATTRIBUTES.Attributes（官方 ntdef 页明确列出）；NtCreateFile 接受 OBJECT_ATTRIBUTES——但 winternl NtCreateFile 页**未逐字复述** Attributes 各标志在该 API 下的行为保证，故"通用 OBJECT_ATTRIBUTES 文档 ≠ NtCreateFile 完整调用保证"，该组合实机行为标注【未验证】（官方语义明确为对象管理器名称解析层行为；Q&A 实机观察方向一致但非合约）。
+  - 能否阻止路径解析 reparse 跟随：官方语义=名称解析全程不跟随任何 reparse point，遇到即失败并返回 STATUS_REPARSE_POINT_ENCOUNTERED——覆盖绝对路径与（按官方相对打开语义推定）RootDirectory 相对解析；相对解析中该标志对**中间级**的覆盖无官方逐字说明【未验证】。
+  - TOCTOU 防护：打开时由对象管理器**原子**拒绝路径中任何 reparse；已打开句柄绑定原始对象，此后对象被改为 reparse 不重定向已验证句柄——"打开与使用"之间不存在 reparse 跟随窗口【未验证】。
+  - 逐级句柄链：每级 open 均带 OBJ_DONT_REPARSE → 链上任一级出现 reparse 即 fail-closed。
+  - 打开后检查：因打开已拒绝 reparse，终末对象必非 reparse point；保留防御性二次 tag 检查（FSCTL_GET_REPARSE_POINT 或 GetFileInformationByHandleEx(FileAttributeReparsePointTagInfo)）作 defense-in-depth，其结果不作为唯一安全依据。
+- **方向 B：NtCreateFile + FILE_DIRECTORY_FILE，不用 OBJ_DONT_REPARSE，仅靠打开后检查**——**不可行，弃用**：名称解析阶段 reparse 跟随未被禁止；终末 reparse 已在打开时被跟随，打开的可能就是链接目标而非 reparse 对象自身，打开后 tag 检查发现不了跟随行为；"检查与使用"之间的竞态无法在该方向内闭环。
+- **方向 C：CreateFileW + FILE_FLAG_BACKUP_SEMANTICS**——**不采用（维持第十三轮判定）**：官方仅保证"必须设该标志才能获得目录句柄"；其与 NT 层 FILE_OPEN_FOR_BACKUP_INTENT 的等价性无官方逐字说明，不得凭名称推断；持 SeBackup/SeRestore 时触发 MS-FSA 特权路径无法排除；无特权时虽可打开目录，但 backup intent 入口仍然存在，与"服务自身禁用 backup intent"设计矛盾；Win32 层无法精确限制特权路径。
+
+**修订 2：三方案对比表**
+
+| 维度 | A′：FILE_DIRECTORY_FILE + OBJ_DONT_REPARSE | B：FILE_DIRECTORY_FILE + 打开后 tag 检查 | C：CreateFileW + FILE_FLAG_BACKUP_SEMANTICS |
+|---|---|---|---|
+| CreateOptions 官方合约 | **在兼容清单内**（仅 FILE_DIRECTORY_FILE 本身） | 同左 | 官方要求该标志才能开目录 |
+| 路径解析 reparse 跟随 | 官方语义：全程不跟随，遇即失败 | **会跟随**——打开结果可能已是链接目标 | 未禁止跟随（除非另设 FILE_FLAG_OPEN_REPARSE_POINT） |
+| 打开后 tag 检查能否闭环 | 不依赖（防御性保留） | **不能**（终末 reparse 已被跟随，检查失明） | 不能 |
+| TOCTOU（reparse） | 打开时原子拒绝，已打开句柄不受后续变更影响【未验证】 | 存在检查-使用竞态 | 存在 |
+| backup intent 入口 | **无**（不设 FILE_OPEN_FOR_BACKUP_INTENT） | 无 | **有**（与禁用 backup intent 设计矛盾） |
+| 特权依赖 | 无 | 无 | 持 SeBackup/SeRestore 时触发特权路径（无法排除） |
+| RootDirectory 相对打开 | 支持（官方参数）【未验证】 | 支持 | Win32 无等价参数 |
+| ctypes ABI 风险 | 全链统一 | 全链统一 | 两套路径并存 |
+| 实机验证要求 | N-A112~N-A114、N-A117 + OBJ_DONT_REPARSE 三态实测 | —— | N-A111（旧冲突实证） |
+| **判定** | **采用（方案 A′）** | 弃用 | 不采用 |
+
+**修订 3：最终推荐方案（方案 A′）完整参数——取代第十三轮方案 A 的 CreateOptions/Attributes 白名单**
+
+- **目录句柄（受信任根与每一级受控目录）**：DesiredAccess=`0x00120080`；ShareAccess=`FILE_SHARE_READ (0x1)`；CreateDisposition=`FILE_OPEN (0x1)`；CreateOptions=`FILE_DIRECTORY_FILE (0x00000001)`（白名单仅此一项）；OBJECT_ATTRIBUTES.Attributes=`OBJ_CASE_INSENSITIVE (0x40) | OBJ_DONT_REPARSE (0x1000)`，即 `0x00001040`；RootDirectory=NULL（根，绝对 NT 路径）→ 已验证父句柄（逐级相对）。
+- **.env 文件句柄**：DesiredAccess=`0x00120081`；ShareAccess=FILE_SHARE_READ；CreateDisposition=FILE_OPEN；CreateOptions=`FILE_NON_DIRECTORY_FILE (0x40)`；Attributes 同上 `0x1040`。
+- **语义变化声明（撤销旧条款）**：①撤销第十三轮 `FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT` 组合（不受官方支持）；②撤销"以 FILE_OPEN_REPARSE_POINT 打开 reparse 对象本身再核 tag"的旧防跟随设计——新语义为 **OBJ_DONT_REPARSE 使路径解析遇任何 reparse（含终末 .env 本身是 symlink/junction）直接打开失败** → fail-closed，更强而非更弱；③N-A112/N-A113 的 CreateOptions 参数以本条为准，N-A114 场景更新为"OBJ_DONT_REPARSE 拒绝 reparse 行为验证"（原编号不覆盖）。
+- **STATUS_REPARSE_POINT_ENCOUNTERED 处理**：该 NTSTATUS → 审计（含对象路径与检查级别）+ 拒绝启动；其常量值未在本轮官方页面核对到【未验证：待 SDK 头文件核对】。
+- **OBJ_FORCE_ACCESS_CHECK (0x400) 不加设**：用户态调用本就执行访问检查，该标志主要针对内核句柄场景；保持白名单最小。
+- 目录句柄生命周期、ShareMode、GetSecurityInfo/Owner/DACL/卷序列号/FileId 核验、SeChangeNotifyPrivilege 硬前置——全部维持第十三轮设计不变。
+
+**修订 4：仍无法保证的行为（全部【未验证】）**
+
+①NtCreateFile+OBJ_DONT_REPARSE 用户态实机行为（官方语义明确但 NtCreateFile 页未逐字复述；Q&A 实机观察非合约）；②STATUS_REPARSE_POINT_ENCOUNTERED 常量值与实际返回；③RootDirectory 相对解析中 OBJ_DONT_REPARSE 对**中间级**的覆盖（官方未逐字说明）；④OBJ_DONT_REPARSE 与 FILE_DIRECTORY_FILE/FILE_NON_DIRECTORY_FILE 并用的实机行为；⑤ctypes ABI（UNICODE_STRING/OBJECT_ATTRIBUTES/IO_STATUS_BLOCK/NTSTATUS 转换）；⑥其余继承第十二/十三轮未验证清单（AccessCheck/Token/特权/DACL/共享模式/删除重命名行为等）。
+
+**修订 5：必须执行的 Windows 实机测试（实机项；全部未执行）**
+
+1. NtCreateFile 目录打开（方案 A′ 主路径，N-A112 参数按修订 3 更新）；2. RootDirectory 相对打开（N-A113）；3. **OBJ_DONT_REPARSE 三态**：中间级 junction→预期失败、终末 reparse→预期失败、全普通目录→预期成功（N-A114 更新场景）；4. .env 为 symlink 时打开失败→拒绝启动；5. STATUS_REPARSE_POINT_ENCOUNTERED 实际返回值与常量核对；6. 无 backup/restore 特权目录打开（N-A117）；7. 逐级链全程核验闭环；8. 第十三轮 N-A122~N-A124（错误分类/删除对照/共享模式隔离）。
+
+**修订 6：V2-04A 最终复审条件判定**
+
+- 方案 A′ 的官方参数闭环**成立**：CreateOptions 仅 FILE_DIRECTORY_FILE（在官方兼容清单内）、Attributes 仅 OBJ_CASE_INSENSITIVE|OBJ_DONT_REPARSE（官方列出且官方明示安全场景用途）——不再存在"不受支持的 API 组合"这一设计层阻塞。
+- 但"官方文档支持"≠"实机行为已验证"：上述修订 4 清单全部未实测，**实机验证缺失仍是事实性未完成项**。
+- **判定：架构设计层面方案 A′ 定版；是否批准 V2-04A 交 ChatGPT 第十四轮独立复审裁决；若实机验证发现 OBJ_DONT_REPARSE 用户态行为与官方语义不符 → 记录为架构阻塞重新设计并复审，绝不回退普通路径打开。**
+
+**范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，docs-only；未实现任何业务代码；`executor_image_lock.json` 保持 pending/null；不修改 main/trae-dev，不创建或合并 PR，不合并任何分支，不进入 V2-04B。官方 URL 于 2026-11-13 检索/抓取核对；方案 A′ 全部实机行为【未验证】；pytest 既有基线回归通过（238 passed）。
