@@ -1057,3 +1057,44 @@ attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通�
 | M4-B5 | 监控告警、压测、回滚演练 | 未执行 |
 
 详细前置条件、上线门槛与 Runbook：`PRODUCTION_READINESS.md`。
+
+## 20. 第二十轮：生产上线交付包（M5，2026-11-13）
+
+> 本轮按「上线交付包 + 清单」推进：完成业务后端生产化交付物与本地可验证部分。
+> systemd / nginx 模板**未在真实 Linux 服务器安装**，不宣称已上线。
+
+### 20.1 修复两个真实上线阻塞项
+
+1. **迁移链缺基线**：原迁移链只有 `20261112_0001_add_code_tasks`，
+   干净库 `alembic upgrade head` 只建 `code_tasks`，生产模式（`DB_AUTO_CREATE` 空/false）
+   下应用因缺 `users` 等核心表拒绝启动。新增基线迁移 `20261113_0000_baseline`
+   （users / experiments / steps / progress / records / reports，幂等），
+   链变为 `20261113_0000 → 20261112_0001`。
+2. **alembic.ini 非 ASCII**：Alembic 用 locale 编码读取 alembic.ini，中文注释在
+   GBK locale（Windows zh-CN）下 `UnicodeDecodeError`。已改为纯 ASCII。
+
+迁移验证（临时脚本，已删除）：干净库建出全部 7 张表且 `alembic_version=20261112_0001`；
+`create_all` 历史库幂等通过。两个场景均 PASS。
+
+### 20.2 新增交付物
+
+| 文件 | 说明 |
+|---|---|
+| `scripts/backend_preflight.py` | 业务后端生产配置预检：APP_ENV/DEBUG/JWT/管理员口令/公开注册/数据库/自动建表/CORS/沙箱配置/AI 配置；只输出长度与结论，不回显密钥；退出码 0/1/2 |
+| `deploy/backend/backend.env.production.example` | 生产环境变量模板（全部占位值） |
+| `deploy/backend/zd-backend.service` | systemd 加固单元（非 root、ProtectSystem=strict 等） |
+| `deploy/nginx/zd-backend.conf.example` | nginx TLS 反向代理模板（/health 限内网） |
+| `deploy/README.md` | 交付清单、上线流程、运维与上线门槛 |
+
+### 20.3 预检实测
+
+- 对真实开发 `backend/.env`：`PASS=4 FAIL=7 WARN=2`（退出码 1）——
+  开发配置被正确拒绝，属预期行为。
+- 单元测试 11 项：合规配置零 FAIL、开发默认全 FAIL、沙箱 HTTPS/回环规则、
+  通配 CORS、退出码、密钥不回显等。
+
+### 20.4 测试
+
+- 新增 13 项（预检 11 + 基线迁移 2），更新 1 项（code_tasks 迁移链断言）。
+- 后端全量 **152 项通过**；管理器 168 项不受影响。
+- 上线门槛与运维边界见 `deploy/README.md` §5、§6。

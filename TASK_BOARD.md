@@ -30,6 +30,14 @@
     （实测 7 PASS/0 FAIL），完整停止后仍需手动 `systemctl start zd-sandbox`。
   - 生产阻塞项：独立 Linux 节点、正式 Registry digest、AppArmor/gVisor、生产网络与监控均未具备。
   - 详见 `PRODUCTION_READINESS.md`、`TEST_REPORT.md` §19。**不得标记为 M4 全部完成或生产就绪。**
+- [ ] **M5 生产上线：交付包完成，未在真实服务器部署**（2026-11-13）
+  - 修复两个上线阻塞项：迁移链补基线迁移（干净库可建全部核心表）；
+    alembic.ini 改纯 ASCII（GBK locale 下原会崩溃）。
+  - 新增 `scripts/backend_preflight.py`（11 项单测）、`deploy/` 交付包
+    （systemd/nginx/生产 env 模板 + 上线清单）。
+  - 后端 **152 项测试通过**；迁移在干净库与历史库两场景实测通过。
+  - 边界：systemd/nginx 模板未在真实服务器安装；备份/回滚/监控未演练；
+    执行节点生产验收仍未完成。**不得宣称已上线。**
 
 ## 阶段 3-A — 代码执行沙箱与桌面端验收（已完成）
 

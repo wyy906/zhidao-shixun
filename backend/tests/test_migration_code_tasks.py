@@ -30,7 +30,8 @@ def _run(engine, func):
 def test_code_tasks_migration_upgrade_and_downgrade(tmp_path):
     revision = _load_revision()
     assert revision.revision == "20261112_0001"
-    assert revision.down_revision is None
+    # 迁移链：20261113_0000（基线核心表）→ 20261112_0001（code_tasks）
+    assert revision.down_revision == "20261113_0000"
 
     engine = create_engine(f"sqlite:///{(tmp_path / 'mig.db').as_posix()}")
     assert "code_tasks" in _run(engine, revision.upgrade)

@@ -1,0 +1,51 @@
+# 智导实训业务后端 systemd 单元（生产模板）
+#
+# 安装（目标机器为 Linux 服务器，本仓库开发机为 Windows，此单元尚未在真实服务器验证）：
+#   1. 部署代码到 /opt/zd-backend（含 backend/ 源码与 .venv）
+#   2. 创建专用账号：useradd --system --home /opt/zd-backend --shell /usr/sbin/nologin zd-backend
+#   3. 生产配置放 /etc/zd-backend/backend.env，权限 600，属主 zd-backend
+#   4. 复制本文件到 /etc/systemd/system/zd-backend.service 并 systemctl daemon-reload
+#   5. 先执行 alembic upgrade head（见 deploy/README.md），再 systemctl enable --now zd-backend
+#
+# 数据库：生产使用 PostgreSQL/MySQL 时无需写权限；如临时使用 SQLite，
+# 需把数据库文件所在目录加入 ReadWritePaths。
+
+[Unit]
+Description=ZhiDao Shixun Business Backend (FastAPI/uvicorn)
+Documentation=file:///opt/zd-backend/deploy/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zd-backend
+Group=zd-backend
+EnvironmentFile=/etc/zd-backend/backend.env
+WorkingDirectory=/opt/zd-backend/backend
+ExecStart=/opt/zd-backend/.venv/bin/python -m uvicorn app.main:app \
+  --host 127.0.0.1 --port 8000 --workers 2 --no-access-log
+Restart=on-failure
+RestartSec=3
+
+# ===== 加固（与 zd-sandbox 同级别）=====
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# SQLite 回退时需要应用目录写权限；使用 PostgreSQL 时可移除
+ReadWritePaths=/opt/zd-backend
+LimitNOFILE=4096
+
+# 暴露要求：
+#   1) uvicorn 只绑定 127.0.0.1，由 nginx/Caddy 反向代理终止 TLS；
+#   2) 8000 端口不对公网开放，仅反向代理可访问；
+#   3) 日志交给 journald（journalctl -u zd-backend）。
+
+[Install]
+WantedBy=multi-user.target

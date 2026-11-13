@@ -1,5 +1,32 @@
 # 更新记录
 
+## 2026-11-13 — 阶段 4：生产上线交付包（M5，未部署）
+
+### 修复（上线阻塞项）
+
+- 迁移链补基线迁移 `20261113_0000_baseline`：此前干净库 `alembic upgrade head`
+  只建 `code_tasks`，生产模式会因缺核心表拒绝启动；现链为
+  `20261113_0000（核心表）→ 20261112_0001（code_tasks）`，干净库与
+  create_all 历史库两场景实测通过。
+- `backend/alembic.ini` 改为纯 ASCII：Alembic 以 locale 编码读取该文件，
+  中文注释在 GBK locale 下导致 `UnicodeDecodeError`。
+
+### 新增
+
+- `scripts/backend_preflight.py`：业务后端生产配置预检（只读、不回显密钥，
+  退出码 0/1/2），含 11 项单元测试；对开发 .env 正确拒绝（PASS=4 FAIL=7 WARN=2）。
+- `deploy/`：生产环境变量模板、systemd 加固单元、nginx TLS 反代模板、
+  上线清单与运维说明（`deploy/README.md`）。
+
+### 测试
+
+- 后端全量 **152 项通过**（新增 13、更新 1）。
+
+### 边界
+
+- systemd / nginx 模板未在真实 Linux 服务器安装；备份 / 回滚 / 监控未演练；
+  执行节点生产验收仍未完成。**不得宣称已上线。**
+
 ## 2026-11-13 — 阶段 4：生产化准备（M4，生产验收未通过）
 
 ### 新增

@@ -1,10 +1,10 @@
 """add code_tasks
 
 Revision ID: 20261112_0001
-Revises:
+Revises: 20261113_0000
 Create Date: 2026-11-12
 
-注意：应用启动仍使用 Base.metadata.create_all；本迁移用于把 code_tasks
+注意：应用启动仍使用 Base.metadata.create_all（仅开发环境）；本迁移用于把 code_tasks
 纳入正式迁移链。若目标库已由 create_all 建过该表，upgrade 会跳过建表。
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20261112_0001"
-down_revision = None
+down_revision = "20261113_0000"
 branch_labels = None
 depends_on = None
 
