@@ -8,7 +8,14 @@ import {
   type ExperimentDetail,
   type ExperimentSummary,
 } from './api/experiments'
-import { fetchExecutorStatus, runCode, type ExecutorStatus, type RunResult } from './api/executions'
+import { fetchExecutorStatus, type ExecutorStatus } from './api/executions'
+import {
+  fetchProgress,
+  resetProgress,
+  submitStep,
+  type StepStatusValue,
+  type SubmitStepResponse,
+} from './api/progress'
 
 const DEV_TOKEN_KEY = 'zd_dev_token'
 
@@ -27,30 +34,63 @@ const listError = ref<string | null>(null)
 const selected = ref<ExperimentDetail | null>(null)
 const detailError = ref<string | null>(null)
 
-const code = ref("total = sum(range(1, 11))\nprint('hello from sandbox')\nprint('sum 1..10 =', total)")
-const running = ref(false)
-const runResult = ref<RunResult | null>(null)
-const runError = ref<string | null>(null)
+const activeStepId = ref<string | null>(null)
+const stepStates = ref<Record<string, StepStatusValue>>({})
+const stepCodes = ref<Record<string, string>>({})
+const code = ref('')
+const submitting = ref(false)
+const lastSubmit = ref<SubmitStepResponse | null>(null)
+const submitError = ref<string | null>(null)
 
-const canRun = computed(() =>
-  Boolean(devToken.value && executorStatus.value?.docker_environment_ready && selected.value && !running.value),
+const STATUS_LABELS: Record<string, string> = {
+  pending: '待开始',
+  in_progress: '进行中',
+  passed: '已通过',
+  failed: '未通过',
+  blocked: '被阻塞',
+  skipped: '已跳过',
+}
+
+function statusClass(status: string): string {
+  return `status-${status}`
+}
+
+const activeStep = computed(() =>
+  selected.value?.steps.find((step) => step.step_id === activeStepId.value) ?? null,
 )
 
-const runBlockedReason = computed(() => {
+const activeStepStatus = computed(() =>
+  activeStepId.value ? stepStates.value[activeStepId.value] ?? 'pending' : null,
+)
+
+const canSubmit = computed(() =>
+  Boolean(devToken.value && executorStatus.value?.docker_environment_ready && activeStep.value && !submitting.value),
+)
+
+const submitBlockedReason = computed(() => {
   if (!selected.value) return '请先选择一个实验'
   if (!devToken.value) return '请先填写开发模式令牌（ZD_DEV_API_TOKEN）'
   if (executorStatus.value && !executorStatus.value.docker_environment_ready) {
     return '执行环境未就绪：Docker 未安装/未启动，或镜像 digest 未批准'
   }
   if (!executorStatus.value && executorStatusError.value) return `执行服务不可达：${executorStatusError.value}`
+  if (activeStepStatus.value === 'blocked') return '该步骤依赖未全部通过，暂不能运行'
+  if (activeStepStatus.value === 'passed' || activeStepStatus.value === 'skipped') {
+    return '该步骤已是终态'
+  }
   return ''
 })
+
+function describe(e: unknown): string {
+  if (e instanceof ApiError) return `${e.message}（${e.code}）`
+  return e instanceof Error ? e.message : String(e)
+}
 
 async function refreshExecutorStatus() {
   executorStatus.value = null
   executorStatusError.value = null
-  runResult.value = null
-  runError.value = null
+  lastSubmit.value = null
+  submitError.value = null
   if (!devToken.value) return
   try {
     executorStatus.value = await fetchExecutorStatus(devToken.value)
@@ -66,40 +106,84 @@ function saveToken() {
   void refreshExecutorStatus()
 }
 
-function describe(e: unknown): string {
-  if (e instanceof ApiError) return `${e.message}（${e.code}）`
-  return e instanceof Error ? e.message : String(e)
+function selectStep(stepId: string) {
+  activeStepId.value = stepId
+  code.value = stepCodes.value[stepId] ?? ''
+  lastSubmit.value = null
+  submitError.value = null
+}
+
+async function refreshProgress(experimentId: string) {
+  try {
+    const resp = await fetchProgress(experimentId)
+    stepStates.value = resp.states
+  } catch {
+    /* 进度读取失败不阻塞编辑，按钮原因会提示环境问题 */
+  }
 }
 
 async function selectExperiment(summary: ExperimentSummary) {
   detailError.value = null
-  runResult.value = null
-  runError.value = null
+  lastSubmit.value = null
+  submitError.value = null
+  stepCodes.value = {}
   try {
     const resp = await fetchExperiment(summary.experiment_id)
     selected.value = resp.experiment
+    await refreshProgress(resp.experiment.experiment_id)
+    const firstOpen =
+      resp.experiment.steps.find(
+        (s) => {
+          const st = stepStates.value[s.step_id] ?? 'pending'
+          return st !== 'passed' && st !== 'skipped'
+        },
+      ) ?? resp.experiment.steps[0]
+    selectStep(firstOpen.step_id)
   } catch (e) {
     selected.value = null
     detailError.value = describe(e)
   }
 }
 
-async function submitRun() {
-  if (!selected.value || !canRun.value) return
-  running.value = true
-  runError.value = null
-  runResult.value = null
+function onCodeInput() {
+  if (activeStepId.value) stepCodes.value[activeStepId.value] = code.value
+}
+
+async function runActiveStep() {
+  if (!selected.value || !activeStep.value || !canSubmit.value) return
+  submitting.value = true
+  submitError.value = null
+  lastSubmit.value = null
   try {
-    runResult.value = await runCode(
+    lastSubmit.value = await submitStep(
       selected.value.experiment_id,
+      activeStep.value.step_id,
       code.value,
-      `web-${Date.now()}`,
       devToken.value,
     )
+    stepStates.value = lastSubmit.value.states
   } catch (e) {
-    runError.value = describe(e)
+    submitError.value = describe(e)
   } finally {
-    running.value = false
+    submitting.value = false
+  }
+}
+
+async function resetExperimentProgress() {
+  if (!selected.value || !devToken.value) return
+  submitError.value = null
+  try {
+    const resp = await resetProgress(selected.value.experiment_id, devToken.value)
+    stepStates.value = resp.states
+    lastSubmit.value = null
+    const firstOpen =
+      selected.value.steps.find((s) => {
+        const st = stepStates.value[s.step_id] ?? 'pending'
+        return st !== 'passed' && st !== 'skipped'
+      }) ?? selected.value.steps[0]
+    selectStep(firstOpen.step_id)
+  } catch (e) {
+    submitError.value = describe(e)
   }
 }
 
@@ -196,42 +280,70 @@ onMounted(async () => {
         <div v-if="detailError" class="card err">{{ detailError }}</div>
         <template v-if="selected">
           <div class="card">
-            <h2>{{ selected.title }}</h2>
+            <div class="title-row">
+              <h2>{{ selected.title }}</h2>
+              <button class="small" @click="resetExperimentProgress">重置进度</button>
+            </div>
             <p>{{ selected.description }}</p>
             <ol class="steps">
-              <li v-for="step in selected.steps" :key="step.step_id">
-                <strong>{{ step.title }}</strong> — {{ step.student_action }}
-                <span class="meta">依赖：{{ step.depends_on.length ? step.depends_on.join(', ') : '无' }}</span>
+              <li
+                v-for="step in selected.steps"
+                :key="step.step_id"
+                :class="{ active: step.step_id === activeStepId }"
+                @click="selectStep(step.step_id)"
+              >
+                <div class="step-line">
+                  <strong>{{ step.title }}</strong>
+                  <span class="chip" :class="statusClass(stepStates[step.step_id] ?? 'pending')">
+                    {{ STATUS_LABELS[stepStates[step.step_id] ?? 'pending'] }}
+                  </span>
+                </div>
+                <span class="meta">{{ step.student_action }}</span>
               </li>
             </ol>
+            <p class="hint">进度为进程内存态，服务重启后重置（开发/受控测试模式）。</p>
           </div>
 
           <div class="card">
-            <h2>代码编辑器</h2>
-            <textarea v-model="code" class="editor" spellcheck="false" />
+            <h2>
+              代码编辑器
+              <span v-if="activeStep" class="meta">（{{ activeStep.title }}）</span>
+            </h2>
+            <p v-if="activeStep" class="hint">本步学习目标：{{ activeStep.learning_goal }}</p>
+            <textarea v-model="code" class="editor" spellcheck="false" @input="onCodeInput" />
             <div class="run-row">
-              <button class="primary" :disabled="!canRun" @click="submitRun">
-                {{ running ? '运行中…' : '运行代码' }}
+              <button class="primary" :disabled="!canSubmit" @click="runActiveStep">
+                {{ submitting ? '运行中…' : '运行并验证此步' }}
               </button>
-              <span v-if="!canRun && runBlockedReason" class="hint">{{ runBlockedReason }}</span>
+              <span v-if="!canSubmit && submitBlockedReason" class="hint">{{ submitBlockedReason }}</span>
             </div>
           </div>
 
-          <div v-if="runResult" class="card" :class="runResult.status === 'completed' && runResult.exit_code === 0 ? 'ok' : 'warn'">
-            <h2>运行结果</h2>
+          <div v-if="lastSubmit" class="card" :class="lastSubmit.verify.outcome === 'passed' ? 'ok' : 'warn'">
+            <h2>运行与验证结果</h2>
             <p class="meta">
-              execution_id: {{ runResult.execution_id }} · status: {{ runResult.status }} ·
-              exit_code: {{ runResult.exit_code }} · 耗时: {{ runResult.duration_ms }}ms
-              <template v-if="runResult.truncated"> · 输出已截断</template>
+              execution_id: {{ lastSubmit.run.execution_id }} · status: {{ lastSubmit.run.status }} ·
+              exit_code: {{ lastSubmit.run.exit_code }} · 耗时: {{ lastSubmit.run.duration_ms }}ms
+              <template v-if="lastSubmit.run.truncated"> · 输出已截断</template>
+            </p>
+            <p>
+              验证判定：
+              <strong :class="lastSubmit.verify.outcome === 'passed' ? 'pass-text' : 'fail-text'">
+                {{ lastSubmit.verify.outcome }}
+              </strong>
+              — {{ lastSubmit.verify.feedback }}
+              <span class="meta">
+                （步骤状态：{{ STATUS_LABELS[lastSubmit.step_status] ?? lastSubmit.step_status }}）
+              </span>
             </p>
             <h3>stdout</h3>
-            <pre class="output">{{ runResult.stdout || '（空）' }}</pre>
+            <pre class="output">{{ lastSubmit.run.stdout || '（空）' }}</pre>
             <h3>stderr</h3>
-            <pre class="output err-text">{{ runResult.stderr || '（空）' }}</pre>
+            <pre class="output err-text">{{ lastSubmit.run.stderr || '（空）' }}</pre>
           </div>
-          <div v-if="runError" class="card err">
-            <h2>运行请求失败</h2>
-            <p>{{ runError }}</p>
+          <div v-if="submitError" class="card err">
+            <h2>提交失败</h2>
+            <p>{{ submitError }}</p>
           </div>
         </template>
       </section>
@@ -256,14 +368,17 @@ onMounted(async () => {
 .header h1 { margin: 0; font-size: 1.4rem; }
 .subtitle { color: #64748b; margin: 0.2rem 0 0; }
 .chip {
-  margin-left: auto;
+  display: inline-block;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
-  padding: 0.15rem 0.7rem;
-  font-size: 0.8rem;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
-.chip.ok { border-color: #16a34a; color: #166534; }
-.chip.err { border-color: #dc2626; color: #991b1b; }
+.chip.ok, .chip.passed { border-color: #16a34a; color: #166534; }
+.chip.err, .chip.failed { border-color: #dc2626; color: #991b1b; }
+.chip.in_progress { border-color: #2563eb; color: #1e40af; }
+.chip.blocked { border-color: #d97706; color: #92400e; }
 .card {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -278,8 +393,9 @@ onMounted(async () => {
 .card h3 { margin: 0.75rem 0 0.25rem; font-size: 0.9rem; color: #475569; }
 .hint { color: #64748b; font-size: 0.85rem; margin: 0.35rem 0; }
 .meta { color: #64748b; font-size: 0.8rem; }
-.token-row { display: flex; gap: 0.5rem; align-items: center; }
-.token-row input { flex: 0 1 320px; padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 6px; }
+.pass-text { color: #166534; }
+.fail-text { color: #991b1b; }
+.title-row { display: flex; justify-content: space-between; align-items: center; }
 button {
   padding: 0.4rem 0.9rem;
   border: 1px solid #cbd5e1;
@@ -287,8 +403,11 @@ button {
   background: #f8fafc;
   cursor: pointer;
 }
+button.small { font-size: 0.8rem; padding: 0.25rem 0.6rem; }
 button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+.token-row { display: flex; gap: 0.5rem; align-items: center; }
+.token-row input { flex: 0 1 320px; padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 6px; }
 .layout { display: grid; grid-template-columns: 280px 1fr; gap: 1.25rem; align-items: start; }
 .exp-list { list-style: none; margin: 0.5rem 0 0; padding: 0; }
 .exp-list li {
@@ -301,7 +420,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .exp-list li:hover { background: #f1f5f9; }
 .exp-list li.active { background: #dbeafe; }
-.steps { padding-left: 1.2rem; margin: 0.5rem 0 0; }
+.steps { padding-left: 1.2rem; margin: 0.5rem 0 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.steps li { cursor: pointer; border-radius: 6px; padding: 0.35rem 0.5rem; display: flex; flex-direction: column; gap: 0.2rem; }
+.steps li:hover { background: #f1f5f9; }
+.steps li.active { background: #dbeafe; }
+.step-line { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; }
 .editor {
   width: 100%;
   min-height: 180px;

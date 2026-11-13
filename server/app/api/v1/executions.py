@@ -128,7 +128,7 @@ def run_experiment_code(
         code=body.code,
         timeout_seconds=body.timeout_seconds,
     )
-    payload = _submit(client, submission)
+    payload = submit_execution(client, submission)
     result = _format_result(payload, experiment_id)
     # 执行服务响应不含 task_id，由业务请求回填
     result["task_id"] = body.task_id
@@ -161,8 +161,11 @@ def executor_status(
     }
 
 
-def _submit(client: ExecutorServiceClient, submission: ExecutionSubmission) -> dict:
-    """调用执行服务并统一映射错误；执行失败绝不伪装成运行结果。"""
+def submit_execution(client: ExecutorServiceClient, submission: ExecutionSubmission) -> dict:
+    """调用执行服务并统一映射错误；执行失败绝不伪装成运行结果。
+
+    （V2-04E1 起公开为共享助手：运行接口与步骤进度接口共用同一错误映射。）
+    """
     try:
         payload = client.submit(submission)
     except DockerUnavailableError as exc:
