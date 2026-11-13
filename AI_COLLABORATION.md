@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十五轮架构修订已提交：最终安全边界裁决——①问题 A：OBJ_DONT_REPARSE 用户态 NtCreateFile 支持范围官方未解决（winternl Attributes 窄描述 vs ntdef 通用描述；Microsoft External Staff Moderator 判定"support for the exact combination remains unresolved...Authoritative clarification is still needed"），降级为加固标志、安全闭环不再依赖其生效；②问题 B：受信任根首次打开安全闭环由打开后逐级核验层（Owner/DACL 模板/卷序列号/FileId）独立兜底——reparse 跟随落点 FileId 必异或模板不符 → 拒绝启动，加固标志失效不影响安全性；③最终结论选 B（官方依据不完整的有界本地演示方案）：保证三分法（文档保证/仅实机证据/明确接受风险），限 Windows 10/11 + NTFS + 固定部署位置、不承诺跨版本；STATUS_REPARSE_POINT_ENCOUNTERED=0xC000050B（Moderator 答复）；逐级 component-by-component 路线获 Moderator 印证（"combining documented behavior"）；FILE_ID_INFO 判同一文件但不证明路径授权 → 核验顺序=模板/Owner 比对→卷/FileId 同一性，缺一拒绝；④不推翻方案 A′ 参数；实机矩阵移至 V2-04B 前置门禁；⑤建议 V2-04A 进入最终复审，批准后 V2-04B 可启动；待 ChatGPT 第十五轮独立复审） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十六轮架构修订已提交：首次打开信任根证明边界最小纠偏——①撤销第十五轮"FileId 必然不同/模板匹配独立证明身份/FileId 独立完成首次授权"三个未经证明的必然性表述（第十五轮条目就地标注修正），定版准确表述：FileId 仅用于比较两个已取得句柄是否指向同一文件，不作为首次绝对路径打开的独立授权依据；②明确首次信任根来源：最终安装模式由安装/部署阶段带外条件建立（受控安装位置 + 管理员安装程序核验并应用 Program Files/ProgramData 各级目录权限模板 + 专用非管理员服务账户 + 安装时逐级核验祖先 Owner/DACL/写删权限位；运行期启动检查——非授权主体可替换祖先或安装根 → 拒绝启动），运行期逐级核验层重定义为"配置一致性核验"，FileId 仅作句柄间身份一致性比较；③开发模式明示降低保证等级（不承诺抵御同用户恶意进程/本机管理员/祖先替换者，R-4B-7/8/9 不变），不得推广为最终模式保证；④保留方案 A′ 全部参数（NtCreateFile + FILE_DIRECTORY_FILE/FILE_NON_DIRECTORY_FILE + OBJ_CASE_INSENSITIVE|OBJ_DONT_REPARSE 加固标志（组合契约仍 unresolved）+ RootDirectory 逐级相对 + fail-closed + Docker 隔离 D-1）；不新增测试编号、不重跑既有测试；待 ChatGPT 第十六轮最终独立复审） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1186,6 +1186,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-13 | V2-04A 第十三轮修订：目录句柄方案定版——确认 CreateFileW 开目录必须 FILE_FLAG_BACKUP_SEMANTICS 与旧设计冲突（阻塞 A 成立），推荐方案 A（受信任根与受控链统一 NtCreateFile，CreateOptions 白名单仅 FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT，入口级消除 backup intent）；启动检查固定 11 步顺序、管理员降级为第 9 步且不豁免任何检查（阻塞 B）；NTFS 实测错误分类表 + 删除 4 组正负对照 + 共享模式隔离矩阵（阻塞 C）；官方依据表 9 条（含 MS-FSA Open BackupAccess 伪代码页）；新增 R-4B-14，更新 R-4B-9/R-4B-12 | 采纳 ChatGPT 第十二轮复审三项阻塞；CreateFileW 目录标志要求与 MS-FSA 伪代码已核对官方页；方案 A 全部行为【未验证】，实机不可行时记录为架构阻塞重审，绝不回退普通路径打开 |
 | 2026-11-13 | V2-04A 第十四轮修订：目录打开 Reparse 防护最终裁决——确认 FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT 不在官方兼容清单（阻塞成立）；定版方案 A′：CreateOptions 仅 FILE_DIRECTORY_FILE + Attributes 增设 OBJ_DONT_REPARSE (0x1000)（官方明示安全场景防 reparse 跟随、遇即返回 STATUS_REPARSE_POINT_ENCOUNTERED），弃用"打开 reparse 对象本身再核 tag"旧设计（终末 reparse 已被跟随时 tag 检查失明）；维持不采用 CreateFileW+BACKUP_SEMANTICS；方案 A′ 全部实机行为【未验证】 | 采纳 ChatGPT 第十三轮复审关键问题；已核对 NtCreateFile 兼容清单原文与 ntdef OBJECT_ATTRIBUTES 的 OBJ_DONT_REPARSE 原文；设计层参数闭环成立，实机验证缺失仍为事实性未完成项，V2-04A 是否批准交第十四轮复审 |
 | 2026-11-13 | V2-04A 第十五轮修订：最终安全边界裁决选结论 B（官方依据不完整的有界本地演示方案）——OBJ_DONT_REPARSE 降级为加固标志（Moderator 判定组合契约 unresolved）；安全闭环改由打开后逐级核验层独立兜底（reparse 跟随落点 FileId 必异或模板不符 → 拒绝启动）；保证三分法 + 限 Windows 10/11 + NTFS + 固定部署位置、不承诺跨版本；STATUS_REPARSE_POINT_ENCOUNTERED=0xC000050B（Moderator 答复，非产品文档）；核验顺序=模板/Owner 比对→卷/FileId 同一性；不推翻方案 A′ 参数；实机矩阵移至 V2-04B 前置门禁；建议 V2-04A 进入最终复审 | 采纳 ChatGPT 第十四轮复审两个问题；已核对两份 Microsoft External Staff Moderator 答复原文（官方托管 Q&A，非产品文档，全部如实标注层级）；Docker 沙箱维持不可信代码主要隔离边界（D-1），批准后 V2-04B 可启动 |
+| 2026-11-13 | V2-04A 第十六轮修订：首次打开信任根证明边界最小纠偏——撤销"FileId 必然不同/模板匹配独立证明身份/FileId 独立完成首次授权"必然性表述（第十五轮条目就地修正），定版"FileId 仅用于句柄间身份一致性比较、不作首次打开独立授权依据"；明确首次信任根由安装/部署阶段带外条件建立（受控安装位置 + 管理员核验应用权限模板 + 专用非管理员服务账户 + 逐级核验祖先 + 运行期拒绝可替换祖先/根的启动）；开发模式明示降低保证等级、不得推广至最终模式；保留方案 A′ 全部参数 | 采纳 ChatGPT 第十五轮复审（FILE_ID_INFO 不能单独证明路径授权）；不新增测试编号、不重跑既有测试；不推翻方案 A′，OBJ_DONT_REPARSE 组合契约维持 unresolved 标注 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -2899,7 +2900,7 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 **修订 2：问题 B 裁决（受信任根首次打开的路径安全性）**
 
 - RootDirectory=NULL 绝对路径首次打开：OBJ_DONT_REPARSE 文档措辞覆盖整个名称解析（Moderator："no final-component-only limitation"），按措辞含全部祖先级；**DOS 盘符映射（对象管理器符号链接 `\??\C:` → 卷设备）是否触发 STATUS_REPARSE_POINT_ENCOUNTERED 无官方说明**——盘符映射属对象管理器符号链接而非 NTFS reparse point，两者语义不同，但该区分无官方文档背书【未验证：实机测试必须项】。不得用后续相对打开的安全性反推首次打开必然安全。
-- **首次打开安全闭环不依赖 OBJ_DONT_REPARSE 生效**（兜底论证）：打开后的逐级核验层（Owner/DACL 模板比对/卷序列号/FileId）独立保证"打开的句柄即批准对象"——若 reparse 被跟随，跟随落点为另一对象，其 FileId 必然不同、或 owner/DACL 不符模板 → 核验失败 → 拒绝启动；仅当跟随落点就是同一对象（同卷同 FileId）时才通过——此时打开结果与直连等效，无安全影响。因此即使 OBJ_DONT_REPARSE 被静默忽略，安全边界仍成立；该标志失效只影响**可用性**（本应拒绝的打开成功了？不——失效意味着跟随，跟随落点被核验层拦截），不影响**安全性**。此论证为本项目自行设计的策略，非官方保证；其前提（FileId 唯一性、模板比对充分性）依 FILE_ID_INFO 文档与本项目 DACL 模板设计【FileId 语义官方文档已核对；"Minimum supported client: None supported"按目标版本实测确认】。
+- **首次打开安全闭环不依赖 OBJ_DONT_REPARSE 生效**（兜底论证）【第十六轮修正：本条原表述"若 reparse 被跟随，跟随落点为另一对象，其 FileId 必然不同、或 owner/DACL 不符模板 → 核验失败"存在未经证明的必然性——已被第十六轮修订撤销，改以"配置一致性核验 + 带外信任根"模型表述，见第十五轮条目之后追加的第十六轮修订；准确表述：FileId 用于比较两个已取得句柄是否指向同一文件，不作为首次绝对路径打开的独立授权依据；Owner/DACL 模板匹配只能证明打开对象满足批准配置，不能独立证明对象身份与路径授权】：打开后的逐级核验层证明"打开的句柄满足批准配置"（Owner/DACL 模板比对 + 拒绝位核验）；FileId 仅用于句柄间身份一致性比较；安全闭环的真正依据是安装/部署阶段的带外信任根 + 运行期配置一致性核验 + fail-closed，而非任一单一核验项的独立证明力。此论证为本项目自行设计的策略，非官方保证；其前提（模板比对充分性、一致性核验有效性）依 FILE_ID_INFO 文档与本项目 DACL 模板设计【FileId 语义官方文档已核对；"Minimum supported client: None supported"按目标版本实测确认】。
 
 **修订 3：最终结论——选择 B（官方依据不完整的有界本地演示方案）**
 
@@ -2931,3 +2932,29 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 8. 若 ChatGPT 第十五轮复审批准 V2-04A，则 V2-04B 可启动 Docker 执行器开发（其环境准备阶段首先执行实机验证矩阵；Docker 不可用仍 fail-closed）。
 
 **范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，docs-only；未实现任何业务代码；`executor_image_lock.json` 保持 pending/null；不修改 main/trae-dev，不创建/合并 PR，不合并任何分支，不启动 V2-04B；不新增测试编号、不重复运行既有测试（pytest 未重跑，第 14 轮基线 238 passed 为当前记录）。
+
+### 2026-11-13｜Trae：V2-04A 架构第十六轮修订（首次打开信任根证明边界最小纠偏：撤销 FileId 必然性论证，明确信任根由带外部署条件建立，docs-only）
+
+**前置说明**：响应 ChatGPT 第十五轮复审。不推翻方案 A′、不重新研究 NtCreateFile、不扩展测试编号。仅纠正一个问题：**首次绝对路径打开后，不能仅凭 FileId + Owner/DACL 模板断言打开对象必然是预先批准的受信任对象**。
+
+**修订 1：撤销未经证明的必然性表述（已在第十五轮条目修订 2 就地标注【第十六轮修正】，历史保留）**
+
+- 撤销声明：①"reparse 跟随后 FileId 必然不同"——撤销（FileId 只证明"两个句柄是否同一文件"，不能作为首次打开路径授权的推论依据）；②"Owner/DACL 模板匹配可独立证明对象身份"——撤销（模板匹配仅证明打开对象满足批准配置，不证明路径获得授权；且第 15 轮 Q&A Moderator 已提醒 FILE_ID_INFO"doesn't prove the path was authorized"）；③"FileId 核验可独立完成首次路径授权"——撤销。
+- 准确表述定版：**FileId 用于比较两个已取得句柄是否指向同一文件，不作为首次绝对路径打开的独立授权依据**；卷序列号 + FileId 同一性比较的前提是先有带外建立的批准基线。
+
+**修订 2：首次信任根的来源（究竟由什么安全条件建立）**
+
+- **最终安装模式——信任根由安装/部署阶段的带外条件建立**（运行期核验不能创造信任，只能验证配置一致性）：
+  1. 安装根目录固定在受控安装位置（Program Files 程序目录 + ProgramData 配置目录）；
+  2. Program Files 与 ProgramData 各级目录权限由安装程序以管理员身份显式核验并应用批准模板（拒绝继承不可控 DACL）；
+  3. 使用专用、非管理员服务账户；
+  4. 安装时逐级核验安装路径祖先目录的 Owner、DACL 及写入/删除权限位（祖先链任何一级存在非授权主体的写/删授权 → 安装失败/拒绝）；
+  5. **运行期启动检查**：非授权主体能够替换祖先目录或安装根（有效权限含写/删位或模板不符）→ 拒绝启动；
+  6. 首次打开后的 FileId 仅用于同后续逐级打开对象的**身份一致性比较**，不代替路径授权。
+- **开发模式——明确降低保证等级**：属于本地开发/演示模式，不承诺抵御同一用户恶意进程（R-4B-7）、本机管理员（R-4B-9）或有能力替换用户目录祖先的攻击者（R-4B-8）；**不得把开发模式结论直接推广为最终安装模式的安全保证**。
+
+**修订 3：保留既有方案（不变）**
+
+NtCreateFile / FILE_DIRECTORY_FILE、FILE_NON_DIRECTORY_FILE / OBJ_CASE_INSENSITIVE|OBJ_DONT_REPARSE（加固标志，官方组合契约仍标记 unresolved）/ RootDirectory 逐级相对打开 / fail-closed / Docker 隔离执行不可信 Python 代码（D-1）——全部保留；逐级核验层的角色重定义为"运行期配置一致性核验"（Owner/DACL 模板 + 拒绝位），其有效性叠加于带外信任根之上，非独立授权证明。
+
+**范围与验证确认**：仅修改 AI_COLLABORATION.md 与 README.md；未新增测试编号、未重跑既有测试；`executor_image_lock.json` 保持 pending/null；未实现任何业务代码；不修改 main/trae-dev、不创建/合并 PR、不合并任何分支、不启动 V2-04B；全部实机项维持【未验证】状态并保留于 V2-04B 前置门禁清单。
