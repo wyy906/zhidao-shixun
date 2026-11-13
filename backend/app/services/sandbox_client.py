@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import ssl
 import threading
 from urllib.parse import urlsplit
 
@@ -117,16 +118,28 @@ class SandboxClient:
     # ------------------------------------------------------------------
     # HTTP 客户端
     # ------------------------------------------------------------------
+    def _ssl_context(self) -> ssl.SSLContext | None:
+        """显式构建 SSLContext（CA + 客户端证书一次性载入）。
+
+        httpx 0.28 的 verify=<ca 路径> + cert=(crt,key) 组合在部分平台
+        （Windows + OpenSSL 3.5）会出现握手后立即断开；显式 Context 可稳定
+        完成双向 TLS，且**仍然保留完整证书校验**，不降低任何安全约束。
+        """
+        if not (self._ca_file or (self._client_cert and self._client_key)):
+            return None
+        ctx = ssl.create_default_context(cafile=self._ca_file or None)
+        if self._client_cert and self._client_key:
+            ctx.load_cert_chain(self._client_cert, self._client_key)
+        return ctx
+
     def _client_kwargs(self) -> dict:
         # 不允许关闭证书校验：内网自签证书必须通过 CA 文件显式信任
-        verify: str | bool = self._ca_file or True
-        cert = None
-        if self._client_cert and self._client_key:
-            cert = (self._client_cert, self._client_key)
+        ctx = self._ssl_context()
+        verify: str | bool | ssl.SSLContext = ctx if ctx is not None else True
         kwargs: dict = {
             "base_url": self._base_url,
             "verify": verify,
-            "cert": cert,
+            "cert": None,
             "timeout": httpx.Timeout(
                 connect=min(2.0, self._timeout),
                 read=self._timeout,

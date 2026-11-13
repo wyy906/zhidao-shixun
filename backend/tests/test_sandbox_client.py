@@ -79,18 +79,33 @@ def test_half_mtls_configuration_rejected(tmp_path):
         _client(client_key=str(cert)).validate_config()
 
 
-def test_full_mtls_configuration_passed_to_http_client(tmp_path):
+def test_full_mtls_configuration_builds_ssl_context(tmp_path, monkeypatch):
     ca = tmp_path / "ca.crt"
     cert = tmp_path / "client.crt"
     key = tmp_path / "client.key"
     for path in (ca, cert, key):
         path.write_text("dummy", encoding="utf-8")
 
+    class FakeContext:
+        def __init__(self):
+            self.loaded = None
+
+        def load_cert_chain(self, certfile, keyfile=None):
+            self.loaded = (certfile, keyfile)
+
+    fake = FakeContext()
+    monkeypatch.setattr(
+        "app.services.sandbox_client.ssl.create_default_context",
+        lambda **kwargs: fake,
+    )
+
     client = _client(ca_file=str(ca), client_cert=str(cert), client_key=str(key))
     client.validate_config()
     kwargs = client._client_kwargs()
-    assert kwargs["verify"] == str(ca)
-    assert kwargs["cert"] == (str(cert), str(key))
+    # 显式 SSLContext：保留完整校验，客户端证书载入 Context 而非 cert 参数
+    assert kwargs["verify"] is fake
+    assert kwargs["cert"] is None
+    assert fake.loaded == (str(cert), str(key))
 
 
 def test_missing_certificate_file_rejected(tmp_path):
