@@ -1,5 +1,25 @@
 # 更新记录
 
+## 2026-11-13 — 阶段 4：桌面端 Windows 打包（M3，构建通过）
+
+### 新增
+
+- `desktop/build_windows.ps1`：PyInstaller onedir/windowed 构建脚本，支持 `-Zip`。
+- `desktop/requirements-build.txt`：打包依赖（PyInstaller）。
+- `desktop/README.md`：Windows 打包、产物结构、签名与分发说明。
+
+### 产物（本地，不入库）
+
+- `desktop/dist/ZhidaoShixun/`：onedir，268.4 MB。
+- `desktop/dist/ZhidaoShixun-win64.zip`：105.6 MB。
+
+### 验证
+
+- 构建流程 PASS（PYZ → PKG → EXE → COLLECT，退出码 0），关键 runtime 文件齐全。
+- 本机开启 Smart App Control，未签名 exe 被执行策略拦截（CodeIntegrity 3077/3033），
+  **未完成实机启动验证**；需代码签名或受控测试机。
+- 详细记录：`TEST_REPORT.md` §17。
+
 ## 2026-11-13 — 阶段 4：MVP 演示闭环（M1）通过
 
 ### 验收

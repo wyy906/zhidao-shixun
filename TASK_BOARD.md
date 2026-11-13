@@ -11,7 +11,11 @@
   - 证据：`TEST_REPORT.md` §16；`%TEMP%\m1\m1_result.json`。
   - 边界：本机演示拓扑（WSL 中继），**不等同生产验收**。
 - [ ] **M2 可信度**：结果验证器接入适配器、AI 诊断接真实模型（未开始）。
-- [ ] **M3 分发**：桌面端打包与安装说明（未开始）。
+- [ ] **M3 分发：桌面端打包（构建完成，运行验证被环境策略阻塞）**
+  - 已产出 `desktop/dist/ZhidaoShixun/`（onedir，268.4 MB）与
+    `ZhidaoShixun-win64.zip`（105.6 MB）；构建脚本 `desktop/build_windows.ps1`。
+  - 本机启用 Smart App Control，未签名 exe 被拦截（CodeIntegrity 3077/3033），
+    **不得写成打包产物已实机运行通过**；待代码签名或受控测试机验证。
 - [ ] **M4 生产化**：独立 Linux 节点、正式 digest、AppArmor/gVisor、多实例与故障注入（未开始）。
 
 ## 阶段 3-A — 代码执行沙箱与桌面端验收（已完成）

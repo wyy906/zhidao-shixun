@@ -16,6 +16,7 @@
 | 独立 Linux 生产节点验收 | **尚未验收** |
 | 桌面端 GUI / UIA / 悬浮层（R-06） | **主路径 PASS + 绿色目标框端到端 PASS**（2026-11-13 Windows 11 实机点验）；托盘恢复链路有效、真实双击需人工最终确认 |
 | MVP 演示闭环（M1） | **通过**（2026-11-13 本机：教师导入 → 学生代码运行/报告 → 教师统计；前端界面 PASS；见 `TEST_REPORT.md` §16） |
+| 桌面端打包（M3） | **构建 PASS**（onedir 268.4 MB + zip 105.6 MB）；本机启动被 Smart App Control 拦截，待代码签名或受控机验证（见 §17） |
 
 > 下文历史记录中的“151 项”“真实隔离尚未验证”“S-01~S-15 全部未执行”等表述，
 > 均为**当时的历史状态**，不代表当前结论。
@@ -296,6 +297,16 @@
   下 `cert=(crt,key)` 会握手后断开）；证书校验强度不变；后端 116 项测试通过。
 - 详细记录见 `TEST_REPORT.md` §16。
 - 边界：本机演示拓扑，**不等于生产验收**；中继与临时证书 SAN 不应进入生产部署。
+
+## M3 桌面端打包：构建通过，运行验证被环境策略阻塞（2026-11-13）
+
+- 工具链：Python 3.13.14 + PyInstaller 6.22.3 + PySide6 6.12.0，onedir + windowed。
+- 产物：`desktop/dist/ZhidaoShixun/`（268.4 MB）与 `ZhidaoShixun-win64.zip`（105.6 MB）；
+  脚本 `desktop/build_windows.ps1`，构建依赖 `desktop/requirements-build.txt`。
+- 本机开启 Smart App Control，未签名 exe 被拦截（CodeIntegrity 3077/3033，Policy ID 已记录），
+  直接启动 / Start-Process / 资源管理器均失败；**未完成实机启动验证，不得写成通过**。
+- 解除方式：组织代码签名证书签名（推荐），或在受控测试机关闭 Smart App Control（安全降级，不建议）。
+- 详细记录见 `TEST_REPORT.md` §17。
 
 仍需完成（生产口径）：
 1. 在独立 Linux 生产节点（含 AppArmor / 可选 gVisor）复跑 S-01~S-15。

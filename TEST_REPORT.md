@@ -29,6 +29,7 @@
 | 独立 Linux 生产环境验收 | **尚未通过**（未在独立生产节点执行，且 AppArmor/gVisor/正式 digest 等未覆盖） |
 | 桌面端 GUI / UIA / 悬浮层（R-06） | **主路径 PASS + 绿色目标框端到端 PASS**（2026-11-13 本机 Windows 11 实机点验）；托盘恢复链路已验证有效、真实双击最终确认仍需人工（见 §15） |
 | MVP 演示闭环（M1） | **通过**（2026-11-13 本机：教师导入 → 学生运行代码/报告 → 教师统计；含真实 Docker 沙箱与前端界面，见 §16） |
+| 桌面端打包（M3） | **构建 PASS**；本机运行验证 **BLOCKED**（Smart App Control 拦截未签名 exe，见 §17） |
 
 ## 2. 结论摘要
 
@@ -868,3 +869,58 @@ attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通�
    独立 `DATABASE_URL`。
 4. 启动前端 `npm run dev`，用教师账号导入 `experiment_packs/01-ai-api-lab.json`，再走学生流程。
 5. 结束后停止中继、恢复原证书、删除临时证书与令牌文件（本轮已执行）。
+
+## 17. 第十七轮：桌面端 Windows 打包（M3，2026-11-13）
+
+### 17.1 构建环境与产物
+
+| 项 | 值 |
+|---|---|
+| 构建机 | Windows 11 x64 |
+| Python | 3.13.14 |
+| PyInstaller | 6.22.3 |
+| PySide6 | 6.12.0 |
+| 入口 | `desktop/src/main.py` |
+| 模式 | onedir + windowed（`--collect-submodules pywinauto/comtypes`） |
+| 产物 | `desktop/dist/ZhidaoShixun/ZhidaoShixun.exe`，目录合计 **268.4 MB** |
+| 分发包 | `desktop/dist/ZhidaoShixun-win64.zip`，**105.6 MB** |
+
+构建脚本：`desktop/build_windows.ps1`；构建依赖：`desktop/requirements-build.txt`。
+
+### 17.2 构建结果 —— PASS
+
+- PyInstaller 全流程完成：PYZ → PKG → EXE → COLLECT，退出码 0。
+- 关键运行时文件存在：
+  `_internal/python313.dll` = True、`_internal/PySide6/plugins/platforms/qwindows.dll` = True。
+- `warn-ZhidaoShixun.txt` 中未发现 `pywinauto` / `mss` / `httpx` 的致命缺失；
+  主要为 comtypes 测试模块、setuptools 等可选依赖告警。
+- 产物目录与 zip 均位于 `desktop/dist/`，已被 `.gitignore` 排除，不入库。
+
+### 17.3 实机启动验证 —— BLOCKED（环境策略，非构建失败）
+
+- 本机 `Smart App Control` 处于开启状态
+  （`VerifiedAndReputablePolicyState=1`）。
+- 直接启动、`Start-Process`、资源管理器双击均被拦截。
+- 代码完整性日志（`Microsoft-Windows-CodeIntegrity/Operational`）记录：
+  - 事件 **3077 / 3033**：`ZhidaoShixun.exe` 未满足企业签名要求，
+    Policy ID `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`；
+  - 事件 **3118**：`Smart App Control Block Details`。
+- 本机无可用的代码签名证书，也不应擅自关闭 Smart App Control，
+  因此**未完成打包产物的实机启动验证**。
+
+> 结论：**构建 PASS，启动验证 BLOCKED**。不得写成“打包产物已实机运行通过”。
+> 源码运行方式已在 R-06 实机验证（§15）。
+
+### 17.4 解除阻塞的选项（需负责人决策）
+
+1. **推荐**：使用组织代码签名证书对 `ZhidaoShixun.exe` 签名后再分发；
+   签名后仍需目标机策略允许该证书链。
+2. 在受控测试机上关闭 Smart App Control（注意：关闭后通常需重置系统才能重新开启，
+   属于安全降级，不建议在办公机执行）。
+3. 内部演示继续使用源码运行：`python desktop/src/main.py`（已验证）。
+
+### 17.5 结论边界
+
+- 本次证明了“可重复构建出完整 onedir 分发包”，**未证明**该 exe 在启用应用控制策略的
+  Windows 上可执行。
+- 未做多版本 Windows、无 Python 环境的干净机、多显示器/高 DPI 下的打包产物验证。
