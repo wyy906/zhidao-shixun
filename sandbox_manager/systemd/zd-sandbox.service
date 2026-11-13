@@ -4,6 +4,9 @@ Documentation=file:///opt/zd-sandbox/SANDBOX_DEPLOYMENT.md
 # 必须与业务服务器分离部署；排除与业务后端同机运行
 After=docker.service network-online.target
 Requires=docker.service
+# Docker 重启时联动重启管理器；注意 systemd 的 Requires/PartOf 只传播“停止/重启”，
+# 完整 `systemctl stop docker` 之后仍需手动 `systemctl start zd-sandbox`
+PartOf=docker.service
 Wants=network-online.target
 
 [Service]

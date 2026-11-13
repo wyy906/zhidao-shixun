@@ -18,6 +18,8 @@
 - Docker 不可用：管理器退出码 3、端口未提供服务（fail-closed），日志未泄露令牌。
 - Docker 停止：`Requires=docker.service` 联动停止管理器；恢复需手动
   `systemctl start zd-sandbox`；恢复后 `/health` ok、残留容器 0。
+- 单元新增 `PartOf=docker.service`：Docker 重启时管理器联动恢复（实测 7 PASS/0 FAIL）；
+  完整 stop 后再 start 仍需手动启动管理器。
 
 ### 边界
 

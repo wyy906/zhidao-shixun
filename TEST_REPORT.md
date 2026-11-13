@@ -1033,6 +1033,7 @@ attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通�
 | 多实例隔离（实例 A :8443 / 实例 B :8543） | `PASS=10 FAIL=0` |
 | Docker 不可用 fail-closed | 退出码 3，8544 未提供服务 |
 | Docker 停止 → 管理器联动停止 | 8443 无监听，恢复需手动启动 |
+| Docker 重启 → 管理器联动恢复（`PartOf=docker.service`） | `PASS=7 FAIL=0` |
 | 恢复后健康与残留 | `/health` ok，残留容器 0 |
 
 - 预检唯一 FAIL：**AppArmor 未启用**（WSL2 内核不提供），属预期生产阻塞项。
@@ -1041,7 +1042,9 @@ attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通�
 - 故障注入：无效 `ZD_SANDBOX_DOCKER_HOST` 时管理器以退出码 3 退出，
   日志为 `sandbox startup cleanup failed: docker_unavailable`，未泄露令牌。
 - Docker 停止会因 `Requires=docker.service` 联动停止管理器；
-  **启动 Docker 不会自动启动管理器**，需 `systemctl start zd-sandbox`。
+  单元新增 `PartOf=docker.service` 后，`systemctl restart docker` 会联动重启管理器
+  （实测 PASS=7/FAIL=0）；但 Docker 完整 stop 后再 start，管理器**不会自动启动**，
+  仍需 `systemctl start zd-sandbox`。
 
 ### 19.3 生产阻塞项（未完成）
 

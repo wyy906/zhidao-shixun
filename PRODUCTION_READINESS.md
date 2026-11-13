@@ -19,6 +19,7 @@
 | 多实例隔离（实例 A + 实例 B） | PASS=10 / FAIL=0 | 本机实测 |
 | Docker 不可用 fail-closed | 退出码 3，端口未提供服务 | 本机实测 |
 | Docker 停止 → 管理器联动停止 | 停止传播生效，端口关闭 | 本机实测 |
+| Docker 重启 → 管理器联动恢复 | `PartOf=docker.service` 生效（PASS=7/FAIL=0） | 本机实测 |
 | AppArmor | FAIL（WSL2 内核不提供） | **生产阻塞项** |
 | 正式 Registry digest | 未具备（仅本地 image id） | **生产阻塞项** |
 | gVisor / runsc | 未安装（可选增强） | 生产建议项 |
@@ -130,9 +131,18 @@ bash sandbox_manager/scripts/production_preflight.sh
 - **启动 Docker 不会自动启动 `zd-sandbox`**（`Requires=` 只传播停止，不传播启动）；
 - 需显式 `systemctl start zd-sandbox`，之后 `/health` 恢复 `ok`，残留容器数 0。
 
-> 运维建议：将 Docker Engine 与 `zd-sandbox` 的启停纳入同一运维脚本/Ansible 任务；
-> 如需 Docker 重启后自动恢复管理器，可评估在单元中增加 `PartOf=docker.service`
-> （本轮未改动单元，避免未经生产验证的变更）。
+### 4.5 Docker 重启联动恢复（本轮新增）
+
+单元新增 `PartOf=docker.service` 后实测（`PASS=7 FAIL=0`）：
+
+1. 更新单元并 `daemon-reload`，重启管理器后 `/health` 正常。
+2. `systemctl restart docker.service` → **`zd-sandbox` 自动恢复运行**，`/health` 正常。
+3. `systemctl stop docker.socket docker.service` → 管理器联动停止。
+4. `systemctl start docker.socket docker.service` → 管理器**不会自动启动**
+   （systemd 依赖只传播停止/重启，不传播启动），手动启动后 `/health` 正常、残留容器 0。
+
+> 运维要求：Docker 完整停止后再启动时，必须显式 `systemctl start zd-sandbox`；
+> 建议把它写入同一运维脚本/Ansible 任务，并纳入监控告警。
 
 ## 5. 生产部署与验收流程
 
@@ -198,6 +208,7 @@ curl -sS --cacert ca.crt --cert client.crt --key client.key \
 - 多实例并发执行
 - Docker 不可用时 fail-closed
 - Docker 停止的联动行为与恢复步骤
+- Docker 重启的管理器联动恢复（`PartOf=docker.service`）
 - systemd 加固项、证书权限、令牌长度、磁盘余量、无残留
 
 **未验证 / 阻塞：**

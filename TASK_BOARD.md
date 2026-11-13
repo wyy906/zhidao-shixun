@@ -26,7 +26,8 @@
     WSL2 实测 `PASS=20 FAIL=1 BLOCK=0`（唯一 FAIL 为 AppArmor 不可用）。
   - WSL2 多实例隔离 `PASS=10 FAIL=0`：A/B 并发执行成功，重启 B 未误删 A 标签容器。
   - 故障注入：无效 Docker socket → 管理器退出码 3、端口不提供服务（fail-closed）；
-    Docker 停止会联动停止管理器，恢复需手动 `systemctl start zd-sandbox`。
+    Docker 停止会联动停止管理器；单元新增 `PartOf=docker.service` 后 Docker 重启可联动恢复
+    （实测 7 PASS/0 FAIL），完整停止后仍需手动 `systemctl start zd-sandbox`。
   - 生产阻塞项：独立 Linux 节点、正式 Registry digest、AppArmor/gVisor、生产网络与监控均未具备。
   - 详见 `PRODUCTION_READINESS.md`、`TEST_REPORT.md` §19。**不得标记为 M4 全部完成或生产就绪。**
 
