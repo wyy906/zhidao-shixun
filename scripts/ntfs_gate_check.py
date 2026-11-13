@@ -67,12 +67,17 @@ class IO_STATUS_BLOCK(ctypes.Structure):
 
 
 class FILE_ID_INFO(ctypes.Structure):
-    # SDK layout: DWORD VolumeSerialNumber; FILE_ID_128 FileId;  with FILE_ID_128
-    # carrying 8-byte alignment in winbase.h -> FileId sits at offset 8, size 24.
-    # Passing a 20-byte buffer makes GetFileInformationByHandleEx write past it.
-    _fields_ = [("VolumeSerialNumber", ctypes.c_ulong),
-                ("_pad", ctypes.c_ubyte * 4),
+    # SDK layout (winbase.h): ULONGLONG VolumeSerialNumber; FILE_ID_128 FileId;
+    # -> VolumeSerialNumber at offset 0 (64-bit!), FileId at offset 8, size 24.
+    # VolumeSerialNumber is 64-bit, NOT a 32-bit DWORD. A smaller buffer makes
+    # GetFileInformationByHandleEx write past it.
+    _fields_ = [("VolumeSerialNumber", ctypes.c_ulonglong),
                 ("FileId", ctypes.c_ubyte * 16)]
+
+
+assert ctypes.sizeof(FILE_ID_INFO) == 24
+assert FILE_ID_INFO.VolumeSerialNumber.offset == 0
+assert FILE_ID_INFO.FileId.offset == 8
 
 
 NtCreateFile = NTDLL.NtCreateFile
@@ -107,6 +112,32 @@ ADVAPI32.GetSecurityInfo.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_u
                                      ctypes.POINTER(ctypes.c_void_p),   # ppDacl
                                      ctypes.POINTER(ctypes.c_void_p),   # ppSacl
                                      ctypes.POINTER(ctypes.c_void_p)]   # ppSecurityDescriptor
+ADVAPI32.GetNamedSecurityInfoW.restype = ctypes.c_long
+ADVAPI32.GetNamedSecurityInfoW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong,
+                                           ctypes.c_ulong,
+                                           ctypes.POINTER(ctypes.c_void_p),
+                                           ctypes.POINTER(ctypes.c_void_p),
+                                           ctypes.POINTER(ctypes.c_void_p),
+                                           ctypes.POINTER(ctypes.c_void_p),
+                                           ctypes.POINTER(ctypes.c_void_p)]
+ADVAPI32.GetAce.restype = ctypes.c_int
+ADVAPI32.GetAce.argtypes = [ctypes.c_void_p, ctypes.c_ulong,
+                            ctypes.POINTER(ctypes.c_void_p)]
+
+
+def acl_ace_info(pacl):
+    """Return (ace_count, [(ace_type, mask), ...]) for an ACL pointer (int)."""
+    if not pacl:
+        return 0, []
+    count = ctypes.c_ushort.from_address(pacl + 4).value
+    out = []
+    ptr = ctypes.c_void_p()
+    for i in range(count):
+        if ADVAPI32.GetAce(ctypes.c_void_p(pacl), i, ctypes.byref(ptr)) and ptr.value:
+            ace_type = ctypes.c_ubyte.from_address(ptr.value).value
+            mask = ctypes.c_ulong.from_address(ptr.value + 4).value
+            out.append((ace_type, mask))
+    return count, out
 
 RESULTS = []
 
@@ -159,21 +190,28 @@ def main():
     print("python:", sys.version.split()[0], "| build:", platform.version())
 
     # ---- T000 struct layout assertions (ctypes ABI gate) ----
-    # FILE_ID_INFO = 20 bytes: FILE_ID_128 (UCHAR[16]) has alignment 1, no padding.
     sizes = (ctypes.sizeof(UNICODE_STRING), ctypes.sizeof(OBJECT_ATTRIBUTES),
              ctypes.sizeof(IO_STATUS_BLOCK), ctypes.sizeof(FILE_ID_INFO))
-    record("T000", "struct sizes US/OBJA/IOSB/FILE_ID_INFO (expect 16/48/16/24 on x64)",
-           "PASS" if sizes == (16, 48, 16, 24) else "FAIL", str(sizes))
+    offsets_ok = (FILE_ID_INFO.VolumeSerialNumber.offset == 0
+                  and FILE_ID_INFO.FileId.offset == 8)
+    record("T000", "struct sizes US/OBJA/IOSB/FILE_ID_INFO (expect 16/48/16/24 on x64; VSN@0 FileId@8)",
+           "PASS" if sizes == (16, 48, 16, 24) and offsets_ok else "FAIL",
+           str(sizes) + " offsets_ok=%s" % offsets_ok)
     if ctypes.sizeof(ctypes.c_void_p) != 8:
         record("T000b", "pointer size", "BLOCKED", "not a 64-bit process")
         return
 
-    # ---- volume FS type ----
+    # ---- volume FS type: PASS only when actually NTFS ----
     fsbuf = ctypes.create_unicode_buffer(261)
     ok = KERNEL32.GetVolumeInformationW("C:\\", None, 0, None, None, None,
                                         fsbuf, 261)
-    record("T001", "C: volume filesystem", "PASS" if ok else "BLOCKED",
-           fsbuf.value if ok else "GetVolumeInformationW failed err=%d" % KERNEL32.GetLastError())
+    if not ok:
+        record("T001", "C: volume filesystem", "BLOCKED",
+               "GetVolumeInformationW failed err=%d" % KERNEL32.GetLastError())
+    else:
+        fs = fsbuf.value
+        record("T001", "C: volume filesystem", "PASS" if fs.upper() == "NTFS" else "FAIL",
+               "%s (expect NTFS)" % fs)
 
     # ---- token type (evidence for token classification) ----
     try:
@@ -300,21 +338,28 @@ def main():
                "status=0x%08X" % (st & 0xFFFFFFFF))
 
         # ---- T060 security descriptor query on dir handle ----
+        # Receive ppSecurityDescriptor and free only the descriptor itself
+        # (Owner/DACL pointers point inside it). Free in finally so exception
+        # paths cannot leak.
         owner_sid = ctypes.c_void_p()
         dacl = ctypes.c_void_p()
-        # OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION; ppSacl/sd not requested
-        rv = ADVAPI32.GetSecurityInfo(dir_h.value, 1, 0x1 | 0x4, ctypes.byref(owner_sid),
-                                      None, ctypes.byref(dacl), None, None)
-        if rv == 0 and dacl.value:
-            ace_count = ctypes.c_ushort.from_address(dacl.value + 4).value
-            record("T060", "GetSecurityInfo Owner+DACL by handle (READ_CONTROL path)",
-                   "PASS", "ace_count=%d (current user dir; template compare is deployment-level)"
-                   % ace_count)
-            # NOTE: buffers intentionally not freed (one-shot tool); freeing here
-            # surfaced heap corruption and is not needed for the report.
-        else:
-            record("T060", "GetSecurityInfo Owner+DACL by handle", "FAIL",
-                   "rv=0x%08X err=%d" % (rv, KERNEL32.GetLastError()))
+        sd = ctypes.c_void_p()
+        try:
+            rv = ADVAPI32.GetSecurityInfo(dir_h.value, 1, 0x1 | 0x4,
+                                          ctypes.byref(owner_sid), None,
+                                          ctypes.byref(dacl), None,
+                                          ctypes.byref(sd))
+            if rv == 0 and sd.value and dacl.value:
+                ace_count, _ = acl_ace_info(dacl.value)
+                record("T060", "GetSecurityInfo Owner+DACL by handle (READ_CONTROL path)",
+                       "PASS", "sd=0x%X ace_count=%d (current user dir; template compare is deployment-level)"
+                       % (sd.value, ace_count))
+            else:
+                record("T060", "GetSecurityInfo Owner+DACL by handle", "FAIL",
+                       "rv=0x%08X err=%d sd=%s" % (rv, KERNEL32.GetLastError(), bool(sd.value)))
+        finally:
+            if sd.value:
+                KERNEL32.LocalFree(ctypes.c_void_p(sd.value))
 
         # ---- T070 delete positive path (file DELETE authorized) ----
         del_path = os.path.join(base, "del_pos.txt")
@@ -383,11 +428,50 @@ def main():
         if grant_ok:
             fpath = os.path.join(dcd, "victim.txt")
             open(fpath, "w").close()  # parent grants WD (add file); file gets empty DACL
-            ok = KERNEL32.DeleteFileW(fpath)
-            err = 0 if ok else KERNEL32.GetLastError()
-            record("T073", "parent FILE_DELETE_CHILD-only grant -> child with empty DACL deleted via parent path",
-                   "PASS" if ok else "FAIL",
-                   "deleted=%s err=%d (child DACL empty, parent DC authorized deletion)" % (ok, err))
+
+            # Evidence A: child DACL is present, non-NULL, and has zero ACEs.
+            child_dacl = ctypes.c_void_p()
+            child_sd = ctypes.c_void_p()
+            # Evidence B: parent DACL really contains a FILE_DELETE_CHILD(0x40) grant.
+            parent_dacl = ctypes.c_void_p()
+            parent_sd = ctypes.c_void_p()
+            ev_a = ev_b = False
+            details = []
+            try:
+                rv1 = ADVAPI32.GetNamedSecurityInfoW(fpath, 1, 0x4, None, None,
+                                                     ctypes.byref(child_dacl), None,
+                                                     ctypes.byref(child_sd))
+                if rv1 == 0 and child_dacl.value:
+                    n_child, aces_child = acl_ace_info(child_dacl.value)
+                    ev_a = (n_child == 0)
+                    details.append("child_dacl_present=True ace_count=%d" % n_child)
+                else:
+                    details.append("child_dacl NULL (rv=0x%08X) -> null-DACL semantics unproven" % rv1)
+
+                rv2 = ADVAPI32.GetNamedSecurityInfoW(dcd, 1, 0x4, None, None,
+                                                     ctypes.byref(parent_dacl), None,
+                                                     ctypes.byref(parent_sd))
+                if rv2 == 0 and parent_dacl.value:
+                    n_par, aces_par = acl_ace_info(parent_dacl.value)
+                    dc_granted = any(t == 0 and (m & 0x40) for t, m in aces_par)
+                    ev_b = dc_granted
+                    details.append("parent_ace_count=%d FILE_DELETE_CHILD_granted=%s aces=%s"
+                                   % (n_par, dc_granted, aces_par))
+                else:
+                    details.append("parent_dacl NULL (rv=0x%08X)" % rv2)
+
+                # Evidence C: deletion succeeds via the parent path.
+                ok = KERNEL32.DeleteFileW(fpath)
+                err = 0 if ok else KERNEL32.GetLastError()
+                record("T073", "parent FILE_DELETE_CHILD-only grant -> empty-DACL child deleted via parent path",
+                       "PASS" if (ev_a and ev_b and ok) else "FAIL",
+                       "deleted=%s err=%d ev_child_empty=%s ev_parent_dc=%s | %s"
+                       % (ok, err, ev_a, ev_b, "; ".join(details)))
+            finally:
+                if child_sd.value:
+                    KERNEL32.LocalFree(ctypes.c_void_p(child_sd.value))
+                if parent_sd.value:
+                    KERNEL32.LocalFree(ctypes.c_void_p(parent_sd.value))
         else:
             record("T073", "parent FILE_DELETE_CHILD test", "BLOCKED",
                    "Set-Acl failed: " + (r.stderr.strip() or r.stdout.strip())[:200])

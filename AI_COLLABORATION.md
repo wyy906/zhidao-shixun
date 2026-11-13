@@ -3015,3 +3015,16 @@ NtCreateFile / FILE_DIRECTORY_FILE、FILE_NON_DIRECTORY_FILE / OBJ_CASE_INSENSIT
 **4. 范围与验证确认**
 
 本阶段 commit 包含：`scripts/ntfs_gate_check.py`（新增，可复现门禁脚本，仅操作 %TEMP% 下自建临时目录，清理完整）、AI_COLLABORATION.md（本条目）、README.md（状态行）。pytest 238 passed 基线不变。`executor_image_lock.json` 保持 pending/null 未动。未修改 main/trae-dev、未创建/合并 PR、未合并任何分支、未实现 Docker 执行器业务代码（阶段 B 范围）。所有 Docker 相关结论均为 BLOCKED，未宣称任何 Docker 安全行为已验证。
+
+### 2026-11-13｜Trae：V2-04B 阶段 A 复审修正（A1：ChatGPT 复审五项修正全部完成，修正后真实重跑 18 PASS / 1 FAIL / 0 BLOCKED）
+
+**报告口径修正（复审第 5 项）**：原阶段 A"19 PASS / 0 FAIL / 0 BLOCKED"明确限定为**脚本修正前的原阶段 A NTFS 本机测试统计**；Docker 相关项独立列为 BLOCKED（本机未安装 Docker，绝不描述为 Docker 安全测试通过）；最终安装模式信任根建立列为 NOT TESTED；修正前后结果分别记录、历史证据不覆盖。
+
+**五项修正内容**：
+1. **FILE_ID_INFO 64 位化**：VolumeSerialNumber 修正为 `ctypes.c_ulonglong`（ULONGLONG，64 位），FileId 16 字节，总长 24 字节；显式断言 `sizeof==24`、`VolumeSerialNumber.offset==0`、`FileId.offset==8`（模块级 assert + T000 记录 offsets_ok）；全部注释已修正，不再描述为 32 位。**效果实证**：T030 两侧卷序列号均为完整 64 位值 0xA9E2F059E2EE941（修正前仅低 32 位 0x1de0…，属截断读数）。
+2. **T001 文件系统检查**：API 失败 → BLOCKED；名称非 NTFS → FAIL；仅 NTFS → PASS。
+3. **T060 安全描述符释放**：接收 `ppSecurityDescriptor` 输出并验证非空；DACL 信息经 `GetAce` 迭代读取；**仅在 finally 中 LocalFree 整个安全描述符**（Owner/DACL 指针位于描述符内部，不单独释放）；异常路径同样释放。
+4. **T073 空 DACL 实证（诚实记录 FAIL）**：删除前实际读取子文件与父目录安全描述符。父目录侧证实：ace_count=1、存在 ACCESS_ALLOWED ACE 且 mask=0x100042 含 FILE_DELETE_CHILD(0x40)+FILE_ADD_FILE(0x2)（**ev_b=True，父目录 DC 授权实证成立**）。子文件侧**无法证实**：父目录无可继承 ACE 时，新建子文件按 Windows 语义继承**创建者令牌默认 DACL**（实测 ace_count=3，含用户 DELETE 授权），"空 DACL 前提"无法通过简单创建建立——按复审规则"任何一项无法证实时不得报告 PASS"，**T073 记 FAIL**，原因已写入输出。父目录授权路径的隔离证据由 **T072** 承担（文件 deny DELETE 后删除仍成功，实证删除经父路径完成）；T073 补充价值=父目录 DC 位可经 PowerShell/.NET 精确授予（icacls 不可）。
+5. **报告口径**：见上。
+
+**修正后真实重跑（Win11 26300 + NTFS + UAC 过滤令牌）**：**18 PASS / 1 FAIL / 0 BLOCKED / 0 NOT TESTED**。FAIL 仅 T073（原因如上，父目录 DC 授权 ev_b 已实证；不影响方案 A′ 与删除双路径结论——后者由 T072 隔离实证）。其余全部 PASS 且关键值复核一致：T010/T020/T021 方案 A′ 主路径 status=0x0、T040/T041 OBJ_DONT_REPARSE 终末/中间级恰 0xC000050B、T042 对照跟随且身份一致、T050 DOS 盘符正常、T060 SD=0x1CBBFA81220 ace_count=3 并正确释放、T070 err=0、T071 err=32、T072 deleted=1、T080 清理成功。pytest 238 passed 基线不变；`executor_image_lock.json` 保持 pending/null；Docker 相关门禁维持 BLOCKED。
