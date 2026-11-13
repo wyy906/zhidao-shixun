@@ -3137,3 +3137,14 @@ NtCreateFile / FILE_DIRECTORY_FILE、FILE_NON_DIRECTORY_FILE / OBJ_CASE_INSENSIT
 **当前产品状态（如实）**：完整教学闭环代码路径已通——选实验 → 看步骤与状态 → 写代码 → 运行并验证 → 状态推进/依赖解锁 → 反馈展示；全部判定基于真实运行结果与白名单验证器，uncertain 永不伪装通过。**真实执行与全部终态行为仍需 Docker 环境（阶段 C）实测**；进度为内存态（重启重置）已如实标注；登录会话与 Monaco 为后续项。
 
 **下一步**：①负责人安装 Docker Desktop + 批准 digest → 阶段 C 真实执行与容器安全实测（解锁全部已建能力的真实验证）；②登录会话最小实现；③Monaco 编辑器；④过程记录与报告草稿（V2-09 前置）。
+
+### 2026-11-13｜Trae：Docker 环境就绪声明核实——实测不成立，文档维持 BLOCKED 口径，补充安装就绪核验清单
+
+**经过**：项目负责人提出"更新文档以反映 Docker 环境已就绪"。按"不得宣称未实测内容"纪律先实测核实：`docker` 命令不在 PATH、`C:\Program Files\Docker\Docker\` 不存在、`\\.\pipe\docker_engine` 命名管道不存在、无 Docker 服务/进程——**本机 Docker 未安装，就绪声明不成立**。向负责人确认后明确：**本机尚未安装 Docker Desktop（安装未完成）**。
+
+**处理**：
+1. 文档**未做任何"已就绪"改写**——全部 BLOCKED 口径（阶段 C 待 Docker、executor_image_lock pending/null、真实执行 BLOCKED）维持不变。
+2. README 新增"**Docker 环境准备（阶段 C 前置）**"核验清单：安装 Docker Desktop（WSL2）→ `docker version` 双段验证 → `.venv pip install docker`（SDK）→ 重启执行服务看 `engine_available=true` → `docker pull python:3.12-slim` 取 RepoDigests 供负责人审批 → 审批后 `/executor/status` 返回 `docker_environment_ready=true`、前端自动解禁 → 阶段 C 真实集成测试。
+3. 如实记录：负责人已确认计划安装（尚无完成时间承诺），安装完成后的第一时间可按清单逐项实测解锁阶段 C。
+
+**待办提醒**：安装就绪后，阶段 C 首批实测项为容器安全参数（network none/read_only/tmpfs/cap_drop/no-new-privileges/nano_cpus/pids_limit）、docker-py logs/wait/kill 实际行为（R-4B-2/R-4B-6）、digest 校验链路；届时 ChatGPT 对 V2-04B~E 的复审可一并依据真实测试证据进行。

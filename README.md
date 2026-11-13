@@ -73,6 +73,20 @@ git switch feat/zhidao-shixun-v2-rebuild
 - 后端默认 8000；前端代理目标默认 http://127.0.0.1:8000。
 - 8000 被占用时：`./scripts/start-server.ps1 -Port 8100`，并对应使用 `./scripts/start-web.ps1 -ApiTarget http://127.0.0.1:8100`、`./scripts/start-desktop.ps1 -ApiTarget http://127.0.0.1:8100`。
 
+## Docker 环境准备（阶段 C 前置；截至 2026-11-13 本机尚未安装）
+
+安装完成后按顺序核验，全部通过即可解锁真实执行（无需改代码）：
+
+1. 安装 Docker Desktop for Windows（启用 WSL2 后端）并启动。
+2. 验证引擎：`docker version` 输出应同时包含 Client 与 Server 段。
+3. 安装执行服务依赖：`.venv\Scripts\pip install docker`（docker SDK，仅执行服务进程使用）。
+4. 重启执行服务：`./scripts/start-executor-service.ps1`，此时 `curl http://127.0.0.1:8101/healthz` 应返回 `"engine_available": true`。
+5. 预拉取镜像并取 digest 供审批：
+   `docker pull python:3.12-slim` 然后 `docker image inspect python:3.12-slim --format "{{json .RepoDigests}}"`，
+   把 manifest digest 填入 `executor_image_lock.json`（需负责人审批，当前 approval_status=pending、digest=null）。
+6. 审批通过后，主 API `GET /api/v1/executor/status` 应返回 `"docker_environment_ready": true`，工作台运行按钮自动解除禁用。
+7. 阶段 C：运行真实集成测试（容器安全参数实测、验证闭环终态实测），并如实记录结果。
+
 ## 配置
 
 - 环境变量示例见根目录 [.env.example](./.env.example)；复制为 `.env` 后修改。全部变量使用 `ZD_` 前缀。
