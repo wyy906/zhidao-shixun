@@ -1,5 +1,23 @@
 # 更新记录
 
+## 2026-11-13 — 阶段 4：可信度验证（M2）通过
+
+### 改进
+
+- `ResultVerifier` 接入 python / mysql 适配器 `validate_result`：按 `adapter_hint` 或实验类型
+  选择适配器；适配器异常返回“无法确认”；未知结果不再被判为失败；无适配器时只信任显式信号。
+- 两个适配器支持显式 `passed/failed` 优先，桌面端 UIA/视觉信号不再因缺少 `code_output` 误判。
+- 新增 `app/engines/diagnosis/diagnoser.py`：错误诊断接入真实 OpenAI 兼容模型；
+  30s 超时、失败回退到步骤预期结果/常见错误；对 `nvapi-* / sk-* / AKIA* / api_key=` 脱敏；
+  日志不记录密钥、学生代码或报错原文。
+- `/api/v1/ai/diagnose/{exp_id}` 改为返回模型结构化结果，失败时回退到步骤信息。
+
+### 测试
+
+- 新增 23 项测试（验证器 9、诊断器 9、路由接线 5），后端 **139 项全部通过**。
+- 真实模型调用：`available=True`，7.3s 返回 `IndentationError` 建议与 4 条原因。
+- 详细记录：`TEST_REPORT.md` §18。
+
 ## 2026-11-13 — 阶段 4：桌面端 Windows 打包（M3，构建通过）
 
 ### 新增

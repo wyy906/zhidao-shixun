@@ -12,7 +12,7 @@
 | 日期 | 2026-11-13 |
 | 分支 | `trae-dev` |
 | 仓库内容 | **已包含业务代码**：`backend/`、`frontend/`、`desktop/`、`scripts/`、`experiment_packs/`、`demo_shots/`、`docs/`、`sandbox_manager/` |
-| 后端测试 | **116 项，全部通过**（`backend/tests/`） |
+| 后端测试 | **139 项，全部通过**（`backend/tests/`） |
 | 沙箱管理器测试 | **168 项，全部通过**（`sandbox_manager/tests/`） |
 | 前端测试 | **通过**（`npm test` → vue-tsc，退出码 0） |
 | 数据库 | 测试使用临时 SQLite，**不接触真实库** |
@@ -24,16 +24,17 @@
 
 | 层次 | 结论 |
 |---|---|
-| 单元测试 | **通过**（后端 116 / 管理器 168 / 前端类型检查 0 错误） |
+| 单元测试 | **通过**（后端 139 / 管理器 168 / 前端类型检查 0 错误） |
 | WSL2 实机验收 | **通过**（该节点 S-01~S-15；`verify_isolation.py` 27 项 PASS / FAIL 0 / SKIP 0） |
 | 独立 Linux 生产环境验收 | **尚未通过**（未在独立生产节点执行，且 AppArmor/gVisor/正式 digest 等未覆盖） |
 | 桌面端 GUI / UIA / 悬浮层（R-06） | **主路径 PASS + 绿色目标框端到端 PASS**（2026-11-13 本机 Windows 11 实机点验）；托盘恢复链路已验证有效、真实双击最终确认仍需人工（见 §15） |
 | MVP 演示闭环（M1） | **通过**（2026-11-13 本机：教师导入 → 学生运行代码/报告 → 教师统计；含真实 Docker 沙箱与前端界面，见 §16） |
 | 桌面端打包（M3） | **构建 PASS**；本机运行验证 **BLOCKED**（Smart App Control 拦截未签名 exe，见 §17） |
+| 可信度验证（M2） | **通过**（验证器接入适配器；错误诊断接真实模型，真实调用 7.3s；后端 139 项测试通过，见 §18） |
 
 ## 2. 结论摘要
 
-1. 后端 116 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期。
+1. 后端 139 项自动化测试全部通过，覆盖鉴权、实验 CRUD 与导入、进度、报告、配置隔离、代码沙箱接口、数据库初始化与迁移、管理接口传输安全与连接池生命周期、结果验证器与 AI 诊断。
 2. 沙箱管理器 168 项单元测试全部通过，覆盖容器安全参数（含创建后完整回查）、固定镜像 digest 校验、
    生产 HTTPS / 双向 TLS 启动约束、启动清理阻断、清理范围隔离、输出流式限额、队列上限与内部队列、
    结果字段校验、生命周期，以及验收工具 `verify_isolation.py` 的 PASS/FAIL/SKIP 判定可靠性
@@ -62,7 +63,7 @@
 测试依赖声明：`backend/requirements-dev.txt`（`-r requirements.txt` + `pytest>=8.0`）；
 沙箱管理器依赖见 `sandbox_manager/requirements.txt`。
 
-## 4. 后端自动化测试（116 项 + 168 项）
+## 4. 后端自动化测试（139 项 + 168 项）
 
 ### 4.1 用例分布
 
@@ -924,3 +925,58 @@ attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通�
 - 本次证明了“可重复构建出完整 onedir 分发包”，**未证明**该 exe 在启用应用控制策略的
   Windows 上可执行。
 - 未做多版本 Windows、无 Python 环境的干净机、多显示器/高 DPI 下的打包产物验证。
+
+## 18. 第十八轮：可信度验证（M2，2026-11-13）
+
+### 18.1 结果验证器接入适配器 —— 完成
+
+`ResultVerifier` 不再是只看 `actual_result.passed` 的 Stub：
+
+1. 适配器选择：优先读取 `step.adapter_hint` 中的 `adapter_key/software_key/software/adapter`
+   字符串；否则按实验类型映射（`python → python`、`database/mysql → mysql`）。
+2. 适配器执行：调用 `validate_result(step, actual_result)`，采信其 `passed/feedback/confidence`。
+3. 适配器异常：记录日志并返回 `confidence=0.2` 的“无法确认”，**不把异常当成失败依据**。
+4. 无适配器：只信任 `actual_result` 的显式 `passed` / `failed`；都没有明确信号时返回
+   `confidence=0.4` 的不确定结论，不把未知当失败。
+5. 两个适配器都增加了“显式 `passed/failed` 优先”分支：桌面端 UIA/视觉链路给出的
+   `passed=True` 不会因为缺少 `code_output` 被误判。
+
+新增测试：`backend/tests/test_result_verifier.py`（9 项）。
+
+### 18.2 AI 错误诊断接真实模型 —— 完成
+
+新增 `backend/app/engines/diagnosis/diagnoser.py`：
+
+- 复用 `AI_API_BASE_URL / AI_API_KEY / AI_VISION_MODEL`，调用 OpenAI 兼容
+  `/chat/completions`，要求严格 JSON；
+- 输入包含实验/步骤/预期结果/常见错误/学生报错/上下文；
+- **超时 30s**、HTTP 错误、网络错误、JSON 解析失败均返回 `None`；
+- 路由回退：模型不可用时使用步骤自身的 `expected_result` 与 `common_errors` 生成建议，
+  不再返回与步骤无关的固定文案；
+- **脱敏**：发送与日志前对学生报错/上下文做 `nvapi-*`、`sk-*`、`AKIA*`、
+  `api_key=` 等模式替换为 `[REDACTED]`；
+- **日志**只记录状态码/异常类型，不记录 API Key、学生代码或报错原文。
+
+新增测试：`backend/tests/test_diagnoser.py`（9 项）+ `backend/tests/test_ai_diagnose.py`（5 项），
+覆盖真实结果解析、脱敏、超时、网络错误、HTTP 错误、坏 JSON、原因数量限制、接口接线、404 与降级。
+
+### 18.3 真实模型调用 —— PASS
+
+使用本机 `backend/.env` 中的配置（不输出密钥）：
+
+| 项 | 结果 |
+|---|---|
+| 配置可用性 | `available=True` |
+| 输入 | 步骤「编写 AI 调用脚本」+ `IndentationError` 报错 |
+| 耗时 | **7.3s** |
+| 返回 | `error_type=IndentationError`；建议“确保 `with` 后代码块缩进正确（如 4 个空格）”；4 条可能原因 |
+| 密钥泄露 | 输出与日志中均无密钥 |
+
+### 18.4 测试与边界
+
+- 后端全量 **139 项通过**（原 116 + 新增 23），管理器 168 项不受影响。
+- 未修改数据库结构、沙箱安全机制与前端接口路径。
+- 诊断与视觉共用 `AI_VISION_MODEL`；如需独立文本模型，可后续增加 `AI_TEXT_MODEL`。
+- 前端 `verifyResult` / `diagnoseError` API 封装仍未接入页面按钮；本轮验证的是
+  后端能力与接口接线，**不宣称前端已有“自动判定/一键诊断”交互**。
+- 真实模型输出质量依赖模型本身，建议后续用固定案例集做人工评估，本轮只验证链路与格式。

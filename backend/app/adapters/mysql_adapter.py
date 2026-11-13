@@ -21,7 +21,23 @@ class MySQLWorkbenchAdapter(BaseSoftwareAdapter):
     def validate_result(self, step, actual_result):
         """根据操作结果判断"""
         if not actual_result:
-            return {"passed": False, "feedback": "尚未检测到操作结果。"}
-        if actual_result.get("grid_rows") or actual_result.get("query_success"):
-            return {"passed": True, "feedback": "SQL 执行成功！"}
-        return {"passed": False, "feedback": "操作可能未成功完成。请检查错误消息。"}
+            return {"passed": False, "feedback": "尚未检测到操作结果。", "confidence": 0.4}
+        # 显式信号优先（桌面端 UIA / 视觉链路）
+        if isinstance(actual_result.get("passed"), bool):
+            passed = actual_result["passed"]
+            return {
+                "passed": passed,
+                "feedback": actual_result.get("feedback") or (
+                    "SQL 执行成功！" if passed else "SQL 未执行成功，请检查错误信息。"
+                ),
+                "confidence": 0.9,
+            }
+        if actual_result.get("failed") is True:
+            return {
+                "passed": False,
+                "feedback": actual_result.get("feedback") or "SQL 执行失败，请检查错误信息。",
+                "confidence": 0.8,
+            }
+        if actual_result.get("query_success") or actual_result.get("grid_rows"):
+            return {"passed": True, "feedback": "SQL 执行成功！", "confidence": 0.8}
+        return {"passed": False, "feedback": "操作可能未成功完成。请检查错误消息。", "confidence": 0.5}

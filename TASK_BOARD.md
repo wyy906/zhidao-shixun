@@ -10,7 +10,12 @@
     → 教师统计 1 学生 / 100% 完成率；前端学生端与教师端界面均 PASS，控制台无报错。
   - 证据：`TEST_REPORT.md` §16；`%TEMP%\m1\m1_result.json`。
   - 边界：本机演示拓扑（WSL 中继），**不等同生产验收**。
-- [ ] **M2 可信度**：结果验证器接入适配器、AI 诊断接真实模型（未开始）。
+- [x] **M2 可信度：PASS**（2026-11-13）
+  - `ResultVerifier` 已接入 python / mysql 适配器的 `validate_result`，适配器异常与未知结果
+    不再被当成失败；两个适配器支持显式 `passed/failed` 优先。
+  - 错误诊断接入真实 OpenAI 兼容模型，真实调用 7.3s 返回结构化建议；含 30s 超时、
+    失败回退、密钥脱敏与日志脱敏。
+  - 后端 **139 项测试通过**（新增 23 项）。后端能力已验证，前端尚未接入按钮。
 - [ ] **M3 分发：桌面端打包（构建完成，运行验证被环境策略阻塞）**
   - 已产出 `desktop/dist/ZhidaoShixun/`（onedir，268.4 MB）与
     `ZhidaoShixun-win64.zip`（105.6 MB）；构建脚本 `desktop/build_windows.ps1`。

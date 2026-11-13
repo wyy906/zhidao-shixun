@@ -19,6 +19,7 @@ from app.schemas import (
     DiagnoseResponse,
 )
 from app.engines.guide.dynamic_guide import DynamicGuideEngine
+from app.engines.diagnosis.diagnoser import ErrorDiagnoser
 from app.engines.verifier.result_verifier import ResultVerifier
 from app.engines.visual.provider import analyze_screenshot, get_visual_provider
 from app.engines.visual.schemas import VisualUnderstanding
@@ -453,8 +454,43 @@ def diagnose_error(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    exp = db.query(Experiment).filter(Experiment.id == exp_id).first()
+    if not exp:
+        raise HTTPException(404, "实验不存在")
+
+    step = None
+    step_id = req.get("step_id")
+    if isinstance(step_id, int):
+        step = db.query(ExperimentStep).filter(
+            ExperimentStep.id == step_id,
+            ExperimentStep.experiment_id == exp_id,
+        ).first()
+
+    error_text = str(
+        req.get("error") or req.get("error_message") or req.get("message") or ""
+    ).strip()
+
+    diagnosed = ErrorDiagnoser().diagnose(
+        experiment_title=exp.title,
+        step_title=step.title if step else "",
+        instruction=step.instruction if step else "",
+        expected_result=step.expected_result if step else "",
+        common_errors=step.common_errors if step else None,
+        error_text=error_text,
+        context=req.get("context"),
+    )
+    if diagnosed is not None:
+        return diagnosed
+
+    # 模型不可用 / 调用失败：回退到步骤自身的常见错误与预期结果
+    causes: list[str] = []
+    if step and isinstance(step.common_errors, list):
+        causes = [str(item) for item in step.common_errors[:3]]
+    suggestion = "请对照当前步骤的预期结果，检查操作是否真的完成。"
+    if step and step.expected_result:
+        suggestion = f"请检查是否达到这一步的预期结果：{step.expected_result}"
     return DiagnoseResponse(
         error_type="操作错误",
-        suggestion="请检查是否选中了正确的窗口，AI 助手正在重新识别屏幕。",
-        possible_causes=["目标控件不在当前视图", "软件版本差异", "权限不足"],
+        suggestion=suggestion,
+        possible_causes=causes or ["目标控件不在当前视图", "软件版本差异", "权限不足"],
     )
