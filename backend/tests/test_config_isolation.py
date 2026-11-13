@@ -47,3 +47,49 @@ def test_real_dotenv_untouched():
         st = REAL_ENV_FILE.stat()
         print(f"[env 隔离检查] 真实 .env 存在但未被读取，size={st.st_size}")
     assert os.environ.get("ZD_ENV_FILE", "").endswith("no-such-test.env")
+
+
+def test_nvidia_config_applies_when_ai_config_empty(tmp_path):
+    """AI_* 全空时，NVIDIA_* 三项齐备可作为备选生效（不涉及真实密钥）"""
+    env = tmp_path / "nvidia.env"
+    env.write_text(
+        "NVIDIA_API_KEY=test-nvidia-key\n"
+        "NVIDIA_BASE_URL=https://example.invalid/v1\n"
+        "NVIDIA_MODEL=vendor/test-vision-model\n",
+        encoding="utf-8",
+    )
+
+    loaded = Settings(_env_file=str(env))
+    assert loaded.ai_api_key == "test-nvidia-key"
+    assert loaded.ai_api_base_url == "https://example.invalid/v1"
+    assert loaded.ai_vision_model == "vendor/test-vision-model"
+
+
+def test_ai_config_takes_precedence_over_nvidia(tmp_path):
+    """AI_* 已配置时忽略 NVIDIA_*，不改变现有 AI 服务商"""
+    env = tmp_path / "primary_ai.env"
+    env.write_text(
+        "AI_API_BASE_URL=https://primary.invalid/v1\n"
+        "AI_API_KEY=primary-key\n"
+        "AI_VISION_MODEL=primary-model\n"
+        "NVIDIA_API_KEY=test-nvidia-key\n"
+        "NVIDIA_BASE_URL=https://example.invalid/v1\n"
+        "NVIDIA_MODEL=vendor/test-vision-model\n",
+        encoding="utf-8",
+    )
+
+    loaded = Settings(_env_file=str(env))
+    assert loaded.ai_api_key == "primary-key"
+    assert loaded.ai_api_base_url == "https://primary.invalid/v1"
+    assert loaded.ai_vision_model == "primary-model"
+
+
+def test_partial_nvidia_config_is_ignored(tmp_path):
+    """NVIDIA_* 不完整时不产生半套配置"""
+    env = tmp_path / "partial_nvidia.env"
+    env.write_text("NVIDIA_API_KEY=test-nvidia-key\n", encoding="utf-8")
+
+    loaded = Settings(_env_file=str(env))
+    assert loaded.ai_api_key == ""
+    assert loaded.ai_api_base_url == ""
+    assert loaded.ai_vision_model == ""

@@ -1,5 +1,25 @@
 # 更新记录
 
+## 2026-11-13 — NVIDIA NIM 接入准备（可选，非默认）
+
+### 新增
+
+- `Settings` 新增 `nvidia_api_key` / `nvidia_base_url` / `nvidia_model`：
+  三项齐全且 `AI_*` 全空时映射到现有 OpenAI 兼容视觉 Provider，**不改变默认服务商**。
+- `backend/.env.example` 增加 NVIDIA 配置说明；Base URL 以官方文档为准，模型名不写死。
+- 新增 3 项配置映射测试（NVIDIA 备选生效、`AI_*` 优先、缺项忽略）。
+
+### 修复
+
+- `scripts/test_visual_api.py` 不再打印密钥前缀（改为 `[REDACTED]`）。
+
+### 测试
+
+- 后端 **116 项全部通过**。
+- 真实 NVIDIA 视觉调用通过：模型 `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`，
+  视觉请求约 16s，Provider 正常解析；失败路径确认日志不含密钥。
+- 本地 `backend/.env` 已被 `.gitignore` 排除，未入库。
+
 ## 2026-11-13 — R-06 桌面端 GUI / UIA / 悬浮层实机点验（仅文档记录）
 
 ### 验收

@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     ai_api_key: str = ""
     ai_vision_model: str = ""
 
+    # NVIDIA NIM（OpenAI 兼容，可选）
+    # 仅在 AI_* 三项全部为空时启用，作为现有 AI 配置的备选，不改变默认服务商。
+    # 三项必须同时配置；任一项缺失则忽略（不会产生半套配置）。
+    # 具体 Base URL 与模型 ID 以 NVIDIA 官方文档 / 模型页为准，不在代码中写死。
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = ""
+    nvidia_model: str = ""
+
     # ===== 代码执行沙箱（学生代码只在独立 Linux 执行节点运行）=====
     # 关闭开关：false 时 /code/run 直接返回 503，不执行任何代码
     code_execution_enabled: bool = True
@@ -104,6 +112,33 @@ class Settings(BaseSettings):
                 "生产部署前必须修改。",
                 stacklevel=2,
             )
+        return self
+
+    @model_validator(mode="after")
+    def _apply_nvidia_provider(self) -> "Settings":
+        """NVIDIA_* 仅在 AI_* 全部为空时作为备选生效
+
+        - 不改变默认 AI 服务商：AI_* 已配置时忽略 NVIDIA_*；
+        - 三项必须齐全，避免出现「有 key 无地址/模型」的半套配置；
+        - 不在代码中内置 Base URL / 模型名，全部由 .env 提供。
+        """
+        nvidia_values = (
+            self.nvidia_api_key, self.nvidia_base_url, self.nvidia_model,
+        )
+        if not any(nvidia_values):
+            return self
+        if not all(nvidia_values):
+            import warnings
+            warnings.warn(
+                "NVIDIA_API_KEY / NVIDIA_BASE_URL / NVIDIA_MODEL 必须同时配置，"
+                "已忽略不完整的 NVIDIA 配置。",
+                stacklevel=2,
+            )
+            return self
+        if not (self.ai_api_base_url or self.ai_api_key or self.ai_vision_model):
+            self.ai_api_base_url = self.nvidia_base_url
+            self.ai_api_key = self.nvidia_api_key
+            self.ai_vision_model = self.nvidia_model
         return self
 
 

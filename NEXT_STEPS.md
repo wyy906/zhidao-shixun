@@ -177,7 +177,25 @@
 | S-05 | 移除了 AST 危险模块黑名单（改由容器真隔离） | 确认是否接受 `import os` 等代码在沙箱内运行 |
 | S-06 | 未部署执行节点时 `/code/run` 返回 503（此前可直接运行） | 部署顺序需先上线执行节点，再开启 `CODE_EXECUTION_ENABLED` |
 | S-07 | 执行节点需要内网 TLS 证书（生产强制，本机开发才可明文） | 由负责人签发/部署证书，并配置业务端 CA / 客户端证书 |
-| R-06 | 桌面端 GUI/UIA/悬浮层仍未实跑验证 | 需人工点验 |
+| R-06 | 桌面端主路径已实测通过；绿色目标框端到端、托盘双击恢复仍未完成 | 见 `TEST_REPORT.md` §15；后两项需后端联通 / 人工确认 |
+
+### 外部 AI 服务接入选项（待负责人确认）
+
+- **NVIDIA NIM（OpenAI 兼容）**：可复用现有 `OpenAICompatibleProvider`，无需新增客户端。
+  - 环境变量：`NVIDIA_API_KEY` / `NVIDIA_BASE_URL` / `NVIDIA_MODEL`，三项必须齐全。
+  - 仅当现有 `AI_API_BASE_URL` / `AI_API_KEY` / `AI_VISION_MODEL` 全部为空时生效，
+    **不改变默认 AI 服务商**，也不影响现有 Provider。
+  - Base URL 以 NVIDIA 官方文档为准（`https://integrate.api.nvidia.com/v1`，OpenAI Chat Completions 兼容）；
+    模型 ID 必须从官方模型页选择支持视觉/多模态的模型，代码中不写死。
+  - 2026-11-13 已在本地 `backend/.env` 完成配置并实测（密钥不出本机、不写入 Git）：
+    - 可用模型：`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`（本账号实测；
+      视觉请求约 16s，Provider 解析成功：software=`TEST WINDOW`、elements=1、confidence=0.95）。
+    - 失败路径返回 None，日志中不含密钥（已用假密钥验证脱敏）。
+    - 本账号不可用：`microsoft/phi-3-vision-128k-instruct`、`google/gemma-3-12b-it`（404）；
+      `meta/llama-3.2-90b-vision-instruct` 在 `response_format=json_object` 下连接被断开；
+      `google/gemma-4-31b-it` 超时。
+  - 仍待负责人确认是否作为正式外部 AI 服务选项；当前仅作为 `AI_*` 全空时的备选。
+  - 不影响数据库结构与 Python 沙箱机制。
 
 ---
 
@@ -185,7 +203,7 @@
 
 1. **P0 `/code/run` 沙箱化**：架构、代码与安全审查修复已完成；**待 Linux 执行节点实机验证**
    （`SANDBOX_DEPLOYMENT.md` 第 9、10 节 + `verify_isolation.py`）。
-2. **P0 凭据治理**：修复 R-01；确认 `AI_API_KEY` 只存在于本地 `.env`。
+2. **P0 凭据治理**：修复 R-01；确认 `AI_API_KEY`（及可选的 `NVIDIA_API_KEY`）只存在于本地 `.env`。
 3. **P1 数据库迁移**：`alembic` 目前只有 `env.py`，补首个 revision，结束 `create_all` 与迁移双轨
    （阶段 3-A 新增了 `code_tasks` 表）。
 4. **P1 导入校验**：`POST /experiments/import` 的 `adapter` 结构弱校验，错误会延迟到桌面端才暴露。

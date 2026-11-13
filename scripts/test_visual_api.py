@@ -35,7 +35,7 @@ p.model = 'microsoft/phi-3-vision-128k-instruct'
 
 print(f'>>> Provider: {p.base_url}')
 print(f'>>> Model:    {p.model}')
-print(f'>>> Key:      {p.api_key[:12]}...')
+print('>>> Key:      [REDACTED]')
 print()
 
 # 不走 provider，直接裸调，绕过 response_format 可能的兼容问题
