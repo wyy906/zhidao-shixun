@@ -18,9 +18,20 @@
 | MVP 演示闭环（M1） | **通过**（2026-11-13 本机：教师导入 → 学生代码运行/报告 → 教师统计；前端界面 PASS；见 `TEST_REPORT.md` §16） |
 | 桌面端打包（M3） | **PASS（便携版）**：签名 Python 便携包 730.4 MB（zip 272.8 MB），已在 SAC 开启的 Win11 启动并通过 UIA/保活；PyInstaller exe 仍被策略拦截（见 §17） |
 | 可信度验证（M2） | **通过**：验证器接入适配器；诊断接真实模型（7.3s）；139 项后端测试通过（见 §18） |
+| 生产化（M4） | **准备完成，生产验收未通过**：预检 20 PASS/1 FAIL（AppArmor）；多实例隔离 10 PASS；故障注入 fail-closed PASS。阻塞项见 `PRODUCTION_READINESS.md`（见 §19） |
 
 > 下文历史记录中的“151 项”“真实隔离尚未验证”“S-01~S-15 全部未执行”等表述，
 > 均为**当时的历史状态**，不代表当前结论。
+
+## M4 生产化下一步（需负责人提供环境）
+
+1. 提供独立 Linux 节点（Ubuntu 22.04/24.04，x86_64，Docker cgroup driver=systemd）。
+2. 推送镜像到内部 Registry，取得 `repo@sha256:` 并写入 `ZD_SANDBOX_IMAGE`。
+3. 启用 AppArmor（配置 profile），评估是否叠加 gVisor/runsc。
+4. 在生产节点执行 `scripts/production_preflight.sh`（要求 FAIL=0）与
+   `verify_isolation.py`（要求 FAIL=0、SKIP=0），再复测多实例与故障注入。
+5. 配置防火墙（仅后端 → 8443）、跨机 mTLS、监控告警与回滚演练。
+6. 完成 `PRODUCTION_READINESS.md` 第 5 节“上线门槛”全部条目后，才可宣称生产就绪。
 
 ---
 

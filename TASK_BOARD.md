@@ -21,7 +21,14 @@
   - 便携版 `desktop/dist/ZhidaoPortable/`（730.4 MB，zip 272.8 MB）使用签名 Python 运行时，
     已在 SAC 开启的 Windows 11 上实际启动：主窗口、关键控件、关窗后托盘保活均 PASS。
   - 构建脚本：`desktop/build_windows.ps1`、`desktop/build_portable.ps1`。
-- [ ] **M4 生产化**：独立 Linux 节点、正式 digest、AppArmor/gVisor、多实例与故障注入（未开始）。
+- [ ] **M4 生产化：准备完成，生产验收未通过**（2026-11-13）
+  - 新增只读生产预检 `sandbox_manager/scripts/production_preflight.sh`；
+    WSL2 实测 `PASS=20 FAIL=1 BLOCK=0`（唯一 FAIL 为 AppArmor 不可用）。
+  - WSL2 多实例隔离 `PASS=10 FAIL=0`：A/B 并发执行成功，重启 B 未误删 A 标签容器。
+  - 故障注入：无效 Docker socket → 管理器退出码 3、端口不提供服务（fail-closed）；
+    Docker 停止会联动停止管理器，恢复需手动 `systemctl start zd-sandbox`。
+  - 生产阻塞项：独立 Linux 节点、正式 Registry digest、AppArmor/gVisor、生产网络与监控均未具备。
+  - 详见 `PRODUCTION_READINESS.md`、`TEST_REPORT.md` §19。**不得标记为 M4 全部完成或生产就绪。**
 
 ## 阶段 3-A — 代码执行沙箱与桌面端验收（已完成）
 

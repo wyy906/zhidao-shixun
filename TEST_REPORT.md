@@ -1009,3 +1009,48 @@ attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通�
 - 前端 `verifyResult` / `diagnoseError` API 封装仍未接入页面按钮；本轮验证的是
   后端能力与接口接线，**不宣称前端已有“自动判定/一键诊断”交互**。
 - 真实模型输出质量依赖模型本身，建议后续用固定案例集做人工评估，本轮只验证链路与格式。
+
+## 19. 第十九轮：生产化准备（M4，2026-11-13）
+
+> 本机只有 WSL2，没有独立 Linux 生产节点、没有正式 Registry digest、无 AppArmor/gVisor、
+> 无生产网络拓扑。**本轮只完成“生产化准备 + WSL2 本地可验证部分”，不构成生产验收。**
+
+### 19.1 新增生产预检脚本
+
+`sandbox_manager/scripts/production_preflight.sh`（只读、root 运行、不输出密钥）：
+
+- 检查架构、cgroup v2、Docker 版本/cgroup driver/socket、AppArmor、gVisor 注册、
+  `manager.env` 权限、令牌长度（只输出长度结论）、镜像 digest 固定与本地存在、
+  证书/私钥权限、双向 TLS CA、实例标识、systemd 账号与 NoNewPrivileges、
+  Docker 数据目录余量、`zd.sandbox=1` 残留容器。
+- 退出码：`0=全部 PASS / 1=存在 FAIL / 2=无 FAIL 但有 BLOCK`。
+
+### 19.2 WSL2 实测结果
+
+| 验证 | 结果 |
+|---|---|
+| 生产预检 | `PASS=20 FAIL=1 BLOCK=0`，退出码 1 |
+| 多实例隔离（实例 A :8443 / 实例 B :8543） | `PASS=10 FAIL=0` |
+| Docker 不可用 fail-closed | 退出码 3，8544 未提供服务 |
+| Docker 停止 → 管理器联动停止 | 8443 无监听，恢复需手动启动 |
+| 恢复后健康与残留 | `/health` ok，残留容器 0 |
+
+- 预检唯一 FAIL：**AppArmor 未启用**（WSL2 内核不提供），属预期生产阻塞项。
+- 多实例：两实例并发任务均 `succeeded`；重启 B 后 A 标签容器**未被误删**，
+  B 标签容器被 B 启动清理删除，A 仍健康。
+- 故障注入：无效 `ZD_SANDBOX_DOCKER_HOST` 时管理器以退出码 3 退出，
+  日志为 `sandbox startup cleanup failed: docker_unavailable`，未泄露令牌。
+- Docker 停止会因 `Requires=docker.service` 联动停止管理器；
+  **启动 Docker 不会自动启动管理器**，需 `systemctl start zd-sandbox`。
+
+### 19.3 生产阻塞项（未完成）
+
+| 编号 | 阻塞项 | 说明 |
+|---|---|---|
+| M4-B1 | 独立 Linux 生产节点 | 仅有 WSL2，未做生产节点验收 |
+| M4-B2 | 正式 Registry digest | 当前仅本地 `sha256:<image-id>` |
+| M4-B3 | AppArmor / gVisor | WSL2 不支持，生产必须补 |
+| M4-B4 | 生产网络 / 防火墙 / mTLS 跨机 | 未部署 |
+| M4-B5 | 监控告警、压测、回滚演练 | 未执行 |
+
+详细前置条件、上线门槛与 Runbook：`PRODUCTION_READINESS.md`。

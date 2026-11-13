@@ -1,5 +1,30 @@
 # 更新记录
 
+## 2026-11-13 — 阶段 4：生产化准备（M4，生产验收未通过）
+
+### 新增
+
+- `sandbox_manager/scripts/production_preflight.sh`：只读生产预检（root 运行、不输出密钥），
+  覆盖 cgroup v2、Docker/socket、AppArmor、gVisor、manager.env 权限、令牌长度、镜像 digest、
+  证书/私钥权限、双向 TLS CA、实例标识、systemd 加固、磁盘余量与残留容器；
+  退出码 `0=PASS / 1=FAIL / 2=BLOCK`。
+- `PRODUCTION_READINESS.md`：生产拓扑、前置条件、实测证据、上线门槛与 Runbook。
+
+### 验证（WSL2 本机）
+
+- 生产预检：`PASS=20 FAIL=1 BLOCK=0`（唯一 FAIL 为 WSL2 无 AppArmor）。
+- 多实例隔离：`PASS=10 FAIL=0`；A/B 并发执行成功，重启 B 未误删 A 标签容器，
+  B 标签容器被 B 启动清理删除。
+- Docker 不可用：管理器退出码 3、端口未提供服务（fail-closed），日志未泄露令牌。
+- Docker 停止：`Requires=docker.service` 联动停止管理器；恢复需手动
+  `systemctl start zd-sandbox`；恢复后 `/health` ok、残留容器 0。
+
+### 边界
+
+- 无独立 Linux 生产节点、无正式 Registry digest、无 AppArmor/gVisor、无生产网络与监控，
+  **不得宣称生产就绪**。阻塞项见 `PRODUCTION_READINESS.md` 第 3、7 节。
+- 详细记录：`TEST_REPORT.md` §19。
+
 ## 2026-11-13 — 阶段 4：桌面端便携分发版实机通过（M3 补充）
 
 ### 新增
