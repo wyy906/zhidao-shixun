@@ -305,7 +305,7 @@ V2-01 已经由 ChatGPT 审查通过，进入工程实现。后续按“先跑�
 | V2-01 | 旧项目盘点与重建方案 | 已完成 | 文件清单、复用/重建边界、V2目录结构；ChatGPT审查通过并确定D-1/D-2/D-3 | Trae + ChatGPT |
 | V2-02 | V2基础工程骨架 | 已完成 | 后端健康检查、前端构建/启动、桌面入口、跨端契约、基础测试和真实启动文档 | Trae |
 | V2-03 | 实验任务与步骤数据模型 | 已完成（第五轮源码复审通过；Trae 报告 238 项测试通过，ChatGPT 未独立重跑） | Schema 1.1 与 Pydantic 字段镜像、四道门加载校验、验证器白名单 fail-closed、依赖图与状态机测试 | Trae + ChatGPT |
-| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十二轮架构修订已提交：修复第十一轮复审四项阻塞——①SID 属性常量纠错：deny-only=0x10/enabled=0x04/enabled-by-default=0x02/mandatory=0x01（已核对 TOKEN_GROUPS 官方页），第十一轮条目就地勘误，全文唯一常量基准表定版，用户 SID"永远参与"表述修正（deny-only user SID 拒绝）；②AccessCheck 归因边界：明确 GrantedAccess 不含 ACE/SID 来源，开发模式降级判定改为令牌分类确定性判定（Administrators enabled 即降级，方案 B），SYSTEM SID 出现即拒绝，其他 enabled 组全量检查；③三层验证模型：静态 DACL / Token+SD 检查（MAXIMUM_ALLOWED 降级为诊断+逐项最小权限 AccessCheck）/ 真实 NTFS 操作验证（10 项操作矩阵 API×对象×权限），AccessCheck ≠ NTFS 全部操作；④FILE_DELETE_CHILD 逐级核验 + 删除/重命名/覆盖/重建同名操作矩阵 + 删除重建绕过分析；⑤backup intent 特权策略（SeBackup/SeRestore/SeTakeOwnership/SeSecurity denylist、打开标志白名单、同进程限制如实声明为实现纪律）；⑥Restricted Token 精确判定（IsTokenRestricted 局限、批准令牌定义）；⑦SeChangeNotifyPrivilege 硬前置保留、相对打开绝对表述修正；N-A93~N-A110（A 文档核对/B mock/C 实机分层）；新增 R-4B-10~R-4B-13；全部标注【未验证】；待 ChatGPT 第十二轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
+| V2-04 | Python网页实验闭环 | 进行中（V2-04A 第十三轮架构修订已提交：修复第十二轮复审三项阻塞——①阻塞 A 目录句柄闭环：确认"CreateFileW 打开受信任根"与官方语义冲突（开目录必须 FILE_FLAG_BACKUP_SEMANTICS，补设又引入 backup intent 入口）；方案 A/B 九维度比较后推荐方案 A——受信任根与受控链统一 NtCreateFile 打开（CreateOptions 白名单仅 FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT，不含 FILE_OPEN_FOR_BACKUP_INTENT），入口级消除 backup intent；②阻塞 B：启动判断固定 11 步顺序（令牌解析→SD 查询→DACL 模板→AccessCheck→基础读取→拒绝位→降级判定→审计→启动），管理员降级仅在第 9 步且只改变保证等级不豁免任何检查；denylist 特权交叉规则（须归因 Administrators 成员否则拒绝；SeBackup 旁路下降级模式密钥保密性对提升进程完全不保证）；③阻塞 C：NTFS 实测错误分类表（ACCESS_DENIED/SHARING_VIOLATION/LOCK_VIOLATION/NOT_FOUND 等分别归因，不统一归 DACL）+ 19 项证据清单 + 删除 4 组正负对照 + 重命名/替换/删除重建共享模式隔离矩阵；④官方依据表 9 条含 URL（CreateFileW 目录标志/MS-FSA Open BackupAccess 伪代码等，查阅 2026-11-13）；⑤N-A111~N-A124（A 文档核对/B mock/C 实机分层）；R-4B-9/R-4B-12 更新、新增 R-4B-14；全部标注【未验证】；待 ChatGPT 第十三轮架构复审，通过前不实现容器执行） | Monaco 编辑、独立 Docker 隔离执行、验证、步骤推进；Web 业务进程不得接触 Docker socket；Docker 不可用时 fail-closed | Trae + ChatGPT |
 | V2-05 | Windows助手基础能力 | 未开始 | 截图、窗口信息、暂停/停止 | Trae |
 | V2-06 | MySQL适配器与标注 | 未开始 | 识别目标界面并安全显示标注 | Trae |
 | V2-07 | AI指导与动态颗粒度 | 未开始 | 四级指导按实际状态切换 | Trae |
@@ -1183,6 +1183,7 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | 2026-11-13 | V2-04A 第十轮修订：现行唯一权限模板定版——文件句柄/文件 ACE 统一 `0x00120081`（FILE_READ_EA 核对为不需要，撤销历史 0x00120089）；最终安装模式目录服务账户 ACE 显式含 READ_CONTROL（`0x00120080`，修复第九轮 0x00100080 缺口，GetSecurityInfo 才可运行）；两模式 DACL 同构 4 ACE，最终模式全部受控对象 owner=SYSTEM；Owner 一致性为启动硬检查（fail-closed）；最终安装五级目录逐级权限表 | 采纳 ChatGPT 第九轮复审两项阻塞项与澄清项，方案 B（辅助组件传句柄）维持弃用 |
 | 2026-11-13 | V2-04A 第十一轮修订：有效权限条件化——DACL 授权面 ≠ 令牌化有效权限；开发模式选方案 B（管理员提升令牌允许运行但防篡改声明降级+审计，标准/过滤令牌下批准声明成立）；最终模式令牌硬条件（无 enabled Administrators、无受限 SID、SeChangeNotifyPrivilege enabled、AccessCheck(MAXIMUM_ALLOWED)==批准掩码）+ 安装时/运行时双时点检查；启动校验升级为静态 DACL 模板比对 + 动态 AccessCheck granted 掩码比对双层；新增 R-4B-9 | 采纳 ChatGPT 第十轮复审结论（组 SID 未纳入权限计算）；已核对 Microsoft Learn SID Attributes 与 AccessCheck 原文；GetEffectiveRightsFromAcl/CheckTokenMembership 明确拒绝作完整有效权限计算器 |
 | 2026-11-13 | V2-04A 第十二轮修订：SID 属性常量勘误定版（deny-only=0x10/enabled=0x04/enabled-by-default=0x02/mandatory=0x01，来源 TOKEN_GROUPS 官方页）；AccessCheck 归因边界（GrantedAccess 无 ACE/SID 来源，降级判定改为令牌分类确定性判定）；三层验证模型（静态 DACL / Token+SD 检查 / 真实 NTFS 操作）；MAXIMUM_ALLOWED 降级为辅助诊断 + 逐项最小权限 AccessCheck；每级父目录 FILE_DELETE_CHILD 逐级核验 + 10 项文件系统操作矩阵；backup intent 特权 denylist 策略；Restricted Token 精确判定；新增 R-4B-10~R-4B-13 | 采纳 ChatGPT 第十一轮复审四项阻塞与五项澄清；已核对 Microsoft Learn TOKEN_GROUPS 页全部常量值；不实现任何验证代码，实测归 V2-04B |
+| 2026-11-13 | V2-04A 第十三轮修订：目录句柄方案定版——确认 CreateFileW 开目录必须 FILE_FLAG_BACKUP_SEMANTICS 与旧设计冲突（阻塞 A 成立），推荐方案 A（受信任根与受控链统一 NtCreateFile，CreateOptions 白名单仅 FILE_DIRECTORY_FILE|FILE_OPEN_REPARSE_POINT，入口级消除 backup intent）；启动检查固定 11 步顺序、管理员降级为第 9 步且不豁免任何检查（阻塞 B）；NTFS 实测错误分类表 + 删除 4 组正负对照 + 共享模式隔离矩阵（阻塞 C）；官方依据表 9 条（含 MS-FSA Open BackupAccess 伪代码页）；新增 R-4B-14，更新 R-4B-9/R-4B-12 | 采纳 ChatGPT 第十二轮复审三项阻塞；CreateFileW 目录标志要求与 MS-FSA 伪代码已核对官方页；方案 A 全部行为【未验证】，实机不可行时记录为架构阻塞重审，绝不回退普通路径打开 |
 
 新增决策必须写入本表，不能只留在聊天记录里。
 
@@ -1209,10 +1210,11 @@ web 浏览器 ──HTTP──▶ FastAPI 业务进程（不装 Docker SDK、不
 | R-4B-5：.env 第十轮模板（现行唯一批准值）——文件句柄=文件 ACE=`0x00120081`（FILE_READ_DATA+FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE，FILE_READ_EA 已核对撤销）；目录句柄=`0x00120080`；目录 ACE：开发模式运行账户 `0x00100080`（owner=运行账户，READ_CONTROL 经 OWNER RIGHTS，owner 一致性为启动硬检查）/ 最终安装模式服务账户 `0x00120080`（owner=SYSTEM，READ_CONTROL 显式，不依赖 owner）；两模式 DACL 同构 4 ACE（OWNER RIGHTS 0x00020000 + 运行/服务账户 + SYSTEM/Administrators 0x001F01FF），SE_DACL_PROTECTED 关闭继承 + 逐级句柄校验 + 句柄上 GetSecurityInfo/属性/FileId/卷序列号核验闭环 TOCTOU，尚未 Windows 实机验证；**第十一轮条件化：上述有效权限为"DACL 授权面"结论，实际有效权限取决于进程 Access Token 组 SID（Administrators enabled → FILE_ALL_ACCESS），以 AccessCheck 动态证实为准，仅适用于批准令牌条件；第十二轮再条件化：AccessCheck 结果 ≠ NTFS 全部操作行为，需三层验证（静态 DACL / Token+SD 检查 / 真实 NTFS 操作）+ 逐级 FILE_DELETE_CHILD 核验；SID 属性常量勘误已完成（deny-only=0x10、enabled=0x04、enabled-by-default=0x02、mandatory=0x01）** | ACL/共享模式实际行为与设计不符时令牌保护弱于预期；ctypes 结构布局在 32/64 位下偏差；最终模式祖先链（ProgramData 默认 DACL）行为未实测；令牌组 SID 影响未实测；SeChangeNotifyPrivilege 缺失时 RootDirectory 相对打开行为未实测 | V2-04B 按模板全量构造 + 有效权限逐位比对 + Owner 硬检查 + DACL 逐项比对 + 令牌分类检查（常量勘误后）+ AccessCheck granted 掩码比对 + 逐项最小权限 AccessCheck + 每级父目录 FILE_DELETE_CHILD 核验 + 真实 NTFS 操作负向验证 + N-A1~N-A110 共 110 项负向测试；任一不符拒绝启动；Administrators/SYSTEM 的 FILE_ALL_ACCESS 为明确接受的本机管理员/SYSTEM 信任边界 | 待 V2-04B 实测 |
 | R-4B-7：同用户进程（B）可读取 .env 密钥（同用户信任边界，Windows ACL 机制原理上无法阻止同 token 读取/进程注入/内存读取；**第十一轮细分**：标准令牌/UAC 过滤令牌=能读不能篡改【未验证】；管理员提升令牌=能读且能篡改 → R-4B-9） | 同用户恶意进程可窃取 AI 密钥 | 本设计明确不宣称阻止同用户读取，仅保证标准/过滤令牌下其无法篡改/删除/替换 .env 或其 DACL（提升管理员除外，见 R-4B-9）；残余风险如实记录；完整隔离依赖后续独立服务账户/隔离部署（学校服务器部署前置条件，第二轮阻塞检查单） | 接受并记录；V2-07 前置条件 |
 | R-4B-8：开发模式（用户 profile 下）同用户进程可替换项目根/祖先目录/程序文件/启动入口（Windows 用户 profile 默认权限，第七轮威胁模型表"不能替换祖先"表述错误已撤销；**第十一轮补注：提升管理员经 Administrators ACE 能力更强，同属信任边界**） | 被篡改的祖先可能影响下次启动加载的代码，仅靠 .env DACL 无法保护整个安装环境 | 开发模式如实标注同用户信任边界不宣称阻止；启动时路径链逐级校验（FileId/卷 ID/reparse 检查）失败即拒绝启动；完整防护依赖最终安装模式（Program Files + ProgramData 受控 ACL + 专用服务账户）列为 V2-07 前置条件，未实机验证前标注【未验证】 | 接受并记录（开发模式）；V2-07 前置 |
-| R-4B-9：开发模式管理员提升令牌（Administrators SID enabled）经 DACL 中 Administrators ACE 0x001F01FF 获得受控对象 FILE_ALL_ACCESS——开发模式防篡改/删除/替换声明对此类进程**不成立**（第十一轮新增；deny-only 过滤令牌不受影响；**第十二轮：降级判定改为令牌分类确定性判定——TokenGroups 中 Administrators enabled 即降级，不依赖 GrantedAccess 来源归因**） | 提升的管理员进程可篡改/删除/替换 .env 与受控目录 | 方案 B：允许运行但保护声明降级 + 审计"管理员令牌"；AccessCheck(MAXIMUM_ALLOWED) 启动检测 granted==FILE_ALL_ACCESS 且来源为 Administrators/SYSTEM 时标记降级，意外来源超限或 granted 缺失批准位 → 拒绝启动；最终安装模式此类令牌直接拒绝启动（N-A82/N-A91/N-A102/N-A103） | 接受并记录（Administrators 为威胁模型信任边界 C）；【未验证】 |
+| R-4B-9：开发模式管理员提升令牌（Administrators SID enabled）经 DACL 中 Administrators ACE 0x001F01FF 获得受控对象 FILE_ALL_ACCESS——开发模式防篡改/删除/替换声明对此类进程**不成立**（第十一轮新增；deny-only 过滤令牌不受影响；第十二轮：降级判定改为令牌分类确定性判定；**第十三轮：降级为 11 步检查顺序中第 9 步——仅在令牌解析/静态 DACL/AccessCheck/基础读取/拒绝位全部通过后才判定，降级只改变保证等级不豁免任何检查**；denylist 特权在降级路径的交叉规则：必须可归因为 Administrators 成员否则拒绝启动，持 SeBackupPrivilege 的提升进程可经 backup 路径读 .env 内容不受 DACL 限制——降级下密钥保密性对其完全不保证） | 提升的管理员进程可篡改/删除/替换 .env 与受控目录；经备份特权旁路读取 | 方案 B：允许运行但保护声明降级 + 审计；最终安装模式此类令牌直接拒绝启动（N-A82/N-A91/N-A102/N-A103/N-A118~N-A120） | 接受并记录（Administrators 为威胁模型信任边界 C）；【未验证】 |
 | R-4B-10：AccessCheck 仅返回 GrantedAccess/AccessStatus/PrivilegeSet，**不含 ACE/SID 来源归因**；MAXIMUM_ALLOWED 结果若被解释为 NTFS 全部操作有效权限全集即过度承诺（第十二轮新增） | 基于 granted 掩码反推授权来源的错误结论；把静态检查结果冒充实际文件系统行为 | 归因改为令牌分类（TokenGroups 属性）+ 静态 DACL 授权面的确定性分析；MAXIMUM_ALLOWED 降级为辅助诊断 + 逐项最小权限 AccessCheck + 第三层真实文件系统操作交叉验证；N-A100/N-A101/N-A110 | 设计层已消除过度承诺；实际行为待 V2-04B 实测 |
 | R-4B-11：文件删除/重命名有两条授权路径（文件 DELETE ∨ 父目录 FILE_DELETE_CHILD）；删除后重建同名文件可配新 DACL 使原 DACL 保护失效——仅检查 .env 文件自身 DACL 不能证明不可删除（第十二轮新增） | 同用户或管理员进程经父目录授权路径删除/重命名/替换 .env，再以新 DACL 重建 | 每一级父目录逐级核验 FILE_DELETE_CHILD（模板逐位 + AccessCheck 逐项 + 第三层真实删除/重命名/重建负向验证）；删除与 FILE_ADD_FILE 两步授权面均未授予 + 句柄共享模式第三道防线；祖先链 R-4B-8、管理员 R-4B-9 分列；不确定路径 fail-closed；N-A104~N-A107 | 设计层已补齐矩阵；实际行为待 V2-04B 实测 |
-| R-4B-12：FILE_OPEN_FOR_BACKUP_INTENT + SeBackupPrivilege/SeRestorePrivilege 可使文件系统在常规 DACL 检查之外授予 BackupAccess/RestoreAccess（含 WRITE_DAC/WRITE_OWNER/DELETE 等）；AccessCheck API 不模拟该路径，PrivilegeSet 不能证明特权旁路不存在（第十二轮新增） | 持备份特权的进程绕过 DACL 预期读取/改写/替换 .env | 特权 denylist（SeBackup/SeRestore/SeTakeOwnership/SeSecurity 必须不存在，启动 TokenPrivileges 检查）；服务自身打开标志白名单（禁 backup intent）；同进程其他代码路径无法 OS 级强制——如实声明为实现纪律信任边界，不虚构已限制；N-A108/N-A109 | 设计层策略已定；backup intent 实际行为待 V2-04B 实机验证 |
+| R-4B-12：FILE_OPEN_FOR_BACKUP_INTENT + SeBackupPrivilege/SeRestorePrivilege 可使文件系统在常规 DACL 检查之外授予 BackupAccess/RestoreAccess（MS-FSA Open 伪代码：BackupAccess=READ_CONTROL\|ACCESS_SYSTEM_SECURITY\|FILE_GENERIC_READ\|FILE_TRAVERSE，不走常规 DACL 剩余位检查）；AccessCheck API 不模拟该路径，PrivilegeSet 不能证明特权旁路不存在（第十二轮新增；**第十三轮：发现并确认目录句柄架构冲突——CreateFileW 打开目录官方要求 FILE_FLAG_BACKUP_SEMANTICS，旧"CreateFileW 打开受信任根（仅 FILE_FLAG_OPEN_REPARSE_POINT）"设计不可运行，补设该标志又引入 backup intent 入口与"禁用 backup intent"矛盾；解决=方案 A：受信任根与受控链统一 NtCreateFile 打开（CreateOptions 白名单仅 FILE_DIRECTORY_FILE\|FILE_OPEN_REPARSE_POINT），入口级消除 backup intent；开发降级路径 denylist 特权交叉规则见 R-4B-9**） | 持备份特权的进程绕过 DACL 预期读取/改写/替换 .env；目录打开方案引入未批准 backup 入口 | 特权 denylist（SeBackup/SeRestore/SeTakeOwnership/SeSecurity 必须不存在，启动 TokenPrivileges 检查；开发降级路径例外规则见 R-4B-9）；服务自身打开标志/选项白名单（CreateOptions 仅 FILE_DIRECTORY_FILE\|FILE_OPEN_REPARSE_POINT，禁 FILE_OPEN_FOR_BACKUP_INTENT）；同进程其他代码路径无法 OS 级强制——如实声明为实现纪律信任边界，不虚构已限制；N-A108/N-A109/N-A111~N-A117 | 设计层矛盾已解决（方案 A，NtCreateFile 统一打开）；方案 A 全部关键行为待 V2-04B 实机验证（N-A112~N-A114、N-A117） |
+| R-4B-14：真实 NTFS 操作失败不能直接归因 DACL——共享模式冲突（ERROR_SHARING_VIOLATION）、句柄未关闭/占用（ERROR_LOCK_VIOLATION）、路径状态（NOT_FOUND）、句柄失效（INVALID_HANDLE）与 ACL 拒绝（ACCESS_DENIED）必须按错误码分类归因；删除/重命名/替换/删除重建各 API 的失败结果不得互相推广（第十三轮新增） | 把共享冲突误判为"DACL 有效拒绝"（或反之），导致安全结论与实机行为脱节；把某 API 失败推广到其他 API | 实机测试证据清单 19 项（对象路径/FileId/Owner/DACL/Token 全量/DesiredAccess/ShareMode/CreateOptions/错误码/句柄关闭状态等）；正负对照设计（删除 4 组对照）；错误码→归因映射表，未预期错误码 → 不确定 → fail-closed；专门临时目录隔离测试；N-A122~N-A124 | 分类规则已定（文档核对）；实际错误码行为待 V2-04B 实机验证 |
 | R-4B-13：Restricted Token 判定不完整——IsTokenRestricted 仅检查 restricting SID 列表；CreateRestrictedToken 还可经 deny-only user SID/禁用 SID/删除特权产生受限行为；TokenRestrictedSids 为空≠绝无受限行为（第十二轮新增） | 受限/过滤令牌绕过"标准用户"假设使权限判定失真 | 批准令牌精确定义：TokenUser SID 无 0x10 属性、TokenRestrictedSids 为空（必要非充分）、deny-only 按 0x10 判定、denylist 特权检查、CreateRestrictedToken 派生令牌一律拒绝、无法可靠判断 → 拒绝启动；N-A98 | 设计层判定已定义；真实令牌形态待 V2-04B 实测 |
 | R-4B-6：清扫状态白名单（仅 exited/dead）与 force=false 非强制删除尚未 Docker 实测 | 误删 paused/created 等运行语义容器，或删除冲突处理不当 | 七项校验+四项删除前核验+force=false+失败不扩大范围；N-S1~N-S23 负向测试设计覆盖全部状态与竞态场景 | 待 V2-04B 实测 |
 | R-4B-3：Trae 本机未安装 Docker（已实测确认） | N13–N18/T5–T12 真实容器行为无法在本机验证 | mock/协议层测试本机可跑（N1–N12/T1–T4）；真实容器测试需负责人 Docker Desktop 环境，交付时如实标注运行环境 | 依赖负责人环境 |
@@ -2692,3 +2694,130 @@ Query B 判定从"三条件"细化为**七项全通过才可进入删除候选�
 - R-4B-7 保持：**读取密钥风险（R-4B-7）与管理员删除/修改文件风险（R-4B-9）严格分开描述**，不混为一谈。
 
 **范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，docs-only，零代码改动；**未实现 AccessCheck/GetTokenInformation/NTFS 验证器任何业务代码**；`executor_image_lock.json` 保持 pending/null、approval_status 未动；未实现 Docker executor、未引入 Docker SDK、未新增 subprocess、未实现 Python 运行 API、未新增前端运行按钮、未启动 V2-04B/05/06/07、未修改 main/trae-dev、未创建或合并 PR、未合并任何分支。验证 = 文档静态核对（常量表已逐字核对官方页面）+ 既有基线回归（238 passed）；修订 1~9 与 N-A93~N-A110 全部未实机运行；mock 与实机边界逐项标注。
+
+### 2026-11-13｜Trae：V2-04A 架构第十三轮修订（目录句柄打开方案 A/B 闭环 / 管理员降级不绕过基础检查 / NTFS 实测 DACL 与共享模式隔离 / 官方依据表 / N-A111~N-A124，docs-only）
+
+**前置说明**：响应 ChatGPT 第十二轮复审三项阻塞（A：FILE_FLAG_BACKUP_SEMANTICS 与目录句柄打开方案冲突；B：管理员降级策略可能绕过基础 AccessCheck 与 fail-closed 检查；C：真实 NTFS 操作失败不能一律归因 DACL——共享模式干扰）。复审记录尚未提交仓库（经项目负责人任务书传达），不代写、不覆盖，待 ChatGPT 自行入库。官方依据核对见修订 4（本轮实际查阅日期 2026-11-13）。
+
+**修订 1：目录句柄打开与 backup intent 闭环（响应阻塞 A；确认并解决架构矛盾）**
+
+- **官方语义区分**：
+  - `FILE_FLAG_BACKUP_SEMANTICS`：**Win32 CreateFileW 层**的 dwFlagsAndAttributes 标志；官方注明 **"You must set this flag to obtain a handle to a directory"**——即 CreateFileW 打开目录**必须**设置该标志（CreateFileW 页，查阅 2026-11-13）。
+  - `FILE_OPEN_FOR_BACKUP_INTENT`：**NT 层 NtCreateFile CreateOptions** 打开选项。CreateFileW 的 FILE_FLAG_BACKUP_SEMANTICS 到 NT 选项的映射关系**未获官方逐字确认**——不得凭名称断言两标志行为完全相同，也不得凭名称断言某标志一定触发/不触发特权路径【未验证】。
+  - 特权路径语义按 MS-FSA《Server Requests an Open of a File》伪代码：令牌持 SeBackupPrivilege 时 BackupAccess = READ_CONTROL|ACCESS_SYSTEM_SECURITY|FILE_GENERIC_READ|FILE_TRAVERSE（**不走常规 DACL 剩余位检查**）；SeRestorePrivilege 对应 RestoreAccess 写侧；特权常量页官方注明 SeBackup"causes the system to grant all read access control to any file, regardless of the ACL"、SeRestore 同理写侧【伪代码与实机行为均未验证】。
+  - `AccessCheck` **不能**完整模拟真实文件系统打开过程的 backup intent 处理（第十二轮修订 5 已确认，保持）。
+- **阻塞 A 成立（矛盾确认）**：第八~十二轮设计"CreateFileW 打开受信任根（FILE_FLAG_OPEN_REPARSE_POINT）"未含 FILE_FLAG_BACKUP_SEMANTICS——按官方语义该调用**无法打开目录**；若补设该标志则引入 backup intent 入口，与第十二轮"服务自身禁止 backup intent"直接矛盾。矛盾真实存在，本轮必须解决。
+- **方案 A：NtCreateFile 目录句柄方案**——受信任根与全部受控链**统一用 NtCreateFile 打开**（含第一次）：
+  - OBJECT_ATTRIBUTES：RootDirectory=NULL（首次）+ ObjectName=根目录绝对 NT 路径（`\??\C:\ProgramData\ZhidaoShixun` 形式）；后续逐级 RootDirectory=已验证父句柄 + 单级相对名称；
+  - DesiredAccess=`0x00120080`（目录句柄掩码不变）；ShareAccess=FILE_SHARE_READ（0x1）仅；CreateDisposition=FILE_OPEN（0x1）；
+  - CreateOptions 白名单：`FILE_DIRECTORY_FILE (0x00000001) | FILE_OPEN_REPARSE_POINT (0x00200000)`，**不含** FILE_OPEN_FOR_BACKUP_INTENT——从入口上消除 backup/restore 语义路径；
+  - NTSTATUS 统一处理（RtlNtStatusToDosError 转换仅用于日志归因）；句柄生命周期：启动链打开、运行期持有、异常清理 CloseHandle；
+  - 目录打开是否需要 SeChangeNotifyPrivilege：维持硬前置（修订 8，第十二轮）；是否需要其他权限：FILE_READ_ATTRIBUTES+READ_CONTROL+SYNCHRONIZE 已在 DACL 授权面内；重解析点处理：FILE_OPEN_REPARSE_POINT 不跟随目录 reparse【全部未验证】。
+- **方案 B：CreateFileW + FILE_FLAG_BACKUP_SEMANTICS**：官方要求该标志才能开目录；映射到 NT 层 FILE_OPEN_FOR_BACKUP_INTENT【推断，未逐字确认】；持 SeBackup/SeRestore 时触发特权路径；特权策略必须"不存在"（denylist）而非仅"禁用"——特权可被同进程代码 AdjustTokenPrivileges 重新启用，禁用状态不构成可靠屏障；其他代码路径是否传入该标志无法 OS 级强制。
+- **方案比较表**：
+
+| 比较维度 | 方案 A（NtCreateFile 统一） | 方案 B（CreateFileW+BACKUP_SEMANTICS） |
+|---|---|---|
+| 目录句柄获取能力 | FILE_DIRECTORY_FILE 直接打开目录【未验证】 | 官方要求必须设该标志（可用） |
+| backup intent 风险 | **无入口**（不设 FILE_OPEN_FOR_BACKUP_INTENT） | 存在入口（即使特权不存在，标志由打开方控制，属未批准入口） |
+| 特权依赖 | 无（不依赖 SeBackup/SeRestore） | 特权不存在时行为受限但入口仍在；特权存在时触发 MS-FSA 特权路径 |
+| RootDirectory 相对打开 | 原生支持（NT 层参数）【未验证】 | Win32 无等价参数——仍需 NtCreateFile，链路分裂 |
+| 重解析点处理 | FILE_OPEN_REPARSE_POINT 原生控制 | FILE_FLAG_OPEN_REPARSE_POINT 需与 BACKUP_SEMANTICS 组合【未验证】 |
+| ctypes ABI 风险 | 全链统一（首次打开即前置暴露，风险集中且一致） | 首次打开可用 Win32 规避，但逐级打开仍需 ctypes——风险延后且两套路径并存 |
+| 错误处理复杂度 | 统一 NTSTATUS | 混合 Win32 error + NTSTATUS |
+| Windows 实机验证要求 | NtCreateFile 目录打开/相对打开/reparse 对照（N-A112~N-A114、N-A117） | 目录标志行为/特权路径实测（N-A111、N-A115~N-A116） |
+| **推荐** | **推荐方案 A** | 不采用 |
+
+- **推荐方案 A 及理由**：①入口级消除 backup intent 路径——不设该 CreateOption 即不存在该打开路径，符合"关键标志白名单"；②不依赖任何未声明高权限特权；③全链单一打开路径（RootDirectory 相对打开本就必须用 NtCreateFile，统一后错误处理与 ABI 风险集中一致，不存在两套路径）；④不因目录打开扩大文件访问权限；⑤打开失败 fail-closed、绝不回退普通未核验路径。若实机验证发现 NtCreateFile 经 ctypes 不可用或行为与官方不符 → **记录为架构阻塞重新设计并复审**，绝不回退 CreateFileW+BACKUP_SEMANTICS 或普通路径打开。
+- **可实施落点**：N-A111（文档核对：旧 CreateFileW 开根设计不可运行）、N-A112（方案 A 主路径）、N-A113（RootDirectory 相对打开）、N-A114（reparse 对照）、N-A117（无特权目录打开）。
+
+**修订 2：管理员降级模式不得绕过基础安全检查（响应阻塞 B；修正第十二轮可误解表述）**
+
+- **启动判断固定顺序（11 步；任何一步失败 → 拒绝启动，无论后续降级判定如何）**：
+  1. 获取实际进程令牌（OpenProcessToken，TOKEN_QUERY|TOKEN_DUPLICATE）；
+  2. 查询 TokenUser / TokenGroups / TokenRestrictedSids / TokenPrivileges / TokenIntegrityLevel【TokenIntegrityLevel 本轮新增：查询失败 → 拒绝启动；完整性级别策略【未验证：实际级别期望值待定义实测】】；
+  3. 令牌结构解析与属性分类（0x04 enabled / 0x10 deny-only / 勘误后常量；无法解析 → 拒绝）；
+  4. 查询并核验文件及全部受控目录 SD（GetSecurityInfo by handle）；
+  5. DACL 静态模板核验（ACE 数/顺序/SID/Mask/Flags/Owner/OWNER RIGHTS/SE_DACL_PROTECTED）；
+  6. 文件与目录分别执行 AccessCheck（逐项最小权限 + MAXIMUM_ALLOWED 诊断）；
+  7. 验证批准基础读取权限（READ_CONTROL/FILE_READ_ATTRIBUTES/SYNCHRONIZE/FILE_READ_DATA 文件项必须授予）；
+  8. 验证必要拒绝权限位（9 拒绝位必须拒绝）；
+  9. 判断是否 Administrators enabled 降级路径（**仅在 1~8 全部通过后判断**）；
+  10. 记录审计事件（启动成功/降级/拒绝，各附证据）；
+  11. 全部通过后允许启动。
+- **进入方案 B 降级的全部条件（同时满足）**：当前模式=开发模式；TokenGroups 中 Administrators SID 明确 enabled (0x04)；令牌解析成功；静态 DACL 检查成功；AccessCheck API 调用成功；文件与必要目录基础读取权限确实授权；必要对象检查均成功；不存在无法解释的令牌属性或 SD 异常；审计系统可用。
+- **进入降级后**：允许启动；记录管理员令牌降级审计事件；**撤回**对管理员提升进程的防篡改保证；**不得**声称管理员提升令牌仍受同用户 ACL 可靠隔离；**不得**绕过读取权限检查/令牌解析失败/路径检查失败/DACL 模板检查失败——降级只改变保证等级，不豁免任何检查。
+- **非管理员令牌（Administrators 不存在或非 enabled）**：必须验证基础读取权限与拒绝位；AccessCheck 结果超出批准授权面 → 拒绝启动；无法解释的额外授权 → 拒绝启动；不得用 GrantedAccess 推断 ACE/SID 来源；不得把 PrivilegeSet 当授权来源清单。
+- **最终安装模式**：Administrators enabled → 拒绝启动；服务账户加入 Administrators → 拒绝启动；服务令牌查询失败 → 拒绝启动；高风险特权策略不满足 → 拒绝启动；AccessCheck 或真实文件系统检查不满足 → 拒绝启动；**不允许进入开发模式方案 B**。
+- **特权 denylist 与降级的交叉规则（本轮明确，修正第十二轮模糊处）**：开发模式提升令牌中**出现** denylist 特权（SeBackup/SeRestore/SeTakeOwnership/SeSecurity）时——①必须可归因为 Administrators 成员身份（ Administrators enabled 必须同时成立，否则属"无法解释的令牌属性"→ 拒绝启动）；②审计逐一列出特权名；③如实声明：持 SeBackupPrivilege 的提升进程可经 backup 路径读取 .env 内容而**不受 .env DACL 限制**（MS-FSA BackupAccess 语义），开发模式降级下密钥保密性对该进程**完全不保证**；④最终安装模式 denylist 命中一律拒绝启动，无任何例外。
+- **修正声明（取代第十二轮可误解表述）**：第十二轮修订 2"Administrators enabled → 允许启动 + 审计"与修订 3 表格，凡可被解读为"降级路径跳过基础检查"之处，以本条 11 步顺序为准——**降级是全部检查通过后的保证等级标记，不是检查豁免**。
+
+**修订 3：NTFS 实机测试必须隔离 DACL 与共享模式因素（响应阻塞 C）**
+
+- **测试原则**：真实文件系统操作失败**不能**直接证明 DACL 拒绝——失败可能源于：DACL 拒绝 / 共享模式冲突 / 句柄未关闭 / 文件被其他进程占用 / 文件系统状态异常 / 路径或重解析点变化。每项失败必须按错误码分类归因。
+- **每个测试必须记录的证据清单（19 项）**：测试对象路径、卷标识及 FileId、文件/目录类型、对象 Owner、完整 DACL、实际 Token 类型、TokenUser、TokenGroups 及 SID Attributes、TokenPrivileges、DesiredAccess、ShareMode、CreationDisposition、CreateOptions、reparse 相关标志、调用 API、返回值、GetLastError/NTSTATUS、测试前后文件状态、所有测试句柄是否关闭及是否存在其他进程占用。
+- **错误分类表（不得把所有失败统一归为 DACL 拒绝）**：
+
+| 错误码 | 含义 | 归因 |
+|---|---|---|
+| ERROR_ACCESS_DENIED | 访问被拒 | ACL/权限路径（DACL 拒绝的候选证据） |
+| ERROR_SHARING_VIOLATION | 共享冲突 | 共享模式/占用——**不是** DACL 拒绝 |
+| ERROR_LOCK_VIOLATION | 字节范围锁 | 文件锁占用——**不是** DACL 拒绝 |
+| ERROR_FILE_NOT_FOUND | 对象不存在 | 路径/对象状态 |
+| ERROR_PATH_NOT_FOUND | 路径不存在 | 路径/祖先状态 |
+| ERROR_INVALID_HANDLE | 句柄无效 | 句柄生命周期错误 |
+| 其他 | 系统错误 | 逐码记录；未预期错误码 → 结果不确定 → fail-closed |
+
+- **正负对照设计（删除测试组，专门临时目录/测试文件，禁止触碰真实用户数据）**：
+  - 正向对照：测试账户对测试文件有 DELETE、父目录共享模式允许 → 删除成功；
+  - 负向 A：文件无 DELETE 且父目录无 FILE_DELETE_CHILD → 删除被拒（预期 ERROR_ACCESS_DENIED）；
+  - 负向 B：文件有 DELETE、父目录共享模式允许 → 删除成功（验证文件 DELETE 单路径）；
+  - 负向 C：文件无 DELETE 但父目录有 FILE_DELETE_CHILD → 实测父目录授权路径实际行为【未验证】；
+  - 负向 D：DACL 允许删除但现有活动句柄未设 FILE_SHARE_DELETE → 预期 ERROR_SHARING_VIOLATION（与 DACL 拒绝区分的关键对照）。
+- **重命名/替换/删除重建矩阵**（每项分别说明源文件权限/源父目录权限/目标父目录权限/共享模式要求/预期错误分类，不将某 API 失败推广到其他 API）：
+
+| 操作 | API | 源文件权限 | 源父目录 | 目标父目录 | 共享模式要求 | 预期失败错误分类 |
+|---|---|---|---|---|---|---|
+| 重命名 | MoveFileExW | DELETE | FILE_DELETE_CHILD（可选授权路径） | FILE_ADD_FILE | 源句柄需 FILE_SHARE_DELETE（若有活动句柄）【未验证】 | ACCESS_DENIED（权限）或 SHARING_VIOLATION（占用） |
+| 替换 | ReplaceFileW | 源/目标读+写权限、目标 DELETE | FILE_ADD_FILE | FILE_ADD_FILE | 源/目标句柄兼容【未验证】 | 逐码分类 |
+| 覆盖复制 | CopyFileW（覆盖） | 目标 FILE_WRITE_DATA+DELETE（替换路径） | — | FILE_ADD_FILE | 目标句柄兼容【未验证】 | 逐码分类 |
+| 删除重建 | DeleteFileW+CreateFileW(CREATE_ALWAYS) | DELETE ∨ 父 FILE_DELETE_CHILD；新建 FILE_ADD_FILE | 同左 | FILE_ADD_FILE | DELETE 时受活动句柄共享模式约束 | 两步分别分类 |
+| 创建同名文件 | CreateFileW(CREATE_NEW/ALWAYS) | — | FILE_ADD_FILE | — | — | ACCESS_DENIED |
+| 创建子目录 | CreateDirectoryW | — | FILE_ADD_SUBDIRECTORY | — | — | ACCESS_DENIED |
+
+**修订 4：官方文档依据表（本轮实际查阅日期 2026-11-13；未验证=页面语义已核对但 Windows 实际行为未实测）**
+
+| 页面名称 | URL | API/结构 | 本项目采用的语义 | 尚未验证的行为 |
+|---|---|---|---|---|
+| TOKEN_GROUPS | https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_groups | TOKEN_GROUPS / SID_AND_ATTRIBUTES | SE_GROUP_* 全部常量值（修订 0 权威表，第十二轮已核对） | 实际令牌解析结果 |
+| SID Attributes in an Access Token | https://learn.microsoft.com/en-us/windows/win32/secauthz/sid-attributes-in-an-access-token | SID_AND_ATTRIBUTES | enabled 参与、deny-only 仅匹配 Deny ACE、Allow 忽略 | 实际令牌分类 |
+| AccessCheck | https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-accesscheck | AccessCheck | impersonation token + TOKEN_QUERY、MapGenericMask、MAXIMUM_ALLOWED 语义、NULL DACL 返回 TRUE、SD 须含 owner+group | 真实 NTFS 操作行为 |
+| CreateFileW | https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew | CreateFileW | **"You must set this flag [FILE_FLAG_BACKUP_SEMANTICS] to obtain a handle to a directory"**——阻塞 A 的官方依据 | 目录句柄实际行为/错误码 |
+| File and Directory Access Rights Constants | https://learn.microsoft.com/en-us/windows/win32/wmisdk/file-and-directory-access-rights-constants | FILE_* 常量 | 0x1/0x2/0x4/0x8/0x20/0x40 双语义表 | 实际访问检查 |
+| NtCreateFile | https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile | NtCreateFile / OBJECT_ATTRIBUTES | RootDirectory 相对定位、FILE_DIRECTORY_FILE/FILE_OPEN_REPARSE_POINT/FILE_OPEN、DesiredAccess/ShareAccess/CreateOptions | ctypes ABI 与实际行为【方案 A 全部关键行为】 |
+| [MS-FSA] Server Requests an Open of a File | https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/8ada5fbe-db4e-49fd-aef6-20d54b748e40 | Open 算法 | HasBackupAccess → BackupAccess=READ_CONTROL\|ACCESS_SYSTEM_SECURITY\|FILE_GENERIC_READ\|FILE_TRAVERSE，不走常规 DACL 剩余位检查；SeRestorePrivilege 对应写侧 | 实机特权旁路 |
+| Privilege Constants | https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants | Se*Privilege | SeBackup"grant all read access control to any file, regardless of the ACL"；SeRestore 写侧 | 实机特权路径 |
+| Directory Access Rights（Drivers Access Mask） | https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/access-mask | FILE_LIST_DIRECTORY vs FILE_TRAVERSE | 两者语义区分（第八轮依据，持续有效） | —— |
+
+**修订 5：负向测试 N-A111~N-A124（14 项，全部设计未运行；A=官方文档核对 / B=mock 或单元测试设计 / C=Windows 实机）**
+
+| ID | 风险场景 | 前提（对象/DACL/Token/SID+Attributes） | API 与参数 | 预期结果 | 拒绝启动 | 审计 | mock | 实机 | 风险编号 |
+|---|---|---|---|---|---|---|---|---|---|
+| N-A111 | CreateFileW 打开目录缺 FILE_FLAG_BACKUP_SEMANTICS（旧设计冲突实证） | 受信任根目录；任意标准令牌 | CreateFileW(目录, FILE_FLAG_OPEN_REPARSE_POINT，无 BACKUP_SEMANTICS) | 失败（官方语义：必须设该标志才能获得目录句柄）→ 实证第八~十二轮旧根打开设计不可运行 | 是（架构自检） | 是 | A（文档核对，本轮已完成） | C（确认实际错误码） | R-4B-12 |
+| N-A112 | 方案 A 主路径：NtCreateFile 打开目录 | 受信任根；DACL=目录模板；运行/服务账户令牌 | NtCreateFile(RootDirectory=NULL, 绝对 NT 路径, DesiredAccess=0x00120080, ShareAccess=FILE_SHARE_READ, CreateDisposition=FILE_OPEN, CreateOptions=FILE_DIRECTORY_FILE\|FILE_OPEN_REPARSE_POINT) | 成功返回目录句柄（无 backup 标志）；失败 fail-closed | 是 | 是 | 否 | **C** | R-4B-12 |
+| N-A113 | RootDirectory 相对打开 | 已验证父句柄 + 单级相对名；子项 DACL 模板 | NtCreateFile(RootDirectory=句柄, 相对名) | 成功打开；句柄权限不足/失效 → 失败 fail-closed | 是 | 是 | 否 | **C** | R-4B-5 |
+| N-A114 | FILE_OPEN_REPARSE_POINT 与目录句柄 | 目录对象带/不带 reparse point 两态 | NtCreateFile 带 vs 不带该标志对照 | 带：打开目录本身不跟随；不带：跟随 reparse【未验证】——实测确认实际行为 | 是 | 是 | 否 | **C** | R-4B-5 |
+| N-A115 | backup intent × SeBackupPrivilege | 持 SeBackupPrivilege 令牌 + .env | NtCreateFile/CreateFileW 设 FILE_OPEN_FOR_BACKUP_INTENT（攻击性验证） | 实测 BackupAccess 是否授予 DACL 外读权限；本项目自身打开永不设该选项 | 是（若自身代码设置） | 是 | 否 | **C** | R-4B-12 |
+| N-A116 | backup intent × SeRestorePrivilege | 持 SeRestorePrivilege 令牌 + .env | 同上（写侧攻击性验证） | 实测 RestoreAccess 写侧旁路【未验证】 | 是（同上） | 是 | 否 | **C** | R-4B-12 |
+| N-A117 | 无 backup/restore 特权时目录打开（方案 A 前提） | 令牌无 SeBackup/SeRestore；目录模板 DACL | NtCreateFile 目录打开（N-A112 同参） | 成功——目录打开不依赖备份特权（方案 A 成立前提） | 是（失败时） | 是 | 否 | **C** | R-4B-12 |
+| N-A118 | 管理员降级模式基础读取权限缺失 | Administrators enabled；DACL 缺 READ_CONTROL 授予 | 11 步顺序第 7 步：基础读取验证 | 失败 → 拒绝启动（**降级不豁免**） | 是 | 是 | B | C（真实令牌） | R-4B-9 |
+| N-A119 | 降级模式 AccessCheck API 调用失败 | Administrators enabled；AccessCheck 返回 0 | 第 6 步 | 拒绝启动（降级不豁免） | 是 | 是 | B | C | R-4B-9 |
+| N-A120 | 降级模式 DACL 模板不匹配 | Administrators enabled；DACL 多/少 ACE | 第 5 步 | 拒绝启动（降级不豁免） | 是 | 是 | B | C | R-4B-9 |
+| N-A121 | 非管理员令牌出现额外授权 | 标准/过滤令牌；逐项 AccessCheck 任一拒绝位被授予 | 第 6/8 步 | 拒绝启动；不用 granted 归因来源；不把 PrivilegeSet 当来源清单 | 是 | 是 | B | C | R-4B-10 |
+| N-A122 | DACL 拒绝与共享冲突错误分类 | 构造同一删除操作的两种失败 | DeleteFileW：DACL 拒绝态 vs 活动句柄无 FILE_SHARE_DELETE 态 | 分别返回 ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION，按修订 3 分类表归因，不统一归为 DACL 拒绝 | 否（分类规则用例） | 是 | B（错误码→归因映射表） | **C** | R-4B-14 |
+| N-A123 | 删除正负对照 4 组 | 专门临时目录+测试文件（禁触真实用户数据）；按修订 3 构造四种 ACL/共享态 | DeleteFileW 正向/负向 A/负向 B/负向 C/负向 D | 正向成功；A 拒绝；B 成功；C 实测父目录授权路径；D 共享冲突与 DACL 区分 | 视组 | 是 | 否 | **C** | R-4B-11/R-4B-14 |
+| N-A124 | 重命名/替换/删除重建的共享模式隔离 | MoveFileExW/ReplaceFileW/CopyFileW/Delete+Create 各自"无占用句柄"与"有占用句柄（无 FILE_SHARE_DELETE）"双条件 | 按修订 3 矩阵逐 API 执行 | 失败按错误码分类归因；不把共享冲突归为 DACL；不把某 API 失败推广到其他 API | 视条件 | 是 | 否 | **C** | R-4B-14 |
+
+**修订 6：风险登记表变化**：R-4B-9 更新（降级为检查通过后的标记，11 步顺序）；R-4B-12 更新（目录句柄冲突确认 + 方案 A 消除 backup intent 入口 + 降级路径特权交叉规则）；**新增 R-4B-14**（共享模式干扰导致错误归因）；AccessCheck≠NTFS（R-4B-10）、RootDirectory/SeChangeNotify 未实测（R-4B-5）、FILE_DELETE_CHILD 链与删除重建（R-4B-11）已在既有条目覆盖，本轮补充描述。历史风险均不关闭（无真实验证证据）。
+
+**范围与验证确认**：本轮仅修改 AI_COLLABORATION.md 与 README.md，docs-only；未实现任何业务代码；`executor_image_lock.json` 保持 pending/null；全部禁止事项遵守。修订 4 官方 URL 于 2026-11-13 经检索/抓取核对存在；N-A111~N-A124 全部未运行，A/B/C 层级逐项标注；实测归 V2-04B。
