@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     executor_bind_port: int = 8101
     # 执行服务调用令牌：为空时执行服务拒绝启动（fail-closed）；浏览器永不持有该令牌
     executor_token: str = ""
+    # 业务 API 访问执行服务的地址（独立进程，默认本机回环）
+    executor_api_url: str = "http://127.0.0.1:8101"
     # 固定执行镜像（服务端固定生成，用户不可指定）
     executor_image_tag: str = "python:3.12-slim"
     # 批准的镜像 digest：为空（executor_image_lock.json approval_status=pending）时
@@ -40,6 +42,10 @@ class Settings(BaseSettings):
     executor_image_digest: str = ""
     # 执行记录 JSONL 存储路径
     executor_records_path: str = "data/executor_records.jsonl"
+    # 实验运行接口（POST /api/v1/experiments/{id}/runs）开发模式令牌：
+    # 当前尚无用户认证体系，接口仅限本机开发/受控测试；为空时该接口整体关闭（fail-closed）。
+    # 该令牌不是用户体系，仅防止匿名无限任意代码执行；浏览器/前端永不持有。
+    dev_api_token: str = ""
 
 
 @lru_cache
