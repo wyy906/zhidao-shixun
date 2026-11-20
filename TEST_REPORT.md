@@ -1098,3 +1098,33 @@ attach 读取到部分 stdout/stderr 后抛异常时，旧逻辑只在“两通�
 - 新增 13 项（预检 11 + 基线迁移 2），更新 1 项（code_tasks 迁移链断言）。
 - 后端全量 **152 项通过**；管理器 168 项不受影响。
 - 上线门槛与运维边界见 `deploy/README.md` §5、§6。
+
+## 21. 第二十一轮：前端 UI 预览云部署（M5 补充，2026-11-20）
+
+### 21.1 部署范围决策
+
+deployment 插件仅支持 StaticWeb（静态文件）与 FunctionWeb（Node.js 20），
+**FastAPI 业务后端与 Docker 沙箱管理器无法通过该插件上线**。
+经负责人确认，本轮只部署前端静态构建作为 UI 预览：
+
+- 前端 `npm run build` 通过（vite 生产构建）。
+- 产物 111 个文件 / 6.8MB，超过 StaticWeb 99 文件上限，
+  按插件规则转换为「Node 20 静态服务器」包部署。
+
+### 21.2 部署结果
+
+| 项 | 值 |
+|---|---|
+| Site | `zhidao-shixun-frontend`（ID `37ku9cpqb4vb662sic1`） |
+| URL | `https://37ku9cpqb4vb662sic1.traesite.cn` |
+| Deployment | `dep_6affdacd960b130cbfb64f96` |
+| 状态 | `succeeded`（构建/部署/发布 3 阶段全部成功，34s） |
+| 可见性 | `private`（仅自己可见） |
+| 内容分类 | 教育与知识 |
+
+### 21.3 诚实边界
+
+- **这不是生产上线**：无后端、无数据库、无沙箱。页面可打开，
+  但所有 API 调用（登录、实验数据）都会失败——部署描述中已如实注明。
+- 后续拿到真实后端地址后，用 `VITE_API_BASE_URL` 重新构建前端并重新部署即可接通。
+- `dist/` 为构建产物，验证后已删除，不入库。

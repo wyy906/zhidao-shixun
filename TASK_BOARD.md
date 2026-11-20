@@ -38,6 +38,9 @@
   - 后端 **152 项测试通过**；迁移在干净库与历史库两场景实测通过。
   - 边界：systemd/nginx 模板未在真实服务器安装；备份/回滚/监控未演练；
     执行节点生产验收仍未完成。**不得宣称已上线。**
+  - 补充（2026-11-20）：前端 UI 预览已通过 deployment 插件上线
+    `https://37ku9cpqb4vb662sic1.traesite.cn`（private，`dep_6affdacd960b130cbfb64f96` succeeded）。
+    **无后端 API，仅 UI 预览，不是生产上线**（见 `TEST_REPORT.md` §21）。
 
 ## 阶段 3-A — 代码执行沙箱与桌面端验收（已完成）
 

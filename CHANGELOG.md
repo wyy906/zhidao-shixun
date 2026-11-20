@@ -1,5 +1,13 @@
 # 更新记录
 
+## 2026-11-20 — 阶段 4：前端 UI 预览云部署（M5 补充）
+
+- deployment 插件仅支持静态站点与 Node.js 20；FastAPI 后端与 Docker 沙箱不受支持，
+  经负责人确认只部署前端静态构建作 UI 预览。
+- 站点 `zhidao-shixun-frontend`（`https://37ku9cpqb4vb662sic1.traesite.cn`，private），
+  Deployment `dep_6affdacd960b130cbfb64f96` succeeded（34s，截图已刷新）。
+- **不是生产上线**：无后端/数据库/沙箱，API 调用会失败；详见 `TEST_REPORT.md` §21。
+
 ## 2026-11-13 — 阶段 4：生产上线交付包（M5，未部署）
 
 ### 修复（上线阻塞项）
