@@ -1,5 +1,14 @@
 # 更新记录
 
+## 2026-11-20 — 阶段 4：M2 前端按钮接入
+
+- 学生实训台新增「验证结果」「诊断错误」按钮：成功运行后可验证（python 适配器按
+  `code_output` 判定），失败运行可诊断（stderr + 当前步骤提交 AI 诊断）；
+  沙箱不可用时的失败也保留真实错误文本供诊断。
+- `vue-tsc --noEmit` 通过；实机接口验证：诊断返回真实模型 `IndentationError` 建议，
+  验证 `passed=True confidence=0.8`。浏览器 UI 点击因 Monaco 卡死 BLOCKED（如实记录）。
+- 详细记录：`TEST_REPORT.md` §22。
+
 ## 2026-11-20 — 阶段 4：前端 UI 预览云部署（M5 补充）
 
 - deployment 插件仅支持静态站点与 Node.js 20；FastAPI 后端与 Docker 沙箱不受支持，

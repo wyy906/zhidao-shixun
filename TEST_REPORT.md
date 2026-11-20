@@ -1128,3 +1128,31 @@ deployment 插件仅支持 StaticWeb（静态文件）与 FunctionWeb（Node.js 
   但所有 API 调用（登录、实验数据）都会失败——部署描述中已如实注明。
 - 后续拿到真实后端地址后，用 `VITE_API_BASE_URL` 重新构建前端并重新部署即可接通。
 - `dist/` 为构建产物，验证后已删除，不入库。
+
+## 22. 第二十二轮：M2 前端按钮接入（2026-11-20）
+
+### 22.1 实现
+
+- `frontend/src/api/index.ts`：`verifyResult` / `diagnoseError` 补齐
+  `VerifyResponse` / `DiagnoseResponse` 与请求类型。
+- `frontend/src/views/student/Workbench.vue`：
+  - 运行结果区新增「验证结果」「诊断错误」按钮：仅运行成功后可验证、
+    仅运行失败后可诊断，互斥禁用；
+  - 验证结果把 `{ code_output, stderr, exit_code, timed_out }` 作为
+    `actual_result` 提交 `/ai/verify/{exp}/{step}`（python 适配器按 `code_output` 判定）；
+  - 诊断错误把当前步骤 `step_id` 与 stderr 提交 `/ai/diagnose/{exp}`，
+    渲染 `error_type`、建议与可能原因列表；
+  - 沙箱不可用（catch 分支）时也保留真实错误文本供诊断，避免按钮点了无反应；
+  - 新增验证/诊断结果卡片样式（通过/未通过/诊断三类配色）。
+
+### 22.2 验证
+
+| 项 | 结果 |
+|---|---|
+| `vue-tsc --noEmit` | PASS（0 错误） |
+| 实机接口验证（后端 8000 实跑） | 诊断：真实模型返回 `error_type=IndentationError` + 缩进建议与原因；验证：`passed=True confidence=0.8` |
+| 浏览器 UI 点击 | **BLOCKED**：自动化浏览器在加载 Monaco 编辑器的实训台页卡死；登录、进入实训台、按钮状态逻辑经源码核对正确 |
+
+- 后端本轮未改动，152 项测试不受影响。
+- 边界：浏览器 UI 实际点击未完成（Monaco 卡死），已如实记录；
+  验证接口走真实沙箱运行结果的端到端路径未测（当前节点未配置沙箱，`/code/run` 返回 503）。

@@ -117,19 +117,27 @@ export interface AIGuideResponse {
   next_action?: string
 }
 
+export interface VerifyResponse {
+  passed: boolean
+  feedback: string
+  confidence: number
+}
+
+export interface DiagnoseResponse {
+  error_type: string
+  suggestion: string
+  possible_causes?: string[]
+}
+
 export const aiApi = {
   requestGuide: (data: AIGuideRequest) =>
     post<AIGuideResponse>('/v1/ai/guide', data),
-  verifyResult: (experimentId: number, stepId: number, data: any) =>
-    post<{ passed: boolean; feedback: string }>(
-      `/v1/ai/verify/${experimentId}/${stepId}`,
-      data
-    ),
-  diagnoseError: (experimentId: number, data: any) =>
-    post<{ error_type: string; suggestion: string }>(
-      `/v1/ai/diagnose/${experimentId}`,
-      data
-    )
+  verifyResult: (experimentId: number, stepId: number, data: { actual_result?: Record<string, any>; operation_context?: Record<string, any> }) =>
+    post<VerifyResponse>(`/v1/ai/verify/${experimentId}/${stepId}`, data),
+  diagnoseError: (
+    experimentId: number,
+    data: { step_id?: number; error?: string; context?: Record<string, any> }
+  ) => post<DiagnoseResponse>(`/v1/ai/diagnose/${experimentId}`, data)
 }
 
 // ===== 网页端代码运行 =====

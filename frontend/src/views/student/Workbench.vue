@@ -100,6 +100,36 @@
             </div>
             <pre v-if="runOutput" :class="{ err: runIsError }">{{ runOutput }}</pre>
             <pre v-else class="output-empty">（点击「运行」查看结果）</pre>
+            <div class="run-actions" v-if="runOutput && !running">
+              <el-button
+                size="small"
+                type="success"
+                :loading="verifying"
+                :disabled="runIsError"
+                @click="verifyCurrentResult"
+              >验证结果</el-button>
+              <el-button
+                size="small"
+                type="warning"
+                :loading="diagnosing"
+                :disabled="!runIsError"
+                @click="diagnoseCurrentError"
+              >诊断错误</el-button>
+            </div>
+            <div v-if="verifyFeedback" class="verify-card" :class="verifyFeedback.passed ? 'pass' : 'fail'">
+              <div class="card-title">
+                {{ verifyFeedback.passed ? '✔ 结果验证通过' : '✘ 结果未通过' }}
+                <span class="confidence">置信度 {{ Math.round(verifyFeedback.confidence * 100) }}%</span>
+              </div>
+              <p>{{ verifyFeedback.feedback }}</p>
+            </div>
+            <div v-if="diagnosis" class="diagnosis-card">
+              <div class="card-title">诊断：{{ diagnosis.error_type }}</div>
+              <p>{{ diagnosis.suggestion }}</p>
+              <ul v-if="diagnosis.possible_causes && diagnosis.possible_causes.length">
+                <li v-for="cause in diagnosis.possible_causes" :key="cause">{{ cause }}</li>
+              </ul>
+            </div>
           </div>
         </div>
 
@@ -161,7 +191,8 @@ import * as monaco from 'monaco-editor'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import {
   experimentApi, aiApi, codeApi,
-  type Experiment, type ExperimentStep, type AIGuideResponse
+  type Experiment, type ExperimentStep, type AIGuideResponse,
+  type VerifyResponse, type DiagnoseResponse
 } from '@/api'
 
 // Monaco 只用到编辑器基础 worker（Python 语法高亮不需要额外语言服务）
@@ -178,6 +209,12 @@ const runOutput = ref('')
 const runMs = ref(0)
 const runIsError = ref(false)
 const running = ref(false)
+const verifying = ref(false)
+const diagnosing = ref(false)
+const verifyFeedback = ref<VerifyResponse | null>(null)
+const diagnosis = ref<DiagnoseResponse | null>(null)
+// 最近一次运行结果，供「验证结果 / 诊断错误」使用
+const lastRun = ref<{ stdout: string; stderr: string; exit_code: number; timed_out: boolean } | null>(null)
 const editorEl = ref<HTMLElement | null>(null)
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
 
@@ -284,6 +321,9 @@ async function runCode() {
   running.value = true
   runOutput.value = ''
   runIsError.value = false
+  verifyFeedback.value = null
+  diagnosis.value = null
+  lastRun.value = null
   try {
     const res = await codeApi.run(code, 10)
     runMs.value = res.duration_ms
@@ -292,13 +332,17 @@ async function runCode() {
     if (res.stderr) parts.push(res.stderr.trimEnd())
     runOutput.value = parts.join('\n') || '（无输出）'
     runIsError.value = res.exit_code !== 0 || res.timed_out
+    lastRun.value = { stdout: res.stdout, stderr: res.stderr, exit_code: res.exit_code, timed_out: res.timed_out }
   } catch (err: any) {
     // 后端在沙箱不可用时会返回明确提示（不包含服务器内部细节）
     const detail = err?.response?.data?.detail
-    runOutput.value = typeof detail === 'string' && detail
+    const text = typeof detail === 'string' && detail
       ? `运行失败：${detail}`
       : '运行失败：请检查后端服务是否可用'
+    runOutput.value = text
     runIsError.value = true
+    // 失败也保留错误文本，让「诊断错误」按钮有真实内容可交给后端
+    lastRun.value = { stdout: '', stderr: text, exit_code: -1, timed_out: false }
   } finally {
     running.value = false
   }
@@ -310,6 +354,54 @@ function resetCode() {
   runOutput.value = ''
   runMs.value = 0
   runIsError.value = false
+  verifyFeedback.value = null
+  diagnosis.value = null
+  lastRun.value = null
+}
+
+/** 把当前运行结果交给后端验证器判定（python 适配器按 code_output 判定） */
+async function verifyCurrentResult() {
+  const expId = experiment.value?.id
+  const stepId = steps.value[currentStep.value]?.id
+  if (!expId || !stepId) return
+  if (!lastRun.value || verifying.value) return
+  verifying.value = true
+  verifyFeedback.value = null
+  try {
+    verifyFeedback.value = await aiApi.verifyResult(expId, stepId, {
+      actual_result: {
+        code_output: lastRun.value.stdout,
+        stderr: lastRun.value.stderr,
+        exit_code: lastRun.value.exit_code,
+        timed_out: lastRun.value.timed_out
+      }
+    })
+  } catch {
+    // 验证失败不伪造结论
+    ElMessage.warning('结果验证暂时不可用，请稍后重试')
+  } finally {
+    verifying.value = false
+  }
+}
+
+/** 运行失败时把 stderr 交给后端 AI 诊断 */
+async function diagnoseCurrentError() {
+  const expId = experiment.value?.id
+  if (!expId) return
+  if (!lastRun.value || diagnosing.value) return
+  diagnosing.value = true
+  diagnosis.value = null
+  try {
+    diagnosis.value = await aiApi.diagnoseError(expId, {
+      step_id: steps.value[currentStep.value]?.id,
+      error: lastRun.value.stderr || lastRun.value.stdout || '代码运行失败（无输出）'
+    })
+  } catch {
+    // 诊断失败不伪造内容
+    ElMessage.warning('错误诊断暂时不可用，请稍后重试')
+  } finally {
+    diagnosing.value = false
+  }
 }
 function openDesktopHelper() {
   ElMessage.info('请在命令行运行：python desktop/src/main.py')
@@ -531,6 +623,45 @@ onMounted(loadData)
 }
 .run-output pre.err { color: #f87171; }
 .run-output pre.output-empty { color: #8b949e; }
+.run-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+.verify-card,
+.diagnosis-card {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #161b22;
+  border-left: 3px solid #8b949e;
+  font-size: 13px;
+}
+.verify-card.pass { border-left-color: #22c55e; }
+.verify-card.fail { border-left-color: #f87171; }
+.diagnosis-card { border-left-color: #f59e0b; }
+.verify-card p,
+.diagnosis-card p {
+  margin: 4px 0 0;
+  color: #c9d1d9;
+  white-space: pre-wrap;
+}
+.verify-card .card-title,
+.diagnosis-card .card-title {
+  color: #e6edf3;
+  font-weight: 600;
+}
+.verify-card .confidence,
+.diagnosis-card li {
+  color: #8b949e;
+  font-weight: 400;
+  margin-left: 6px;
+}
+.diagnosis-card ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #c9d1d9;
+}
 
 .external-hint {
   background: #fff;

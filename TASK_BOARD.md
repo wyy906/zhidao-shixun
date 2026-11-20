@@ -16,6 +16,9 @@
   - 错误诊断接入真实 OpenAI 兼容模型，真实调用 7.3s 返回结构化建议；含 30s 超时、
     失败回退、密钥脱敏与日志脱敏。
   - 后端 **139 项测试通过**（新增 23 项）。后端能力已验证，前端尚未接入按钮。
+  - 补充（2026-11-20）：**前端按钮已接入**（验证结果/诊断错误，类型检查 PASS；
+    实机接口诊断返回真实模型建议、验证 confidence=0.8；浏览器 UI 点击因 Monaco 卡死
+    BLOCKED，见 `TEST_REPORT.md` §22）。
 - [x] **M3 分发：桌面端打包（便携版实机通过）**
   - PyInstaller onedir 构建通过（268.4 MB），但其未签名 exe 被本机 Smart App Control 拦截。
   - 便携版 `desktop/dist/ZhidaoPortable/`（730.4 MB，zip 272.8 MB）使用签名 Python 运行时，
