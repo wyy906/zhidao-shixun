@@ -1203,3 +1203,12 @@ deployment 插件仅支持 StaticWeb（静态文件）与 FunctionWeb（Node.js 
    不重复启动；明确提示"黑色窗口不能关"。
 3. `vue-tsc` 通过；重新构建并同步到桌面副本；Start.bat 实测启动 + admin/demo123
    登录成功（role=teacher）。
+
+## 25. 第二十五轮：桌面助手并入一键使用包（2026-11-20）
+
+- 桌面副本新增「启动桌面助手.bat」：确保后端已启动后，以系统 Python 启动
+  `desktop\src\main.py`（PySide6 6.12.0 已装，SAC 下可运行）。
+- 已把绿框演示实验包 `01-ai-api-lab.json`（记事本/终端目标，含 adapter_hint）
+  通过 API 导入桌面副本数据库（实验 id=2）。
+- 实测：助手从副本目录启动成功，主窗口「智导实训助手」出现并自动登录；
+  测试实例已关闭。绿框识别本身沿用 §15.6 实机验证结论。
