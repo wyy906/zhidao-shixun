@@ -23,12 +23,6 @@
         <el-form-item label="密码" prop="password">
           <el-input v-model="form.password" type="password" show-password placeholder="请输入密码" />
         </el-form-item>
-        <el-form-item label="角色">
-          <el-radio-group v-model="form.role">
-            <el-radio-button value="student">学生</el-radio-button>
-            <el-radio-button value="teacher">教师</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
         <el-button
           type="primary"
           :loading="loading"
@@ -40,7 +34,7 @@
       </el-form>
       <div class="login-tip">
         <el-text type="info" size="small">
-          请使用教师分配的账号登录
+          无需选择身份，系统按账号自动识别教师 / 学生
         </el-text>
       </div>
     </div>
@@ -59,7 +53,7 @@ const userStore = useUserStore()
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
-const form = reactive({ username: '', password: '', role: 'student' as 'student' | 'teacher' })
+const form = reactive({ username: '', password: '' })
 
 const rules: FormRules = {
   username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
@@ -74,8 +68,9 @@ async function handleLogin() {
     try {
       await userStore.login(form.username, form.password)
       ElMessage.success('登录成功')
-      const redirect = (route.query.redirect as string) || '/student/dashboard'
-      router.push(redirect)
+      // 按服务端返回的真实身份跳转：教师进教学总览，学生进我的实验
+      const fallback = userStore.role === 'teacher' ? '/teacher/dashboard' : '/student/dashboard'
+      router.push((route.query.redirect as string) || fallback)
     } catch (e: any) {
       ElMessage.error(e?.message || '登录失败')
     } finally {
