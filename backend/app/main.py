@@ -1,8 +1,12 @@
 """FastAPI 应用主入口"""
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.api.v1.api import api_router
@@ -12,6 +16,40 @@ from app.services.sandbox_client import (
     ensure_sandbox_configuration,
     get_sandbox_client,
 )
+
+
+def mount_frontend(app: FastAPI) -> bool:
+    """存在前端构建产物时，由后端同端口托管网页界面（一键部署用）
+
+    目录优先级：环境变量 ZD_FRONTEND_DIST > 仓库默认 ../frontend/dist。
+    API 路由优先；其余路径走 SPA 回退（返回 index.html，交给前端路由）。
+    """
+    dist = Path(
+        os.environ.get("ZD_FRONTEND_DIST")
+        or (Path(__file__).resolve().parents[2].parent / "frontend" / "dist")
+    )
+    index_file = dist / "index.html"
+    if not index_file.is_file():
+        return False
+
+    assets_dir = dist / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+    dist_root = str(dist.resolve())
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str) -> FileResponse:
+        candidate = (dist / full_path).resolve()
+        # 防目录穿越：只允许 dist 内的真实文件，其余一律回 index.html
+        if (
+            full_path
+            and str(candidate).startswith(dist_root)
+            and candidate.is_file()
+        ):
+            return FileResponse(candidate)
+        return FileResponse(index_file)
+
+    return True
 
 
 def _ensure_admin() -> None:
@@ -149,6 +187,10 @@ app.include_router(api_router, prefix="/api")
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "app": settings.app_name}
+
+
+# 前端构建产物存在时同端口托管（API/health 路由已注册，优先匹配）
+mount_frontend(app)
 
 
 if __name__ == "__main__":
